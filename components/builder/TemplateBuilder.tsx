@@ -626,7 +626,7 @@ function SortableField({
             <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="w-full text-sm px-0 py-0 text-white mb-1 focus:outline-none focus:ring-0 focus:ring-offset-0" placeholder="Введите значение" />
             <div className="space-y-0">
               {(field.items || []).map((item: any) => (
-                <div key={item.id} class="w-full bg-transparent px-1 py-0 text-sm text-white placeholder:text-zinc-400">
+                <div key={item.id} className="w-full bg-transparent px-1 py-0 text-sm text-white placeholder:text-zinc-400">
                   <span className="font-medium text-zinc-400 w-6">{item.number}.</span>
                   <input type="text" value={item.value} onChange={e => {
                     const newItems = (field.items || []).map(i => i.id === item.id ? { ...i, value: e.target.value } : i);

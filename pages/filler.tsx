@@ -11,13 +11,22 @@ import {
 import type { BuilderField } from '../types/builder';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
-const RatingField = ({ field, value, onChange, onFocus }) => {
+const RatingField = ({ 
+  field, 
+  value, 
+  onChange, 
+  onFocus 
+}: {
+  field: BuilderField;
+  value: number;
+  onChange: (value: number) => void;
+  onFocus: (fieldId: string, el: any) => void;
+}) => {
   return (
     <div className="flex gap-2 justify-center">
       {Array.from({ length: field.max || 5 }, (_, i) => {
         const score = i + 1;
         const isActive = value === score;
-
         return (
           <button
             key={score}
@@ -27,10 +36,10 @@ const RatingField = ({ field, value, onChange, onFocus }) => {
             }}
             tabIndex={0}
             className={`w-10 h-10 flex items-center justify-center text-lg font-medium rounded-2xl transition-all border
-              ${isActive 
-                ? 'bg-zinc-800 border-amber-400 text-white' 
+${isActive
+                ? 'bg-zinc-800 border-amber-400 text-white'
                 : 'bg-transparent border-white/30 hover:border-amber-400 text-white'
-              }`}
+}`}
           >
             {score}
           </button>
@@ -298,7 +307,7 @@ export default function FillerPage() {
       // Оранжевый цвет только для введённого пользователем текста
       let coloredHtml = displayHtml;
       if (val && (f.type === 'text' || f.type === 'number' || f.type === 'select')) {
-        coloredHtml = `<span class="text-amber-400">${val}</span>`;
+        coloredHtml = `<span className="text-amber-400">${val}</span>`;
       }
 
       if (f.type === 'text') {
@@ -313,14 +322,14 @@ export default function FillerPage() {
   const val = fieldsData[f.id] || '';
   if (!val) return;                    // ← не показываем пустое поле
 
-  const coloredHtml = `<span class="text-amber-400">${val}</span>`;
+  const coloredHtml = `<span className="text-amber-400">${val}</span>`;
   htmlText += `${f.label}: ${coloredHtml} ${f.unit || ''}\n\n`;
   plainText += `${f.label}: ${val} ${f.unit || ''}\n\n`;
       } else if (f.type === 'checkbox') {
         const checkboxText = val ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет');
         
         // Amber цвет для текста чекбокса в готовом протоколе
-        htmlText += `${f.label}: <span class="text-amber-400">${checkboxText}</span>\n\n`;
+        htmlText += `${f.label}: <span className="text-amber-400">${checkboxText}</span>\n\n`;
         plainText += `${f.label}: ${checkboxText}\n\n`;
       } else if (f.type === 'select') {
   if (!fieldsData[f.id]) return;   // ← скрываем, если ничего не выбрано
@@ -332,7 +341,7 @@ export default function FillerPage() {
   if (!val || val === 0) return;
   
   // И число, и explanation — amber
-  htmlText += `${f.label}: <span class="text-amber-400">${val || 0}${expl}</span>\n\n`;
+  htmlText += `${f.label}: <span className="text-amber-400">${val || 0}${expl}</span>\n\n`;
   plainText += `${f.label}: ${val || 0}${expl}\n\n`;
       } else if (f.type === 'formula') {
   // Проверяем, ввёл ли пользователь хотя бы одну переменную
@@ -344,8 +353,8 @@ export default function FillerPage() {
   if (!hasAnyValue) return;   // ← если ничего не введено — полностью скрываем формулу
 
   const result = displayHtml || '—';
-  const unit = f.unit ? ` <span class="text-amber-400">${f.unit}</span>` : '';
-  htmlText += `${f.label}: <span class="text-amber-400">${result}</span>${unit}\n\n`;
+  const unit = f.unit ? ` <span className="text-amber-400">${f.unit}</span>` : '';
+  htmlText += `${f.label}: <span className="text-amber-400">${result}</span>${unit}\n\n`;
   plainText += `${f.label}: ${displayPlain || '—'} ${f.unit || ''}\n\n`;
       } else if (f.type === 'comparison') {
   const headerText = fieldsData[`${f.id}_header`] || f.label || '';
@@ -367,7 +376,7 @@ export default function FillerPage() {
     const previousPart = fieldsData[`${f.id}_prev_${item.id}`] || item.previous || '';
 
     // Вся строка сравнения — amber
-    htmlText += `<span class="text-amber-400">${item.number}. ${valuePart}, ранее ${previousPart}.</span>\n`;
+    htmlText += `<span className="text-amber-400">${item.number}. ${valuePart}, ранее ${previousPart}.</span>\n`;
     plainText += `${item.number}. ${valuePart}, ранее ${previousPart}.\n`;
   });
   htmlText += '\n';

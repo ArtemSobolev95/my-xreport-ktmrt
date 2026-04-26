@@ -221,11 +221,16 @@ export default function FillerPage() {
         setTemplate(data);
         const init: Record<string, any> = {};
         data.fields.forEach((f: BuilderField) => {
-          if (f.defaultValue !== undefined) init[f.id] = f.defaultValue;
-          else if (f.type === 'checkbox') init[f.id] = false;
-          else if (f.type === 'rating') init[f.id] = 0;
-          else init[f.id] = '';
-        });
+  if (f.defaultValue !== undefined) {
+    init[f.id] = f.defaultValue;
+  } else if (f.type === 'checkbox') {
+    init[f.id] = false;                    // явно false
+  } else if (f.type === 'rating') {
+    init[f.id] = 0;
+  } else {
+    init[f.id] = '';
+  }
+});
         setFieldsData(init);
       }
       setLoading(false);
@@ -267,7 +272,7 @@ export default function FillerPage() {
     if (changed) setFieldsData(newData);
   }, [fieldsData, template]);
 
-  // ====================== ГЛАВНЫЙ useEffect для finalText ======================
+    // ====================== ГЛАВНЫЙ useEffect для finalText ======================
   useEffect(() => {
     if (!template) return;
 
@@ -279,7 +284,7 @@ export default function FillerPage() {
       plainText += `Описание исследования в сравнении с предыдущим от ${comparisonDate}:\n`;
     }
     if (isStateAfterActive && stateAfterText) {
-      htmlText += `Состояние после ${stateAfterText}\n`;   // ← без двоеточия
+      htmlText += `Состояние после ${stateAfterText}\n`;
       plainText += `Состояние после ${stateAfterText}\n`;
     }
 
@@ -287,27 +292,29 @@ export default function FillerPage() {
       if (deletedFieldIds.has(f.id)) return;
       if (f.type === 'header') return;
 
-      if (f.type === 'text') {
-        const val = fieldsData[f.id] || '';
-        if (!val && !f.placeholder) {
-          return; // полностью пропускаем поле
-        }
-      }
-
       const val = fieldsData[f.id];
+
+      // Пропускаем полностью пустые поля
+      if (!val && !f.placeholder && f.type !== 'rating' && f.type !== 'comparison' && f.type !== 'checkbox') {
+        return;
+      }
 
       let displayHtml = val || '';
       let displayPlain = val || '';
 
+      // Если ничего не введено — показываем placeholder серым
       if (!val && f.placeholder) {
         displayHtml = `<span style="color: #9ca3af;">${f.placeholder}</span>`;
-        displayPlain = `${f.placeholder}`;
+        displayPlain = f.placeholder;
       }
 
-      // Оранжевый цвет только для введённого пользователем текста
+      // === ОСНОВНОЕ ИСПРАВЛЕНИЕ: amber-400 для всех введённых значений ===
       let coloredHtml = displayHtml;
-      if (val && (f.type === 'text' || f.type === 'number' || f.type === 'select')) {
-        coloredHtml = `<span className="text-amber-400">${val}</span>`;
+
+      if (val) {
+        if (['text', 'number', 'select', 'checkbox', 'formula', 'comparison'].includes(f.type)) {
+          coloredHtml = `<span class="text-amber-400">${val}</span>`;
+        }
       }
 
       if (f.type === 'text') {
@@ -318,70 +325,80 @@ export default function FillerPage() {
           htmlText += `${f.label}: ${coloredHtml}\n\n`;
           plainText += `${f.label}: ${displayPlain}\n\n`;
         }
-      } else if (f.type === 'number') {
-  const val = fieldsData[f.id] || '';
-  if (!val) return;                    // ← не показываем пустое поле
-
-  const coloredHtml = `<span className="text-amber-400">${val}</span>`;
-  htmlText += `${f.label}: ${coloredHtml} ${f.unit || ''}\n\n`;
-  plainText += `${f.label}: ${val} ${f.unit || ''}\n\n`;
+      
       } else if (f.type === 'checkbox') {
-        const checkboxText = val ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет');
-        
-        // Amber цвет для текста чекбокса в готовом протоколе
-        htmlText += `${f.label}: <span className="text-amber-400">${checkboxText}</span>\n\n`;
+        const isChecked = fieldsData[f.id] === true;
+
+        const checkboxText = isChecked
+          ? (f.checkedPhrase || 'Да')
+          : (f.uncheckedPhrase || 'Нет');
+
+        htmlText += `${f.label}: <span class="text-amber-400">${checkboxText}</span>\n\n`;
         plainText += `${f.label}: ${checkboxText}\n\n`;
-      } else if (f.type === 'select') {
-  if (!fieldsData[f.id]) return;   // ← скрываем, если ничего не выбрано
+      }
 
-  htmlText += `${f.label}: ${coloredHtml}\n\n`;
-  plainText += `${f.label}: ${displayPlain}\n\n`;
-      } else if (f.type === 'rating') {
-  const expl = f.showExplanations && f.explanations && val ? ` — ${f.explanations[val - 1] || ''}` : '';
-  if (!val || val === 0) return;
-  
-  // И число, и explanation — amber
-  htmlText += `${f.label}: <span className="text-amber-400">${val || 0}${expl}</span>\n\n`;
-  plainText += `${f.label}: ${val || 0}${expl}\n\n`;
-      } else if (f.type === 'formula') {
-  // Проверяем, ввёл ли пользователь хотя бы одну переменную
-  const hasAnyValue = (f.variables || []).some((v: any, i: number) => {
-    const varValue = fieldsData[`${f.id}_var_${i}`];
-    return varValue && String(varValue).trim() !== '';
-  });
 
-  if (!hasAnyValue) return;   // ← если ничего не введено — полностью скрываем формулу
+      else if (f.type === 'number') {
+        if (!val) return;
+        const unitHtml = f.unit ? ` <span class="text-amber-400">${f.unit}</span>` : '';
+        htmlText += `${f.label}: <span class="text-amber-400">${val}</span>${unitHtml}\n\n`;
+        plainText += `${f.label}: ${val} ${f.unit || ''}\n\n`;
+      } else if (f.type === 'checkbox') {
+        // Надёжная проверка: true только если явно true
+        const isChecked = fieldsData[f.id] === true;
 
-  const result = displayHtml || '—';
-  const unit = f.unit ? ` <span className="text-amber-400">${f.unit}</span>` : '';
-  htmlText += `${f.label}: <span className="text-amber-400">${result}</span>${unit}\n\n`;
-  plainText += `${f.label}: ${displayPlain || '—'} ${f.unit || ''}\n\n`;
-      } else if (f.type === 'comparison') {
-  const headerText = fieldsData[`${f.id}_header`] || f.label || '';
+        const checkboxText = isChecked
+          ? (f.checkedPhrase || 'Да')
+          : (f.uncheckedPhrase || 'Нет');
 
-  const hasAnyValue = (f.items || []).some((item: any) => {
-    const val = fieldsData[`${f.id}_val_${item.id}`] || item.value || '';
-    const prev = fieldsData[`${f.id}_prev_${item.id}`] || item.previous || '';
-    return val.trim() !== '' || prev.trim() !== '';
-  });
+        htmlText += `${f.label}: <span class="text-amber-400">${checkboxText}</span>\n\n`;
+        plainText += `${f.label}: ${checkboxText}\n\n`;
+      }
+      else if (f.type === 'select') {
+        if (!val) return;
+        htmlText += `${f.label}: ${coloredHtml}\n\n`;
+        plainText += `${f.label}: ${val}\n\n`;
+      } 
+      else if (f.type === 'rating') {
+        if (!val || val === 0) return;
+        const expl = f.showExplanations && f.explanations ? ` — ${f.explanations[val - 1] || ''}` : '';
+        htmlText += `${f.label}: <span class="text-amber-400">${val}${expl}</span>\n\n`;
+        plainText += `${f.label}: ${val}${expl}\n\n`;
+      } 
+      else if (f.type === 'formula') {
+        const hasAnyValue = (f.variables || []).some((v: any, i: number) => {
+          return fieldsData[`${f.id}_var_${i}`] && String(fieldsData[`${f.id}_var_${i}`]).trim() !== '';
+        });
+        if (!hasAnyValue) return;
 
-  if (!hasAnyValue) return;
+        const result = val || '—';
+        const unit = f.unit ? ` <span class="text-amber-400">${f.unit}</span>` : '';
+        htmlText += `${f.label}: <span class="text-amber-400">${result}</span>${unit}\n\n`;
+        plainText += `${f.label}: ${result} ${f.unit || ''}\n\n`;
+      } 
+      else if (f.type === 'comparison') {
+        const headerText = fieldsData[`${f.id}_header`] || f.label || '';
+        const hasAnyValue = (f.items || []).some((item: any) => {
+          const v = fieldsData[`${f.id}_val_${item.id}`] || item.value || '';
+          const p = fieldsData[`${f.id}_prev_${item.id}`] || item.previous || '';
+          return v.trim() || p.trim();
+        });
+        if (!hasAnyValue) return;
 
-  if (headerText) {
-    htmlText += `${headerText}:\n`;
-    plainText += `${headerText}:\n`;
-  }
-  (f.items || []).forEach((item: any) => {
-    const valuePart = fieldsData[`${f.id}_val_${item.id}`] || item.value || '';
-    const previousPart = fieldsData[`${f.id}_prev_${item.id}`] || item.previous || '';
+        if (headerText) {
+          htmlText += `${headerText}:\n`;
+          plainText += `${headerText}:\n`;
+        }
 
-    // Вся строка сравнения — amber
-    htmlText += `<span className="text-amber-400">${item.number}. ${valuePart}, ранее ${previousPart}.</span>\n`;
-    plainText += `${item.number}. ${valuePart}, ранее ${previousPart}.\n`;
-  });
-  htmlText += '\n';
-  plainText += '\n';
-}
+        (f.items || []).forEach((item: any) => {
+          const valuePart = fieldsData[`${f.id}_val_${item.id}`] || item.value || '';
+          const previousPart = fieldsData[`${f.id}_prev_${item.id}`] || item.previous || '';
+          htmlText += `<span class="text-amber-400">${item.number}. ${valuePart}, ранее ${previousPart}.</span>\n`;
+          plainText += `${item.number}. ${valuePart}, ранее ${previousPart}.\n`;
+        });
+        htmlText += '\n';
+        plainText += '\n';
+      }
     });
 
     setFinalText(htmlText.trim());
@@ -775,8 +792,8 @@ const insertPhrase = (phrase: string) => {
       onChange={e => updateField(`${f.id}_header`, e.target.value)}
       onFocus={() => handleFocus(`${f.id}_header`, null)}
       onBlur={handleBlur}
-      className="w-full bg-transparent border-0 border-b-2 border-white/20 px-0 py-3 text-white text-center text-base hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
-      placeholder="Введите заголовок сравнения"
+      className="w-full text-sm bg-transparent border-0 border-b-2 border-white/20 px-0 py-3 text-white text-center text-base hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
+      placeholder="Введите значение"
     />
 
     <div className="space-y-3">
@@ -790,7 +807,7 @@ const insertPhrase = (phrase: string) => {
             onChange={e => updateField(`${f.id}_val_${item.id}`, e.target.value)}
             onFocus={() => handleFocus(`${f.id}_val_${item.id}`, null)}
             onBlur={handleBlur}
-            className="w-full bg-transparent border-0 border-b-2 border-white/20 px-0 py-2 text-white hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
+            className="w-full text-sm bg-transparent border-0 border-b-2 border-white/20 px-0 py-2 text-white hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
             placeholder="Текущее значение"
           />
 
@@ -802,7 +819,7 @@ const insertPhrase = (phrase: string) => {
             onChange={e => updateField(`${f.id}_prev_${item.id}`, e.target.value)}
             onFocus={() => handleFocus(`${f.id}_prev_${item.id}`, null)}
             onBlur={handleBlur}
-            className="w-full bg-transparent border-0 border-b-2 border-white/20 px-0 py-2 text-white hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
+            className="w-full text-sm bg-transparent border-0 border-b-2 border-white/20 px-0 py-2 text-white hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
             placeholder="Предыдущее значение"
           />
 
@@ -816,7 +833,7 @@ const insertPhrase = (phrase: string) => {
               setTemplate({ ...template, fields: newFields });
             }}
             tabIndex={-1}
-            className="text-white hover:text-red-400 transition-colors"
+            className="text-white hover:text-red-400 transition-colors cursor-pointer"
           >
             <Trash2 size={18} />
           </button>

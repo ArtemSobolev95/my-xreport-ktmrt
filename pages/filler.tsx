@@ -669,7 +669,7 @@ const insertPhrase = (phrase: string) => {
             onChange={e => { handleInputChange(f.id, e.target.value); autoResize(e.target); }}
             onFocus={(e) => handleFocus(f.id, e.target)}
             onBlur={handleBlur}
-            className="w-full bg-transparent border-0 border-b-2 border-zinc-600 px-0 py-3 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
+            className="w-full bg-transparent border-0 border-b-2 border-zinc-600 px-0 py-0 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
             placeholder={f.placeholder || 'Введите значение'}
             style={{ minHeight: '30px' }}
           />
@@ -717,7 +717,7 @@ const insertPhrase = (phrase: string) => {
                     onChange={e => updateField(f.id, e.target.value)}
                     onFocus={() => handleFocus(f.id, null)}
                     onBlur={handleBlur}
-                    className="w-full bg-zinc-800 border border-zinc-600 rounded-none px-5 py-3 outline-none text-sm"
+                    className="w-full bg-zinc-800 border border-zinc-600 rounded-none px-5 py-3 outline-none text-sm cursor-pointer"
                   >
                     <option value="">Выберите вариант...</option>
                     {f.options?.map((opt: string, i: number) => <option key={i} value={opt}>{opt}</option>)}
@@ -877,7 +877,7 @@ const insertPhrase = (phrase: string) => {
   tabIndex={-1}
   className={`flex-1 flex items-center justify-center gap-3 py-4 px-6 text-sm font-medium rounded-2xl transition-all
     bg-transparent border border-transparent text-white
-    hover:text-amber-400
+    hover:text-amber-400 cursor-pointer
     ${isComparisonActive ? '!text-amber-400' : ''}
   `}
 >
@@ -897,7 +897,7 @@ const insertPhrase = (phrase: string) => {
   tabIndex={-1}
   className={`flex-1 flex items-center justify-center gap-3 py-4 px-6 text-sm font-medium rounded-2xl transition-all
     bg-transparent border border-transparent text-white
-    hover:text-amber-400
+    hover:text-amber-400 cursor-pointer
     ${isStateAfterActive ? '!text-amber-400' : ''}
   `}
 >

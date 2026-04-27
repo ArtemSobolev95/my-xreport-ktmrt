@@ -325,10 +325,10 @@ export default function FillerPage() {
           htmlText += `${f.label}: ${coloredHtml}\n\n`;
           plainText += `${f.label}: ${displayPlain}\n\n`;
         }
-      
-      } if (f.type === 'checkbox') {
+      } 
+      else if (f.type === 'checkbox') {
+        // Всегда показываем чекбокс (даже если снят)
         const isChecked = fieldsData[f.id] === true;
-
         const checkboxText = isChecked
           ? (f.checkedPhrase || 'Да')
           : (f.uncheckedPhrase || 'Нет');
@@ -336,24 +336,12 @@ export default function FillerPage() {
         htmlText += `${f.label}: <span class="text-amber-400">${checkboxText}</span>\n\n`;
         plainText += `${f.label}: ${checkboxText}\n\n`;
       }
-
-
       else if (f.type === 'number') {
         if (!val) return;
         const unitHtml = f.unit ? ` <span class="text-amber-400">${f.unit}</span>` : '';
         htmlText += `${f.label}: <span class="text-amber-400">${val}</span>${unitHtml}\n\n`;
         plainText += `${f.label}: ${val} ${f.unit || ''}\n\n`;
-      } else if (f.type === 'checkbox') {
-        // Надёжная проверка: true только если явно true
-        const isChecked = fieldsData[f.id] === true;
-
-        const checkboxText = isChecked
-          ? (f.checkedPhrase || 'Да')
-          : (f.uncheckedPhrase || 'Нет');
-
-        htmlText += `${f.label}: <span class="text-amber-400">${checkboxText}</span>\n\n`;
-        plainText += `${f.label}: ${checkboxText}\n\n`;
-      }
+      } 
       else if (f.type === 'select') {
         if (!val) return;
         htmlText += `${f.label}: ${coloredHtml}\n\n`;

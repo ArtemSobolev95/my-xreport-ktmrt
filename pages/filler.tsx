@@ -326,7 +326,7 @@ export default function FillerPage() {
           plainText += `${f.label}: ${displayPlain}\n\n`;
         }
       
-      } else if (f.type === 'checkbox') {
+      } if (f.type === 'checkbox') {
         const isChecked = fieldsData[f.id] === true;
 
         const checkboxText = isChecked

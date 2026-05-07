@@ -1,3 +1,6 @@
+meta:
+  environment: docker
+
 run:
   containerPort: 8090
   persistenceMount: /data

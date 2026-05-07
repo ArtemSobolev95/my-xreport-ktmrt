@@ -30,8 +30,4 @@ COPY pb_hooks /pb/pb_hooks/
 
 EXPOSE 8090
 
-# === Запуск PocketBase со сбросом старой базы ===
-CMD sh -c "\
-  rm -rf /data/* && \
-  /pb/pocketbase admin create artemm.sobolevv@gmail.com Artemonetwothree1 --dir /data || true && \
-  /pb/pocketbase serve --http=0.0.0.0:8090 --dir=/data"
+CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/data"]

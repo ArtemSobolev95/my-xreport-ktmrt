@@ -1,7 +1,8 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { supabase } from '../../lib/supabase';
+import pb from '../../lib/pocketbase';
+pb.autoCancellation(false);
 import { GripVertical, Trash2, ChevronUp, ChevronDown, ChevronRight, FolderPlus, FolderMinus } from 'lucide-react';
 import {
   ClipboardDocumentListIcon,
@@ -182,30 +183,31 @@ function SortableField({
   
 
   const handleAddImage = async () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = async (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
 
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+    const formData = new FormData();
+    formData.append('file', file);
 
-      const { error } = await supabase.storage.from('notes-images').upload(fileName, file, { upsert: true });
-      if (error) {
-        alert('Ошибка загрузки изображения: ' + error.message);
-        return;
-      }
+    try {
+      const record = await pb.collection('notes_images').create(formData);
 
-      const { data: { publicUrl } } = supabase.storage.from('notes-images').getPublicUrl(fileName);
+      // Публичная ссылка для notes_images
+      const publicUrl = `http://127.0.0.1:8090/api/files/notes_images/${record.id}/${record.file}`;
 
       setTempLinkText('Изображение');
       setTempLinkUrl(publicUrl);
       setShowAddLinkModal(true);
-    };
-    input.click();
+    } catch (err: any) {
+      alert('Ошибка загрузки изображения: ' + (err?.message || err));
+    }
   };
+  input.click();
+};
 
   const deleteLink = (index: number) => {
     const lines = (field.notes || '').split('\n').filter(Boolean);
@@ -741,16 +743,23 @@ export default function TemplateBuilder() {
 
 
   useEffect(() => {
-    if (edit) {
-      setEditingId(edit as string);
-      supabase.from('Templates').select('*').eq('id', edit).single().then(({ data }) => {
-        if (data) {
-          setTemplateTitle(data.title);
-          setFields(data.fields || []);
-        }
-      });
-    }
-  }, [edit]);
+  if (edit) {
+    setEditingId(edit as string);
+
+    const loadTemplate = async () => {
+      try {
+        const record = await pb.collection('templates').getOne(edit as string, { $autoCancel: false });
+        
+        setTemplateTitle(record.title || "Новый шаблон");
+        setFields(record.fields || []);
+      } catch (err) {
+        console.error("Ошибка загрузки шаблона в Builder:", err);
+      }
+    };
+
+    loadTemplate();
+  }
+}, [edit]);
 
   const addField = (type: FieldType) => {
     let newField: BuilderField = {
@@ -847,21 +856,31 @@ export default function TemplateBuilder() {
   };
 
   const performSave = async (asNew: boolean) => {
-    setIsSaving(true);
-    const payload = { title: templateTitle, fields: JSON.parse(JSON.stringify(fields)) };
+  setIsSaving(true);
 
+  const payload = {
+    title: templateTitle,
+    fields: JSON.parse(JSON.stringify(fields))
+  };
+
+  try {
     if (editingId && !asNew) {
-      await supabase.from('Templates').update(payload).eq('id', editingId);
+      // Обновляем существующий шаблон
+      await pb.collection('templates').update(editingId, payload);
     } else {
-      const { data } = await supabase.from('Templates').insert([payload]).select().single();
-      if (data) {
-        setEditingId(data.id);
-        router.push(`/builder?edit=${data.id}`);
-      }
+      // Создаём новый шаблон
+      const newRecord = await pb.collection('templates').create(payload);
+      setEditingId(newRecord.id);
+      router.push(`/builder?edit=${newRecord.id}`);
     }
+  } catch (err) {
+    console.error("Ошибка сохранения шаблона:", err);
+    alert("Ошибка при сохранении шаблона");
+  } finally {
     setIsSaving(false);
     setShowSaveModal(false);
-  };
+  }
+};
 
   const handleSaveClick = () => {
     setShowSaveModal(true);

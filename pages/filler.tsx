@@ -1,7 +1,8 @@
 'use client';
 import { useState, useEffect, useRef, memo } from 'react';
 import { useRouter } from 'next/router';
-import { supabase } from '../lib/supabase';
+import pb from '../lib/pocketbase';
+pb.autoCancellation(false);
 import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Upload, Download as DownloadIcon, Edit2, Trash2, Home, X, Minus, BookmarkIcon, RotateCcw, Plus, XCircle, ArrowDownSquare, ArrowUpSquare } from 'lucide-react';
 import { PlusCircleIcon } from '@heroicons/react/24/solid';
 import { 
@@ -183,15 +184,22 @@ export default function FillerPage() {
 
   useEffect(() => {
     const loadAbbr = async () => {
-      const { data } = await supabase.from('Abbreviations').select('*').eq('id', 'global').maybeSingle();
-      if (data) {
-        setAbbreviations(data.abbreviations || {});
-        setCategories(data.categories || ['Общие']);
-      } else {
-        const defaultData = { abbreviations: { 'итд': { full: 'и так далее', category: 'Общие', usage: 0 } }, categories: ['Общие'] };
-        await supabase.from('Abbreviations').upsert({ id: 'global', ...defaultData });
-        setAbbreviations(defaultData.abbreviations);
-        setCategories(defaultData.categories);
+      try {
+        const record = await pb.collection('abbreviations').getOne('global', { $autoCancel: false });
+
+        setAbbreviations(record.abbreviations || {});
+        setCategories(record.categories || ['Общие']);
+      } catch (err: any) {
+        // Если записи ещё нет — создаём дефолтную
+        if (err.status === 404) {
+          const defaultData = {
+            abbreviations: { 'итд': { full: 'и так далее', category: 'Общие', usage: 0 } },
+            categories: ['Общие']
+          };
+          await pb.collection('abbreviations').create({ id: 'global', ...defaultData });
+          setAbbreviations(defaultData.abbreviations);
+          setCategories(defaultData.categories);
+        }
       }
     };
     loadAbbr();
@@ -200,7 +208,21 @@ export default function FillerPage() {
   const saveData = async (newAbbr: any, newCats: string[]) => {
     setAbbreviations(newAbbr);
     setCategories(newCats);
-    await supabase.from('Abbreviations').upsert({ id: 'global', abbreviations: newAbbr, categories: newCats });
+    
+    try {
+      await pb.collection('abbreviations').update('global', {
+        abbreviations: newAbbr,
+        categories: newCats
+      });
+    } catch (err: any) {
+      if (err.status === 404) {
+        await pb.collection('abbreviations').create({
+          id: 'global',
+          abbreviations: newAbbr,
+          categories: newCats
+        });
+      }
+    }
   };
 
   const filteredAbbreviations = Object.entries(abbreviations)
@@ -214,27 +236,30 @@ export default function FillerPage() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
+
     const loadTemplate = async () => {
-      const { data } = await supabase.from('Templates').select('*').eq('id', id).single();
-      if (data) {
-        setOriginalTemplate(JSON.parse(JSON.stringify(data)));
-        setTemplate(data);
+      try {
+        const record = await pb.collection('templates').getOne(id as string, { $autoCancel: false });
+
+        setOriginalTemplate(JSON.parse(JSON.stringify(record)));
+        setTemplate(record);
+
         const init: Record<string, any> = {};
-        data.fields.forEach((f: BuilderField) => {
-  if (f.defaultValue !== undefined) {
-    init[f.id] = f.defaultValue;
-  } else if (f.type === 'checkbox') {
-    init[f.id] = false;                    // явно false
-  } else if (f.type === 'rating') {
-    init[f.id] = 0;
-  } else {
-    init[f.id] = '';
-  }
-});
+        record.fields.forEach((f: BuilderField) => {
+          if (f.defaultValue !== undefined) init[f.id] = f.defaultValue;
+          else if (f.type === 'checkbox') init[f.id] = false;
+          else if (f.type === 'rating') init[f.id] = 0;
+          else init[f.id] = '';
+        });
+
         setFieldsData(init);
+      } catch (err) {
+        console.error("Ошибка загрузки шаблона:", err);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
+
     loadTemplate();
   }, [id]);
 
@@ -506,7 +531,9 @@ const insertPhrase = (phrase: string) => {
     setShowSaveModal(false);
   };
 
-  const goToTemplateList = () => router.push('/');
+  const goToTemplateList = () => {
+  router.push('/');
+};
 
   const exportAbbreviations = () => {
     const dataStr = JSON.stringify({ abbreviations, categories }, null, 2);

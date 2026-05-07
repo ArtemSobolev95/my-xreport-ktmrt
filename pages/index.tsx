@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { supabase } from '../lib/supabase';
+import pb from '../lib/pocketbase';
 import Link from 'next/link';
 import { StarIcon } from '@heroicons/react/24/outline';
 import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
@@ -15,17 +15,23 @@ export default function HomePage() {
   const [searchTerm, setSearchTerm] = useState('');
 
   const loadTemplates = async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('Templates')
-      .select('*')
-      .order('is_favorite', { ascending: false })
-      .order('created_at', { ascending: false });
+  setLoading(true);
+  try {
+    console.log("🔄 Загружаем шаблоны из PocketBase...");
 
-    if (error) console.error('Ошибка загрузки шаблонов:', error);
-    else setTemplates(data || []);
+    const records = await pb.collection('templates').getFullList();   // ← без sort
+
+    console.log("✅ Успешно загружено шаблонов:", records.length);
+    console.log("📋 Шаблоны:", records);
+
+    setTemplates(records || []);
+  } catch (err: any) {
+    console.error("❌ Ошибка загрузки шаблонов:", err);
+    setTemplates([]);
+  } finally {
     setLoading(false);
-  };
+  }
+};
 
   useEffect(() => {
     loadTemplates();
@@ -34,47 +40,37 @@ export default function HomePage() {
   const toggleFavorite = async (id: string, currentFavorite: boolean) => {
   const newFavorite = !currentFavorite;
 
-  // 1. Оптимистичное обновление + мгновенная пересортировка
+  // Оптимистичное обновление
   setTemplates(prev => {
     const updated = prev.map(t =>
       t.id === id ? { ...t, is_favorite: newFavorite } : t
     );
 
-    // Сортируем: избранные сверху, затем по дате создания (новые сверху)
     return updated.sort((a, b) => {
-      if (a.is_favorite !== b.is_favorite) {
-        return a.is_favorite ? -1 : 1;        // избранные всегда сверху
-      }
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      if (a.is_favorite !== b.is_favorite) return a.is_favorite ? -1 : 1;
+      return new Date(b.created).getTime() - new Date(a.created).getTime();
     });
   });
 
-  // 2. Обновляем в базе
-  const { error } = await supabase
-    .from('Templates')
-    .update({ is_favorite: newFavorite })
-    .eq('id', id);
-
-  if (error) {
-    console.error('Ошибка обновления избранного:', error);
-    loadTemplates(); // откат при ошибке
+  
+  try {
+    await pb.collection('templates').update(id, { is_favorite: newFavorite });
+  } catch (err) {
+    console.error('Ошибка обновления избранного:', err);
+    loadTemplates(); // откат
   }
 };
 
   const deleteTemplate = async (id: string, title: string) => {
-    if (!confirm(`Удалить шаблон "${title}"?`)) return;
+  if (!confirm(`Удалить шаблон "${title}"?`)) return;
 
-    const { error } = await supabase
-      .from('Templates')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      alert('Ошибка при удалении: ' + error.message);
-    } else {
-      loadTemplates();
-    }
-  };
+  try {
+    await pb.collection('templates').delete(id);
+    loadTemplates();
+  } catch (err: any) {
+    alert('Ошибка при удалении: ' + (err?.message || err));
+  }
+};
 
   const filteredTemplates = templates.filter(t =>
     t.title.toLowerCase().includes(searchTerm.toLowerCase())
@@ -140,9 +136,7 @@ export default function HomePage() {
                   {t.title}
                 </h2>
 
-                <p className="text-zinc-400 text-sm mb-8">
-                  Создан: {new Date(t.created_at).toLocaleDateString('ru-RU')}
-                </p>
+              
 
                 {/* Кнопки действий */}
                 <div className="mt-auto flex gap-3 justify-center">

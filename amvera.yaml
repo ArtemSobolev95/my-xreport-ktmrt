@@ -5,4 +5,4 @@ meta:
 
 run:
   containerPort: 8090
-  persistenceMount: /data
+  

@@ -10,6 +10,9 @@ import {
   ArrowUpOnSquareIcon        
 } from '@heroicons/react/24/outline';
 import type { BuilderField } from '../types/builder';
+const cardStyle = {
+  transition: 'all 500ms cubic-bezier(0.4, 0, 0.2, 1)', // очень плавный ease-out
+};
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
 const RatingField = ({ 
@@ -138,17 +141,33 @@ export default function FillerPage() {
   };
 
   const addTextFieldAfter = (currentId: string) => {
-    saveToHistory();
-    const newId = 'text-' + Date.now().toString();
-    const newField: BuilderField = { id: newId, type: 'text' as any, label: '', isQuickText: true };
-    const index = template.fields.findIndex((f: BuilderField) => f.id === currentId);
-    if (index === -1) return;
-    const newFields = [...template.fields.slice(0, index + 1), newField, ...template.fields.slice(index + 1)];
-    setTemplate({ ...template, fields: newFields });
-    setFieldsData(prev => ({ ...prev, [newId]: '' }));
-    setNewlyAddedId(newId);
-    setTimeout(() => setNewlyAddedId(null), 320);
+  saveToHistory();
+
+  const newId = 'text-' + Date.now().toString();
+  const newField: BuilderField = { 
+    id: newId, 
+    type: 'text' as any, 
+    label: '', 
+    isQuickText: true 
   };
+
+  const index = template.fields.findIndex((f: BuilderField) => f.id === currentId);
+  if (index === -1) return;
+
+  const newFields = [
+    ...template.fields.slice(0, index + 1), 
+    newField, 
+    ...template.fields.slice(index + 1)
+  ];
+
+  setTemplate({ ...template, fields: newFields });
+  setFieldsData(prev => ({ ...prev, [newId]: '' }));
+
+  setNewlyAddedId(newId);
+  setTimeout(() => {
+    setNewlyAddedId(null);
+  }, 20);
+};
 
   const removeField = (fieldId: string) => {
     saveToHistory();
@@ -161,7 +180,7 @@ export default function FillerPage() {
         return copy;
       });
       setRemovingId(null);
-    }, 300);
+    }, 200);
   };
 
   const resetToDefault = () => {
@@ -305,11 +324,11 @@ export default function FillerPage() {
     let plainText = '';
 
     if (isComparisonActive && comparisonDate) {
-      htmlText += `Описание исследования в сравнении с предыдущим от ${comparisonDate}:\n`;
+      htmlText += `<span class="text-amber-400">Описание исследования в сравнении с предыдущим от ${comparisonDate}:</span>\n`;
       plainText += `Описание исследования в сравнении с предыдущим от ${comparisonDate}:\n`;
     }
     if (isStateAfterActive && stateAfterText) {
-      htmlText += `Состояние после ${stateAfterText}\n`;
+      htmlText += `<span class="text-amber-400">Состояние после ${stateAfterText}</span>\n`;
       plainText += `Состояние после ${stateAfterText}\n`;
     }
 
@@ -633,23 +652,40 @@ const insertPhrase = (phrase: string) => {
           <div className="space-y-4">
   {visibleFields.map((f: BuilderField) => (
     <div
-      key={f.id}
-      data-field-id={f.id}
-      className={`card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-2xl transition-all duration-300
-        ${activeFieldId === f.id
-          ? 'border-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.3)]' 
-          : 'hover:border-white/20'}
-        ${newlyAddedId === f.id ? 'opacity-0 translate-y-3 scale-95' : ''}
-        ${removingId === f.id ? 'opacity-0 scale-95 -translate-y-2' : 'opacity-100 translate-y-0 scale-100'}
-        relative`}
-    >
+  key={f.id}
+  data-field-id={f.id}
+  className={`card transition-all duration-250 ease-out rounded-2xl overflow-hidden
+    ${f.type === 'header' 
+      ? 'bg-transparent border-0 shadow-none' 
+      : 'bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl'
+    }
+    
+    
+    ${newlyAddedId === f.id 
+      ? 'opacity-0 max-h-0 mt-0 mb-0 py-0 scale-[0.95]' 
+      : ''
+    }
+    
+    
+    ${removingId === f.id 
+      ? 'opacity-0 max-h-0 mt-0 mb-0 py-0 scale-[0.95]' 
+      : ''
+    }
+
+    ${activeFieldId === f.id
+      ? 'border-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.3)]' 
+      : 'hover:border-white/20'
+    }
+    relative`}
+>
       {/* Кнопки управления — правый верхний угол */}
-      <div className="absolute top-4 right-4 flex gap-1 z-20">
+     {f.type !== 'header' && ( 
+      <div className="absolute top-4 right-4 flex gap-0 z-20">
         {/* Сначала кнопка ДОБАВИТЬ */}
         <button
           onClick={() => addTextFieldAfter(f.id)}
           tabIndex={-1}
-          className="btn btn-ghost btn-square w-9 h-9 text-white hover:text-amber-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all">
+          className="btn btn-ghost btn-square w-6 h-6 text-white hover:text-amber-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
             </svg>
@@ -659,12 +695,13 @@ const insertPhrase = (phrase: string) => {
         <button
           onClick={() => removeField(f.id)}
           tabIndex={-1}
-          className="btn btn-ghost btn-square w-9 h-9 text-white hover:text-red-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all">
+          className="btn btn-ghost btn-square w-6 h-6 text-white hover:text-red-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
           </svg>
         </button>
       </div>
+     )}
 
       <div className="card-body p-5 pt-12">   {/* pt-12 — отступ сверху под кнопки */}
         {/* Название поля — теперь белое */}

@@ -30,6 +30,4 @@ COPY pb_hooks /pb/pb_hooks/
 
 EXPOSE 8090
 
-CMD sh -c "rm -rf /data/* && \
-  /pb/pocketbase superuser upsert artemm.sobolevv@gmail.com Artemonetwothree1 --dir /data && \
-  /pb/pocketbase serve --http=0.0.0.0:8090 --dir=/data"
+CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/data"]

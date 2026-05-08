@@ -196,8 +196,8 @@ function SortableField({
     try {
       const record = await pb.collection('notes_images').create(formData);
 
-      // Публичная ссылка для notes_images
-      const publicUrl = `http://127.0.0.1:8090/api/files/notes_images/${record.id}/${record.file}`;
+     
+      const publicUrl = pb.files.getURL(record, record.file);
 
       setTempLinkText('Изображение');
       setTempLinkUrl(publicUrl);

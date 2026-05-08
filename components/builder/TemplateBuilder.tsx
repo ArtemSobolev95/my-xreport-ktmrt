@@ -341,7 +341,7 @@ function SortableField({
           value={field.unit || ''} 
           onChange={e => onUpdate(field.id, { unit: e.target.value })} 
           className="w-10 text-sm bg-transparent border-0 border-b-2 border-white/20 px-1 py-3 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-center" 
-          placeholder="ед." 
+          placeholder="ед" 
         />
       </div>
     </div>
@@ -852,7 +852,7 @@ export default function TemplateBuilder() {
     if (!activeId) return null;
     const field = fields.find(f => f.id === activeId);
     if (!field) return null;
-    return <div className="bg-zinc-900 border border-white/30 rounded-none p-6 shadow-2xl opacity-90 scale-105 pointer-events-none">{field.label || field.type}</div>;
+    return <div className="bg-zinc-900 border border-white/30 rounded-2xl p-6 shadow-2xl opacity-75 scale-105 pointer-events-none">{field.label}</div>;
   };
 
   const performSave = async (asNew: boolean) => {

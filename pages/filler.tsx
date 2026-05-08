@@ -300,21 +300,55 @@ export default function FillerPage() {
   }, [template, fieldsData, initialized]);
 
   useEffect(() => {
-    if (!template) return;
-    const newData = { ...fieldsData };
-    let changed = false;
-    template.fields.forEach((f: BuilderField) => {
-      if (f.type === 'formula' && f.formula && f.variables) {
-        try {
-          const varMap = Object.fromEntries(f.variables.map((v: any, i: number) => [v.name, parseFloat(fieldsData[`${f.id}_var_${i}`] || v.value) || 0]));
-          const func = new Function(...Object.keys(varMap), `return ${f.formula};`);
-          const result = Number(func(...Object.values(varMap))).toFixed(2);
-          if (newData[f.id] !== result) { newData[f.id] = result; changed = true; }
-        } catch {}
+  if (!template) return;
+
+  const newData = { ...fieldsData };
+  let changed = false;
+
+  template.fields.forEach((f: BuilderField) => {
+    if (f.type === 'formula' && f.formula && f.variables) {
+      try {
+        // Проверяем, все ли переменные заполнены
+        const allFilled = f.variables.every((v: any, i: number) => {
+          const val = fieldsData[`${f.id}_var_${i}`] || v.value || '';
+          return String(val).trim() !== '';
+        });
+
+        if (!allFilled) {
+          if (newData[f.id] !== '') {
+            newData[f.id] = '';
+            changed = true;
+          }
+          return;
+        }
+
+        const varMap = Object.fromEntries(
+          f.variables.map((v: any, i: number) => {
+            const raw = fieldsData[`${f.id}_var_${i}`] || v.value || '';
+            return [v.name, parseFloat(raw) || 0];
+          })
+        );
+
+        const func = new Function(...Object.keys(varMap), `return ${f.formula};`);
+        const result = func(...Object.values(varMap));
+
+        const finalResult = Number.isNaN(result) ? '' : Number(result).toFixed(2);
+
+        if (newData[f.id] !== finalResult) {
+          newData[f.id] = finalResult;
+          changed = true;
+        }
+      } catch {
+        if (newData[f.id] !== '') {
+          newData[f.id] = '';
+          changed = true;
+        }
       }
-    });
-    if (changed) setFieldsData(newData);
-  }, [fieldsData, template]);
+    }
+  });
+
+  if (changed) setFieldsData(newData);
+}, [fieldsData, template]);
 
     // ====================== ГЛАВНЫЙ useEffect для finalText ======================
   useEffect(() => {
@@ -382,10 +416,21 @@ export default function FillerPage() {
       }
       else if (f.type === 'number') {
         if (!val) return;
-        const unitHtml = f.unit ? ` <span class="text-amber-400">${f.unit}</span>` : '';
+
+        let unitHtml = '';
+        let unitPlain = '';
+
+        if (f.unit && f.unit.trim() !== '') {
+          unitHtml = ` <span class="text-amber-400">${f.unit}</span>.`;
+          unitPlain = ` ${f.unit}.`;
+        } else {
+          unitHtml = '.';
+          unitPlain = '.';
+        }
+
         htmlText += `${f.label}: <span class="text-amber-400">${val}</span>${unitHtml}\n\n`;
-        plainText += `${f.label}: ${val} ${f.unit || ''}\n\n`;
-      } 
+        plainText += `${f.label}: ${val}${unitPlain}\n\n`;
+      }
       else if (f.type === 'select') {
         if (!val) return;
         htmlText += `${f.label}: ${coloredHtml}\n\n`;
@@ -398,16 +443,29 @@ export default function FillerPage() {
         plainText += `${f.label}: ${val}${expl}\n\n`;
       } 
       else if (f.type === 'formula') {
-        const hasAnyValue = (f.variables || []).some((v: any, i: number) => {
-          return fieldsData[`${f.id}_var_${i}`] && String(fieldsData[`${f.id}_var_${i}`]).trim() !== '';
-        });
-        if (!hasAnyValue) return;
+  const hasAnyValue = (f.variables || []).some((v: any, i: number) => {
+    return fieldsData[`${f.id}_var_${i}`] && String(fieldsData[`${f.id}_var_${i}`]).trim() !== '';
+  });
 
-        const result = val || '—';
-        const unit = f.unit ? ` <span class="text-amber-400">${f.unit}</span>` : '';
-        htmlText += `${f.label}: <span class="text-amber-400">${result}</span>${unit}\n\n`;
-        plainText += `${f.label}: ${result} ${f.unit || ''}\n\n`;
-      } 
+  if (!hasAnyValue) return;
+
+  const result = val || '';
+  if (!result || result === 'NaN') return;
+
+  let unitHtml = '';
+  let unitPlain = '';
+
+  if (f.unit && f.unit.trim() !== '') {
+    unitHtml = ` <span class="text-amber-400">${f.unit}</span>.`;
+    unitPlain = ` ${f.unit}.`;
+  } else {
+    unitHtml = '.';
+    unitPlain = '.';
+  }
+
+  htmlText += `${f.label}: <span class="text-amber-400">${result}</span>${unitHtml}\n\n`;
+  plainText += `${f.label}: ${result}${unitPlain}\n\n`;
+}
       else if (f.type === 'comparison') {
         const headerText = fieldsData[`${f.id}_header`] || f.label || '';
         const hasAnyValue = (f.items || []).some((item: any) => {
@@ -654,8 +712,8 @@ const insertPhrase = (phrase: string) => {
     <div
   key={f.id}
   data-field-id={f.id}
-  className={`card transition-all duration-250 ease-out rounded-2xl overflow-hidden
-    ${f.type === 'header' 
+  className={`card transition-all duration-250 ease-out rounded-2xl overflow-visible
+    ${f.type === 'header' || f.type === 'notes'
       ? 'bg-transparent border-0 shadow-none' 
       : 'bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl'
     }
@@ -679,13 +737,13 @@ const insertPhrase = (phrase: string) => {
     relative`}
 >
       {/* Кнопки управления — правый верхний угол */}
-     {f.type !== 'header' && ( 
+     {f.type !== 'header' && f.type !== 'notes' && ( 
       <div className="absolute top-4 right-4 flex gap-0 z-20">
         {/* Сначала кнопка ДОБАВИТЬ */}
         <button
           onClick={() => addTextFieldAfter(f.id)}
           tabIndex={-1}
-          className="btn btn-ghost btn-square w-6 h-6 text-white hover:text-amber-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all">
+          className="btn btn-ghost btn-square w-6 h-6 text-white hover:text-amber-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Добавить поле">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
             </svg>
@@ -695,7 +753,7 @@ const insertPhrase = (phrase: string) => {
         <button
           onClick={() => removeField(f.id)}
           tabIndex={-1}
-          className="btn btn-ghost btn-square w-6 h-6 text-white hover:text-red-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all">
+          className="btn btn-ghost btn-square w-6 h-6 text-white hover:text-red-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Удалить">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
             <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
           </svg>
@@ -705,13 +763,15 @@ const insertPhrase = (phrase: string) => {
 
       <div className="card-body p-5 pt-12">   {/* pt-12 — отступ сверху под кнопки */}
         {/* Название поля — теперь белое */}
-        <label className="block text-white text-sm mb-2 font-medium text-center">
-          {f.type === 'header' ? (
-            <span className="text-2xl font-bold text-white">{f.label}</span>
-          ) : (
-            f.label
-          )}
-        </label>
+        {f.type !== 'checkbox' && (
+          <label className="block text-white text-sm mb-2 font-medium text-center">
+            {f.type === 'header' ? (
+              <span className="text-2xl font-bold text-white">{f.label}</span>
+            ) : (
+              f.label
+            )}
+          </label>
+        )}
 
         {/* Все поля остаются без изменений */}
         {f.type === 'text' && (
@@ -742,7 +802,7 @@ const insertPhrase = (phrase: string) => {
 
                 {f.type === 'checkbox' && (
                 <label 
-                  className="flex items-center gap-3 cursor-pointer text-sm group"
+                  className="flex items-center gap-3 cursor-pointer text-sm group mb-6"
                   onClick={() => handleFocus(f.id, null)}
                 >
                   <input
@@ -756,7 +816,7 @@ const insertPhrase = (phrase: string) => {
                               focus:ring-2 focus:ring-amber-400/30 focus:outline-none transition-all cursor-pointer"
                   />
                   
-                  <span className="text-white group-hover:text-amber-300 transition-colors">
+                  <span className="text-white group-hover:text-amber-400 transition-colors">
                     {f.label}
                   </span>
                 </label>
@@ -806,7 +866,7 @@ const insertPhrase = (phrase: string) => {
                       <div className="space-y-5">
                         {(f.variables || []).map((v: any, i: number) => (
                           <div key={i} className="flex items-center gap-4">
-                            <span className="font-mono w-12 text-zinc-400 text-sm flex-shrink-0">{v.name}</span>
+                            <span className="w-12 text-zinc-400 text-sm flex-shrink-0">{v.name}</span>
                             <span className="text-zinc-400">=</span>
                             <input
                               ref={el => { if (el) inputRefs.current[`${f.id}_var_${i}`] = el; }}
@@ -999,7 +1059,7 @@ const insertPhrase = (phrase: string) => {
             {!isSingleSubgroupAndSinglePhrase && (
               <ul 
                 tabIndex={0} 
-                className="dropdown-content menu bg-zinc-900 border border-zinc-700 rounded-box z-1 w-52 p-2"
+                className="dropdown-content menu bg-zinc-900/90 backdrop-blur-2xl border border-zinc-700 rounded-box z-1 w-52 p-2"
               >
                 {subgroups.map((subgroup: any) => {
   const phrases = subgroup.phrases?.filter(Boolean) || [];
@@ -1008,7 +1068,7 @@ const insertPhrase = (phrase: string) => {
   return (
     <li 
       key={subgroup.id} 
-      className="group rounded-lg hover:bg-zinc-800"   
+      className="group rounded-lg hover:bg-zinc-800 transition-all"   
     >
       <div className="dropdown dropdown-left dropdown-hover w-full">
         <button
@@ -1025,7 +1085,7 @@ const insertPhrase = (phrase: string) => {
 
         {/* Третий уровень */}
         {!isSinglePhraseInSubgroup && (
-          <ul tabIndex={0} className="dropdown-content menu bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl min-w-[340px] z-[10000] p-1 duration-70 delay-0" 
+          <ul tabIndex={0} className="dropdown-content menu bg-zinc-900 bg-zinc-900/90 backdrop-blur-2xl border border-zinc-700 rounded-xl shadow-xl min-w-[340px] z-[10000] p-1 duration-70 delay-0" 
           >
             <div className="max-h-[420px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
     {/* сюда остаётся весь .map по phrases */}

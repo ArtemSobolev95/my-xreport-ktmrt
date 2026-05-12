@@ -14,16 +14,27 @@ export default function Login() {
 
   // Автоматическое подтверждение email при переходе по ссылке из письма
   useEffect(() => {
-    if (!router.isReady || !token || typeof token !== 'string') return;
+    console.log('🔍 [Login] useEffect triggered. isReady:', router.isReady, 'token:', token);
+
+    if (!router.isReady) {
+      console.log('⏳ router.isReady = false — ждём...');
+      return;
+    }
+
+    if (!token || typeof token !== 'string') {
+      console.log('⚠️ Токен отсутствует или неверный');
+      return;
+    }
+
+    console.log('🚀 Начинаем подтверждение email. Токен:', token.substring(0, 30) + '...');
 
     const confirmEmail = async () => {
       try {
-        console.log('🚀 Подтверждаем email по токену:', token);
         await pb.collection('users').confirmVerification(token);
-        console.log('✅ Email успешно подтверждён');
+        console.log('✅ confirmVerification выполнен успешно');
         alert('✅ Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
       } catch (err: any) {
-        console.error('❌ Ошибка подтверждения email:', err);
+        console.error('❌ Ошибка confirmVerification:', err);
         alert('Не удалось подтвердить email. Попробуйте войти вручную.');
       }
     };

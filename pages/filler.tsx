@@ -62,9 +62,9 @@ function FillerPage() {
   const [fieldsData, setFieldsData] = useState<Record<string, any>>({});
   const [activeFieldId, setActiveFieldId] = useState<string | null>(null);
   const activeFieldRef = useRef<string | null>(null);
-    const activeInputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
+  const activeInputRef = useRef<HTMLElement | null>(null);
   const [loading, setLoading] = useState(true);
-    const [deletedFieldIds, setDeletedFieldIds] = useState<string[]>([]);
+  const [deletedFieldIds, setDeletedFieldIds] = useState<string[]>([]);
   const [abbreviations, setAbbreviations] = useState<Record<string, { full: string; category: string; usage: number }>>({});
   const [categories, setCategories] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -511,7 +511,7 @@ function FillerPage() {
     setFieldsData(prev => ({ ...prev, [fieldId]: value }));
   };
 
-    const handleFocus = (fieldId: string, el: HTMLTextAreaElement | HTMLInputElement | null) => {
+  const handleFocus = (fieldId: string, el: HTMLElement | null) => {
   // Извлекаем основной ID карточки
   let mainId = fieldId;
   if (fieldId.includes('_')) {
@@ -575,9 +575,12 @@ const insertPhrase = (phrase: string) => {
   input.focus();
 
   setTimeout(() => {
-    const start = input.selectionStart ?? 0;
-    const end = input.selectionEnd ?? start;
-    const current = input.value || '';
+    const inputEl = input as HTMLInputElement | HTMLTextAreaElement | null;
+    if (!inputEl) return;
+
+    const start = inputEl.selectionStart ?? 0;
+    const end = inputEl.selectionEnd ?? start;
+    const current = inputEl.value || '';
 
     const newText = current.substring(0, start) + phrase + current.substring(end);
 
@@ -592,8 +595,8 @@ const insertPhrase = (phrase: string) => {
     }
     // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
 
-    const newPos = start + phrase.length;
-    input.setSelectionRange(newPos, newPos);
+        const newPos = start + phrase.length;
+    inputEl.setSelectionRange(newPos, newPos);
   }, 0);
 };
 
@@ -956,7 +959,7 @@ const insertPhrase = (phrase: string) => {
             onClick={() => {
               const currentItems = f.items || [];
               const newItems = currentItems.filter((i) => i.id !== item.id);
-              const newFields = template.fields.map((field) =>
+              const newFields = (template.fields as BuilderField[]).map((field) =>
                 field.id === f.id ? { ...field, items: newItems } : field
               );
               setTemplate({ ...template, fields: newFields });
@@ -975,7 +978,7 @@ const insertPhrase = (phrase: string) => {
         const currentItems = f.items || [];
         const maxNumber = Math.max(...currentItems.map((i) => i.number || 0), 0);
         const newItem = { id: Date.now().toString(), number: maxNumber + 1, value: '', previous: '' };
-        const newFields = template.fields.map((field) =>
+        const newFields = template.fields.map((field: BuilderField) =>
           field.id === f.id ? { ...field, items: [...currentItems, newItem] } : field
         );
         setTemplate({ ...template, fields: newFields });

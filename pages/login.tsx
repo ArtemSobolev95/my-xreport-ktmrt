@@ -18,10 +18,13 @@ export default function Login() {
 
     const confirmEmail = async () => {
       try {
+        console.log('🚀 Подтверждаем email по токену:', token);
         await pb.collection('users').confirmVerification(token);
+        console.log('✅ Email успешно подтверждён');
         alert('✅ Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
       } catch (err: any) {
-        console.error('Ошибка подтверждения email:', err);
+        console.error('❌ Ошибка подтверждения email:', err);
+        alert('Не удалось подтвердить email. Попробуйте войти вручную.');
       }
     };
 

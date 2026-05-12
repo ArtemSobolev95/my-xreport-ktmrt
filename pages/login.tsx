@@ -10,34 +10,38 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-    const { token } = router.query;
+    const { token: queryToken } = router.query;
 
   // Автоматическое подтверждение email при переходе по ссылке из письма
   useEffect(() => {
-    console.log('🔍 [Login] useEffect triggered. isReady:', router.isReady, 'token:', token);
+    // Берём токен либо из router.query, либо напрямую из URL (надёжнее)
+    let token = queryToken as string | undefined;
 
-    if (!router.isReady) {
-      console.log('⏳ router.isReady = false — ждём...');
-      return;
+    if (!token && typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      token = urlParams.get('token') || undefined;
     }
 
-    if (!token || typeof token !== 'string') {
-      console.log('⚠️ Токен отсутствует или неверный');
+    console.log('🔍 [Login] useEffect → isReady:', router.isReady, 'token:', token ? token.substring(0, 30) + '...' : 'undefined');
+
+    if (!router.isReady || !token || typeof token !== 'string') {
       return;
     }
-
-    console.log('🚀 Начинаем подтверждение email. Токен:', token.substring(0, 30) + '...');
 
     const confirmEmail = async () => {
       try {
+        console.log('🚀 Выполняем confirmVerification...');
         await pb.collection('users').confirmVerification(token);
-        console.log('✅ confirmVerification выполнен успешно');
+        console.log('✅ Email успешно подтверждён');
         alert('✅ Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
       } catch (err: any) {
         console.error('❌ Ошибка confirmVerification:', err);
         alert('Не удалось подтвердить email. Попробуйте войти вручную.');
       }
     };
+
+    confirmEmail();
+  }, [router.isReady, queryToken]);
 
     confirmEmail();
   }, [router.isReady, token]);

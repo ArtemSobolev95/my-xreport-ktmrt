@@ -2,6 +2,20 @@ export type FieldType =
   'header' | 'text' | 'number' | 'checkbox' | 'select' | 
   'rating' | 'notes' | 'formula' | 'comparison';
 
+export interface QuickButtonSubgroup {
+  id: string;
+  label: string;
+  isExpanded: boolean;
+  phrases: string[];
+}
+
+export interface QuickButtonGroup {
+  id: string;
+  label: string;
+  isExpanded: boolean;
+  subgroups: QuickButtonSubgroup[];
+}
+
 export interface BuilderField {
   id: string;
   type: FieldType;
@@ -24,6 +38,7 @@ export interface BuilderField {
   formula?: string;
   variables?: Array<{ name: string; value: string }>;
   items?: any[];                   
-  quickButtons?: any[];
+
+  quickButtons?: QuickButtonGroup[];   // ← теперь строго типизировано
   isQuickText?: boolean;
 }

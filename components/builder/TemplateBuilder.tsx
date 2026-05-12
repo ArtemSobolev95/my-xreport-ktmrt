@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../../lib/pocketbase';
 pb.autoCancellation(false);
@@ -17,8 +17,6 @@ import {
   HomeIcon,
   PlusIcon,
   MinusIcon,
-  ChevronDownIcon,
-  BeakerIcon,
   EyeIcon,
   PhotoIcon,
   ArrowRightCircleIcon,
@@ -48,29 +46,13 @@ import {
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import type { BuilderField, FieldType } from '../../types/builder';
+import type { BuilderField, FieldType, QuickButtonGroup, QuickButtonSubgroup } from '../../types/builder';
 
 import { motion, AnimatePresence } from 'framer-motion';
+import withAuth from '../../components/withAuth';
+import UserHeader from '../../components/UserHeader';
 
-interface QuickButton {
-  id: string;
-  label: string;
-  phrases: string[];
-}
 
-interface QuickButtonSubgroup {
-  id: string;
-  label: string;
-  isExpanded: boolean;
-  phrases: string[];
-}
-
-interface QuickButtonGroup {
-  id: string;
-  label: string;
-  isExpanded: boolean;
-  subgroups: QuickButtonSubgroup[];
-}
 
 const availableFields = [
   { type: 'header' as FieldType, label: 'Заголовок', icon: <ClipboardDocumentListIcon className="w-7 h-7" /> },
@@ -95,13 +77,17 @@ function SortableField({
   onRemove, 
   onUpdate,
   onDuplicate,
-  // ← новые пропсы для модалки
+  // Пропсы ниже используются ТОЛЬКО в блоке notes
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   showAddLinkModal,
   setShowAddLinkModal,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   tempLinkText,
   setTempLinkText,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   tempLinkUrl,
   setTempLinkUrl,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   handleAddLink
 }: {
   field: BuilderField;
@@ -127,17 +113,14 @@ function SortableField({
 
   const [checked, setChecked] = useState(false);
   const [selectedRating, setSelectedRating] = useState<number | null>(null);
-  const [formulaValues, setFormulaValues] = useState<Record<string, number>>({});
 
-
-  useEffect(() => {
-    if (field.variables) {
-      const newValues: Record<string, number> = {};
-      field.variables.forEach(v => {
-        newValues[v.name] = v.value ? parseFloat(v.value) || 0 : 0;
-      });
-      setFormulaValues(newValues);
-    }
+  
+  const formulaValues = useMemo(() => {
+    const values: Record<string, number> = {};
+    (field.variables || []).forEach(v => {
+      values[v.name] = v.value ? parseFloat(v.value) || 0 : 0;
+    });
+    return values;
   }, [field.variables]);
 
   const evaluateFormula = (expr: string) => {
@@ -202,8 +185,9 @@ function SortableField({
       setTempLinkText('Изображение');
       setTempLinkUrl(publicUrl);
       setShowAddLinkModal(true);
-    } catch (err: any) {
-      alert('Ошибка загрузки изображения: ' + (err?.message || err));
+    } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        alert('Ошибка загрузки изображения: ' + errorMessage);
     }
   };
   input.click();
@@ -394,9 +378,9 @@ function SortableField({
                     type="text"
                     value={option}
                     onChange={e => {
-                      const newOptions = [...(field.options || [])];
-                      newOptions[index] = e.target.value;
-                      onUpdate(field.id, { options: newOptions });
+  const newOptions = [...(field.options || [])];
+  newOptions[index] = e.target.value;
+  onUpdate(field.id, { options: newOptions });
                     }}
                     className="w-full bg-transparent border-0 border-b-2 border-white/20 px-0 py-1 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
                     placeholder="Введите значение"
@@ -502,9 +486,9 @@ function SortableField({
               type="text" 
               value={field.explanations?.[i] || ''} 
               onChange={e => {
-                const newExps = [...(field.explanations || Array(field.max || 5).fill(''))];
-                newExps[i] = e.target.value;
-                onUpdate(field.id, { explanations: newExps });
+  const newExps = [...(field.explanations || Array(field.max || 5).fill(''))];
+  newExps[i] = e.target.value;
+  onUpdate(field.id, { explanations: newExps });
               }} 
               className="flex-1 bg-transparent border-0 border-b-2 border-white/20 px-0 py-3 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm" 
               placeholder={`Введите значение`} 
@@ -627,7 +611,7 @@ function SortableField({
           <div>
             <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="w-full text-sm px-0 py-0 text-white mb-1 focus:outline-none focus:ring-0 focus:ring-offset-0" placeholder="Введите значение" />
             <div className="space-y-0">
-              {(field.items || []).map((item: any) => (
+              {(field.items || []).map((item) => (
                 <div key={item.id} className="w-full bg-transparent px-1 py-0 text-sm text-white placeholder:text-zinc-400">
                   <span className="font-medium text-zinc-400 w-6">{item.number}.</span>
                   <input type="text" value={item.value} onChange={e => {
@@ -645,7 +629,7 @@ function SortableField({
             </div>
             <button onClick={() => {
               const currentItems = field.items || [];
-              const maxNumber = Math.max(...currentItems.map((i: any) => i.number || 0), 0);
+              const maxNumber = Math.max(...currentItems.map((i) => i.number || 0), 0);
               const newItem = { id: Date.now().toString(), number: maxNumber + 1, value: '', previous: '' };
               onUpdate(field.id, { items: [...currentItems, newItem] });
             }} className="w-full mt-6 flex items-center justify-center py-3 text-blue-400 hover:text-blue-300">
@@ -704,8 +688,9 @@ function SortableField({
   );
 }
 
-export default function TemplateBuilder() {
+function TemplateBuilder() {
   const router = useRouter();
+  const user = pb.authStore.record;
   const { edit } = router.query;
   const [templateTitle, setTemplateTitle] = useState("Новый шаблон");
   const [fields, setFields] = useState<BuilderField[]>([]);
@@ -713,10 +698,24 @@ export default function TemplateBuilder() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [copiedField, setCopiedField] = useState<BuilderField | null>(null);
+  
   const [showSaveModal, setShowSaveModal] = useState(false);
 
-    const [showAddLinkModal, setShowAddLinkModal] = useState(false);
+  const updateQuickButtons = (
+    fieldId: string,
+    updater: (draft: QuickButtonGroup[]) => QuickButtonGroup[]
+  ) => {
+    const fieldIndex = fields.findIndex(f => f.id === fieldId);
+    if (fieldIndex === -1) return;
+
+    const current = fields[fieldIndex].quickButtons || [];
+    const cloned = structuredClone(current) as QuickButtonGroup[];
+    const updated = updater(cloned);
+
+    updateField(fieldId, { quickButtons: updated });
+  };
+  
+  const [showAddLinkModal, setShowAddLinkModal] = useState(false);
   const [tempLinkText, setTempLinkText] = useState('');
   const [tempLinkUrl, setTempLinkUrl] = useState('');
 
@@ -734,6 +733,7 @@ export default function TemplateBuilder() {
   };
 
   const [activeId, setActiveId] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [activeType, setActiveType] = useState<'field' | 'quickButton' | null>(null);
 
   const sensors = useSensors(
@@ -783,7 +783,11 @@ export default function TemplateBuilder() {
     };
 
     if (type === 'text') {
-      newField.quickButtons = [];
+      newField = {
+        ...newField,
+        quickButtons: [],
+        isQuickText: true,
+      } as BuilderField;
     }
 
     if (selectedFieldId) {
@@ -855,32 +859,33 @@ export default function TemplateBuilder() {
     return <div className="bg-zinc-900 border border-white/30 rounded-2xl p-6 shadow-2xl opacity-75 scale-105 pointer-events-none">{field.label}</div>;
   };
 
-  const performSave = async (asNew: boolean) => {
-  setIsSaving(true);
+    const performSave = async (asNew: boolean) => {
+      setIsSaving(true);
 
-  const payload = {
-    title: templateTitle,
-    fields: JSON.parse(JSON.stringify(fields))
-  };
+      const payload = {
+        title: templateTitle,
+        fields: JSON.parse(JSON.stringify(fields)),
+        user: user?.id,
+        isPublic: false
+      };
 
-  try {
-    if (editingId && !asNew) {
-      // Обновляем существующий шаблон
-      await pb.collection('templates').update(editingId, payload);
-    } else {
-      // Создаём новый шаблон
-      const newRecord = await pb.collection('templates').create(payload);
-      setEditingId(newRecord.id);
-      router.push(`/builder?edit=${newRecord.id}`);
-    }
-  } catch (err) {
-    console.error("Ошибка сохранения шаблона:", err);
-    alert("Ошибка при сохранении шаблона");
-  } finally {
-    setIsSaving(false);
-    setShowSaveModal(false);
-  }
-};
+      try {
+        if (editingId && !asNew) {
+          await pb.collection('templates').update(editingId, payload);
+        } else {
+          const newRecord = await pb.collection('templates').create(payload);
+          setEditingId(newRecord.id);
+        }
+        router.push('/');
+      } catch (err: unknown) {
+     console.error("Ошибка сохранения шаблона:", err);
+     const errorMessage = err instanceof Error ? err.message : String(err);
+     alert("Ошибка при сохранении шаблона: " + errorMessage);
+   } finally {
+        setIsSaving(false);
+        setShowSaveModal(false);
+      }
+    };
 
   const handleSaveClick = () => {
     setShowSaveModal(true);
@@ -894,11 +899,19 @@ export default function TemplateBuilder() {
   const goToList = () => router.push('/');
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-white">
+    <div className="flex flex-col h-screen bg-zinc-950 text-white">
+
+      <div className="sticky top-0 z-50 bg-zinc-900/90 backdrop-blur-xl border-b border-white/10">
+        <UserHeader />
+      </div>
+
+      <div className="flex flex-1 overflow-hidden">
+
+
       {/* ЛЕВАЯ ПАНЕЛЬ */}
-      <div className="w-64 bg-zinc-900/75 backdrop-blur-2xl border-r border-white/10 shadow-2xl p-6 overflow-auto flex flex-col">
-        <h2 className="font-semibold text-xl mb-6 tracking-tight text-white">Инструменты</h2>
-        <div className="space-y-2 flex-1">
+      <div className="w-64 bg-zinc-900/75 backdrop-blur-2xl border-r border-white/10 shadow-2xl p-2 overflow-auto flex flex-col">
+        
+                <div className="space-y-1 flex-1 pt-6">
           {availableFields.map(item => (
             <button key={item.type} onClick={() => addField(item.type)} className="w-full flex items-center gap-4 p-3 hover:bg-zinc-800 hover:text-amber-400 rounded-xl transition-all text-left group cursor-pointer">
               <div className="w-7 h-7 rounded-2xl flex items-center justify-center text-3xl shadow-inner bg-none group-hover:scale-105 transition-transform">
@@ -910,8 +923,16 @@ export default function TemplateBuilder() {
         </div>
       </div>
 
-      <div className="flex-1 p-8 overflow-auto">
-        <input type="text" value={templateTitle} onChange={(e) => setTemplateTitle(e.target.value)} className="w-full text-4xl font-semibold bg-transparent border-b border-zinc-700 focus:border-white outline-none pb-4 mb-12 tracking-tight" placeholder="Название шаблона" />
+      <div className="flex-1 p-10 overflow-auto">
+                <div className="max-w-3xl mx-auto">
+          <input 
+            type="text" 
+            value={templateTitle} 
+            onChange={(e) => setTemplateTitle(e.target.value)} 
+            className="w-full text-2xl font-semibold bg-transparent border-b border-zinc-700 hover:border-zinc-400 focus:border-amber-400 outline-none pb-4 mb-8 tracking-tight transition-colors" 
+            placeholder="Название шаблона" 
+          />
+        </div>
 
         <DndContext
           sensors={sensors}
@@ -922,7 +943,7 @@ export default function TemplateBuilder() {
         >
           <SortableContext items={fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
             <div className="space-y-4 max-w-3xl mx-auto">
-              {fields.length === 0 && <div className="text-center py-24 text-zinc-500 border-2 border-dashed border-zinc-700 rounded-none">Добавьте поля из левой панели</div>}
+              {fields.length === 0 && <div className="text-center py-24 text-zinc-500 border-2 border-none border-zinc-700 rounded-none">Выберите инсутрумент из левой панели</div>}
               {fields.map(field => (
                 <SortableField 
   key={field.id} 
@@ -951,28 +972,29 @@ export default function TemplateBuilder() {
       </div>
 
       {/* ПРАВАЯ ПАНЕЛЬ */}
-      <div className="w-112 bg-zinc-900 border-l border-zinc-800 flex flex-col">
+      <div className="w-[400px] min-w-[300px] max-w-[680px] flex-shrink-0 bg-zinc-900 border-l border-zinc-800 flex flex-col">
         {selectedFieldId && fields.find(f => f.id === selectedFieldId)?.type === 'text' ? (
   <div className="flex-1 overflow-auto p-6">
     <div className="flex items-center justify-between mb-4">
-      <h3 className="font-semibold text-lg tracking-tight">Быстрые кнопки</h3>
+      <h3 className="font-semibold text-lg tracking-tigh">Быстрые кнопки</h3>
       <button
         onClick={() => {
           const field = fields.find(f => f.id === selectedFieldId);
           if (!field) return;
-          const current = field.quickButtons || [];
-          const newGroup: QuickButtonGroup = {
-            id: Date.now().toString(36),
-            label: '',
-            isExpanded: true,
-            subgroups: [{
-              id: Date.now().toString(36) + '1',
-              label: '',
-              isExpanded: true,
-              phrases: ['']
-            }]
-          };
-          updateField(selectedFieldId, { quickButtons: [...current, newGroup] });
+          updateQuickButtons(selectedFieldId!, (draft) => {
+  draft.push({
+    id: Date.now().toString(36),
+    label: '',
+    isExpanded: true,
+    subgroups: [{
+      id: Date.now().toString(36) + '1',
+      label: '',
+      isExpanded: true,
+      phrases: ['']
+    }]
+  });
+  return draft;
+});
         }}
         className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
       >
@@ -989,9 +1011,10 @@ export default function TemplateBuilder() {
               onClick={() => {
                 const field = fields.find(f => f.id === selectedFieldId);
                 if (!field) return;
-                const newButtons = [...(field.quickButtons || [])] as QuickButtonGroup[];
-                newButtons[gIndex].isExpanded = !newButtons[gIndex].isExpanded;
-                updateField(selectedFieldId, { quickButtons: newButtons });
+                updateQuickButtons(selectedFieldId!, (draft) => {
+  draft[gIndex].isExpanded = !draft[gIndex].isExpanded;
+  return draft;
+});
               }}
               className="text-zinc-400 hover:text-white transition-all cursor-pointer"
               style={{ transform: group.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
@@ -1004,9 +1027,10 @@ export default function TemplateBuilder() {
               onChange={e => {
                 const field = fields.find(f => f.id === selectedFieldId);
                 if (!field) return;
-                const newButtons = [...(field.quickButtons || [])] as QuickButtonGroup[];
-                newButtons[gIndex].label = e.target.value;
-                updateField(selectedFieldId, { quickButtons: newButtons });
+                updateQuickButtons(selectedFieldId!, (draft) => {
+  draft[gIndex].label = e.target.value;
+  return draft;
+});
               }}
               className="flex-1 bg-transparent text-sm font-semibold outline-none"
               placeholder="Введите значение"
@@ -1015,9 +1039,10 @@ export default function TemplateBuilder() {
               onClick={() => {
                 const field = fields.find(f => f.id === selectedFieldId);
                 if (!field) return;
-                const newButtons = [...(field.quickButtons || [])] as QuickButtonGroup[];
-                newButtons.splice(gIndex, 1);
-                updateField(selectedFieldId, { quickButtons: newButtons });
+                updateQuickButtons(selectedFieldId!, (draft) => {
+  draft.splice(gIndex, 1);
+  return draft;
+});
               }}
               className="text-white hover:text-red-400 transition-all cursor-pointer"
             >
@@ -1042,9 +1067,10 @@ export default function TemplateBuilder() {
                         onClick={() => {
                           const field = fields.find(f => f.id === selectedFieldId);
                           if (!field) return;
-                          const newButtons = [...(field.quickButtons || [])] as QuickButtonGroup[];
-                          newButtons[gIndex].subgroups[sIndex].isExpanded = !newButtons[gIndex].subgroups[sIndex].isExpanded;
-                          updateField(selectedFieldId, { quickButtons: newButtons });
+                          updateQuickButtons(selectedFieldId!, (draft) => {
+  draft[gIndex].subgroups[sIndex].isExpanded = !draft[gIndex].subgroups[sIndex].isExpanded;
+  return draft;
+});
                         }}
                         className="text-zinc-400 hover:text-white transition-transform duration-200 cursor-pointer"
                         style={{ transform: subgroup.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
@@ -1057,9 +1083,10 @@ export default function TemplateBuilder() {
                         onChange={e => {
                           const field = fields.find(f => f.id === selectedFieldId);
                           if (!field) return;
-                          const newButtons = [...(field.quickButtons || [])] as QuickButtonGroup[];
-                          newButtons[gIndex].subgroups[sIndex].label = e.target.value;
-                          updateField(selectedFieldId, { quickButtons: newButtons });
+                          updateQuickButtons(selectedFieldId!, (draft) => {
+  draft[gIndex].subgroups[sIndex].label = e.target.value;
+  return draft;
+});
                         }}
                         className="flex-1 bg-transparent text-xs font-medium outline-none"
                         placeholder="Введите значение"
@@ -1069,15 +1096,16 @@ export default function TemplateBuilder() {
                           onClick={() => {
                             const field = fields.find(f => f.id === selectedFieldId);
                             if (!field) return;
-                            const newButtons = [...(field.quickButtons || [])] as QuickButtonGroup[];
-                            const newSubgroup: QuickButtonSubgroup = {
-                              id: Date.now().toString(36),
-                              label: '',
-                              isExpanded: true,
-                              phrases: ['']
-                            };
-                            newButtons[gIndex].subgroups.splice(sIndex + 1, 0, newSubgroup);
-                            updateField(selectedFieldId, { quickButtons: newButtons });
+                            updateQuickButtons(selectedFieldId!, (draft) => {
+  const newSubgroup: QuickButtonSubgroup = {
+    id: Date.now().toString(36),
+    label: '',
+    isExpanded: true,
+    phrases: ['']
+  };
+  draft[gIndex].subgroups.splice(sIndex + 1, 0, newSubgroup);
+  return draft;
+});
                           }}
                           className="text-white hover:text-amber-400 transition-all p-1 cursor-pointer"
                         >
@@ -1088,9 +1116,10 @@ export default function TemplateBuilder() {
                             onClick={() => {
                               const field = fields.find(f => f.id === selectedFieldId);
                               if (!field) return;
-                              const newButtons = [...(field.quickButtons || [])] as QuickButtonGroup[];
-                              newButtons[gIndex].subgroups.splice(sIndex, 1);
-                              updateField(selectedFieldId, { quickButtons: newButtons });
+                              updateQuickButtons(selectedFieldId!, (draft) => {
+  draft[gIndex].subgroups.splice(sIndex, 1);
+  return draft;
+});
                             }}
                             className="text-white hover:text-red-400 transition-all p-1 cursor-pointer"
                           >
@@ -1118,20 +1147,22 @@ export default function TemplateBuilder() {
                                 onChange={e => {
                                   const field = fields.find(f => f.id === selectedFieldId);
                                   if (!field) return;
-                                  const newButtons = [...(field.quickButtons || [])] as QuickButtonGroup[];
-                                  newButtons[gIndex].subgroups[sIndex].phrases[pIndex] = e.target.value;
-                                  updateField(selectedFieldId, { quickButtons: newButtons });
+                                  updateQuickButtons(selectedFieldId!, (draft) => {
+  draft[gIndex].subgroups[sIndex].phrases[pIndex] = e.target.value;
+  return draft;
+});
                                 }}
-                                className="flex-1 bg-transparent border border-transparent px-4 py-1 text-xs focus:outline-none focus:ring-0"
+                                className="flex-1 min-w-0 bg-transparent border border-transparent px-4 py-2 text-xs focus:outline-none focus:ring-0"
                                 placeholder="Введите значение"
                               />
                               <button
                                 onClick={() => {
                                   const field = fields.find(f => f.id === selectedFieldId);
                                   if (!field) return;
-                                  const newButtons = [...(field.quickButtons || [])] as QuickButtonGroup[];
-                                  newButtons[gIndex].subgroups[sIndex].phrases.splice(pIndex + 1, 0, '');
-                                  updateField(selectedFieldId, { quickButtons: newButtons });
+                                  updateQuickButtons(selectedFieldId!, (draft) => {
+  draft[gIndex].subgroups[sIndex].phrases.splice(pIndex + 1, 0, '');
+  return draft;
+});
                                 }}
                                 className="text-white hover:text-amber-400 cursor-pointer transition-all"
                               >
@@ -1142,9 +1173,10 @@ export default function TemplateBuilder() {
                                   onClick={() => {
                                     const field = fields.find(f => f.id === selectedFieldId);
                                     if (!field) return;
-                                    const newButtons = [...(field.quickButtons || [])] as QuickButtonGroup[];
-                                    newButtons[gIndex].subgroups[sIndex].phrases.splice(pIndex, 1);
-                                    updateField(selectedFieldId, { quickButtons: newButtons });
+                                    updateQuickButtons(selectedFieldId!, (draft) => {
+  draft[gIndex].subgroups[sIndex].phrases.splice(pIndex, 1);
+  return draft;
+});
                                   }}
                                   className="text-white hover:text-red-400 cursor-pointer transition-all"
                                 >
@@ -1189,6 +1221,7 @@ export default function TemplateBuilder() {
         
         /></button>
         
+      </div>
       </div>
       </div>
 
@@ -1308,3 +1341,4 @@ export default function TemplateBuilder() {
     </div>
   );
 }
+export default withAuth(TemplateBuilder);

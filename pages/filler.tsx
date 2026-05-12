@@ -1,18 +1,16 @@
 'use client';
-import { useState, useEffect, useRef, memo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Upload, Download as DownloadIcon, Edit2, Trash2, Home, X, Minus, BookmarkIcon, RotateCcw, Plus, XCircle, ArrowDownSquare, ArrowUpSquare } from 'lucide-react';
-import { PlusCircleIcon } from '@heroicons/react/24/solid';
+import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle } from 'lucide-react';
 import { 
   ArrowDownOnSquareIcon, 
   ArrowUpOnSquareIcon        
 } from '@heroicons/react/24/outline';
-import type { BuilderField } from '../types/builder';
-const cardStyle = {
-  transition: 'all 500ms cubic-bezier(0.4, 0, 0.2, 1)', // очень плавный ease-out
-};
+import type { BuilderField, QuickButtonGroup, QuickButtonSubgroup } from '../types/builder';
+import withAuth from '../components/withAuth';
+import UserHeader from '../components/UserHeader';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
 const RatingField = ({ 
@@ -24,7 +22,7 @@ const RatingField = ({
   field: BuilderField;
   value: number;
   onChange: (value: number) => void;
-  onFocus: (fieldId: string, el: any) => void;
+  onFocus: (fieldId: string, el: HTMLElement | null) => void;
 }) => {
   return (
     <div className="flex gap-2 justify-center">
@@ -54,39 +52,23 @@ ${isActive
 };
 // ===========================================================================
 
-interface QuickButtonSubgroup {
-  id: string;
-  label: string;
-  isExpanded: boolean;
-  phrases: string[];
-}
 
-interface QuickButtonGroup {
-  id: string;
-  label: string;
-  isExpanded: boolean;
-  subgroups: QuickButtonSubgroup[];
-}
-
-export default function FillerPage() {
+function FillerPage() {
   const router = useRouter();
   const { id } = router.query;
-  const [template, setTemplate] = useState<any>(null);
+  const user = pb.authStore.record; // openButtonId и newGroupName больше не используются —
+  const [template, setTemplate] = useState<any>(null); // временно оставляем any (тип сложный)
   const [originalTemplate, setOriginalTemplate] = useState<any>(null);
   const [fieldsData, setFieldsData] = useState<Record<string, any>>({});
-  const [finalText, setFinalText] = useState('');
-  const [finalPlainText, setFinalPlainText] = useState('');
-  const [openButtonId, setOpenButtonId] = useState<string | null>(null);
   const [activeFieldId, setActiveFieldId] = useState<string | null>(null);
   const activeFieldRef = useRef<string | null>(null);
-  const activeInputRef = useRef<any>(null);
+    const activeInputRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
   const [loading, setLoading] = useState(true);
-  const [deletedFieldIds, setDeletedFieldIds] = useState<Set<string>>(new Set());
+    const [deletedFieldIds, setDeletedFieldIds] = useState<string[]>([]);
   const [abbreviations, setAbbreviations] = useState<Record<string, { full: string; category: string; usage: number }>>({});
   const [categories, setCategories] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Все');
-  const [newGroupName, setNewGroupName] = useState('');
   const [newAbbrText, setNewAbbrText] = useState('');
   const [newFullText, setNewFullText] = useState('');
   const [editingAbbrKey, setEditingAbbrKey] = useState<string | null>(null);
@@ -97,7 +79,7 @@ export default function FillerPage() {
     name: string;
   } | null>(null);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
-  const inputRefs = useRef<Record<string, any>>({});
+  const inputRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>>({});
   const [initialized, setInitialized] = useState(false);
   const [newlyAddedId, setNewlyAddedId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -111,7 +93,10 @@ export default function FillerPage() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [fullName, setFullName] = useState('');
   const [birthDate, setBirthDate] = useState('');
-  const [history, setHistory] = useState<Array<{ fieldsData: Record<string, any>; deletedFieldIds: Set<string> }>>([]);
+  const [history, setHistory] = useState<Array<{ 
+    fieldsData: Record<string, any>; 
+    deletedFieldIds: string[] 
+  }>>([]);
   const MAX_HISTORY = 50;
 
 
@@ -119,7 +104,7 @@ export default function FillerPage() {
     setHistory(prev => {
       const snapshot = {
         fieldsData: { ...fieldsData },
-        deletedFieldIds: new Set(deletedFieldIds)
+        deletedFieldIds: [...deletedFieldIds]   // массив!
       };
       const newHistory = [...prev, snapshot];
       return newHistory.slice(-MAX_HISTORY);
@@ -130,7 +115,7 @@ export default function FillerPage() {
     if (history.length === 0) return;
     const lastState = history[history.length - 1];
     setFieldsData(lastState.fieldsData);
-    setDeletedFieldIds(new Set(lastState.deletedFieldIds));
+    setDeletedFieldIds([...lastState.deletedFieldIds]);   // массив!
     setHistory(prev => prev.slice(0, -1));
   };
 
@@ -146,7 +131,7 @@ export default function FillerPage() {
   const newId = 'text-' + Date.now().toString();
   const newField: BuilderField = { 
     id: newId, 
-    type: 'text' as any, 
+    type: 'text',
     label: '', 
     isQuickText: true 
   };
@@ -169,11 +154,11 @@ export default function FillerPage() {
   }, 20);
 };
 
-  const removeField = (fieldId: string) => {
+    const removeField = (fieldId: string) => {
     saveToHistory();
     setRemovingId(fieldId);
     setTimeout(() => {
-      setDeletedFieldIds(prev => new Set([...prev, fieldId]));
+      setDeletedFieldIds(prev => [...prev, fieldId]);
       setFieldsData(prev => {
         const copy = { ...prev };
         delete copy[fieldId];
@@ -187,7 +172,7 @@ export default function FillerPage() {
     if (!originalTemplate) return;
     saveToHistory();
     setTemplate(JSON.parse(JSON.stringify(originalTemplate)));
-    setDeletedFieldIds(new Set());
+    setDeletedFieldIds([]);
     const init: Record<string, any> = {};
     originalTemplate.fields.forEach((f: BuilderField) => {
       if (f.defaultValue !== undefined) init[f.id] = f.defaultValue;
@@ -198,51 +183,84 @@ export default function FillerPage() {
     setFieldsData(init);
   };
  
-  const [openGroupId, setOpenGroupId] = useState<string | null>(null);
-    const [openSubgroupId, setOpenSubgroupId] = useState<string | null>(null);
+  
 
+            // ====================== ЗАГРУЗКА АББРЕВИАТУР ======================
   useEffect(() => {
     const loadAbbr = async () => {
-      try {
-        const record = await pb.collection('abbreviations').getOne('global', { $autoCancel: false });
+      if (!pb.authStore.record?.id) return;
 
-        setAbbreviations(record.abbreviations || {});
-        setCategories(record.categories || ['Общие']);
-      } catch (err: any) {
-        // Если записи ещё нет — создаём дефолтную
-        if (err.status === 404) {
+      const userId = pb.authStore.record.id;
+
+      try {
+        const records = await pb.collection('abbreviations').getList(1, 1, {
+          filter: `user = "${userId}"`,
+          $autoCancel: false
+        });
+
+        if (records.items.length > 0) {
+          const record = records.items[0];
+          setAbbreviations(record.abbreviations || {});
+          setCategories(record.categories || ['Общие']);
+          console.log('✅ Аббревиатуры загружены');
+        } else {
+          throw { status: 404 };
+        }
+      } catch (err: unknown) {
+        const error = err as any;
+        if (error?.status === 404) {
           const defaultData = {
-            abbreviations: { 'итд': { full: 'и так далее', category: 'Общие', usage: 0 } },
-            categories: ['Общие']
+            user: userId,
+            abbreviations: {},
+            categories: []
           };
-          await pb.collection('abbreviations').create({ id: 'global', ...defaultData });
-          setAbbreviations(defaultData.abbreviations);
-          setCategories(defaultData.categories);
+          const newRecord = await pb.collection('abbreviations').create(defaultData);
+          setAbbreviations(newRecord.abbreviations);
+          setCategories(newRecord.categories);
+          console.log('✅ Создана новая запись аббревиатур');
+        } else {
+          console.error("Ошибка загрузки:", err);
+          setAbbreviations({});
+          setCategories(['Общие']);
         }
       }
     };
     loadAbbr();
   }, []);
 
-  const saveData = async (newAbbr: any, newCats: string[]) => {
+              // ====================== СОХРАНЕНИЕ АББРЕВИАТУР ======================
+  const saveData = async (newAbbr: Record<string, any>, newCats: string[]) => {
     setAbbreviations(newAbbr);
     setCategories(newCats);
-    
+
+    if (!pb.authStore.record?.id) return;
+
+    const userId = pb.authStore.record.id;
+    const payload = {
+      abbreviations: newAbbr,
+      categories: newCats,
+      user: userId
+    };
+
     try {
-      await pb.collection('abbreviations').update('global', {
-        abbreviations: newAbbr,
-        categories: newCats
+      const records = await pb.collection('abbreviations').getList(1, 1, {
+        filter: `user = "${userId}"`,
+        $autoCancel: false
       });
-    } catch (err: any) {
-      if (err.status === 404) {
-        await pb.collection('abbreviations').create({
-          id: 'global',
-          abbreviations: newAbbr,
-          categories: newCats
-        });
+
+      if (records.items.length > 0) {
+        await pb.collection('abbreviations').update(records.items[0].id, payload);
+        console.log('✅ Аббревиатуры обновлены');
+      } else {
+        await pb.collection('abbreviations').create(payload);
+        console.log('✅ Аббревиатуры созданы');
       }
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error("❌ Ошибка сохранения:", errorMessage);
     }
   };
+
 
   const filteredAbbreviations = Object.entries(abbreviations)
     .filter(([abbr, info]) => {
@@ -252,13 +270,23 @@ export default function FillerPage() {
     })
     .sort((a, b) => (b[1].usage || 0) - (a[1].usage || 0));
 
-  useEffect(() => {
+        useEffect(() => {
     if (!id) return;
     setLoading(true);
 
     const loadTemplate = async () => {
       try {
-        const record = await pb.collection('templates').getOne(id as string, { $autoCancel: false });
+        const record = await pb.collection('templates').getOne(id as string, { 
+          $autoCancel: false 
+        });
+
+        // Проверяем доступ
+        const ownerId = typeof record.user === 'string' ? record.user : record.user?.id || '';
+        if (ownerId !== pb.authStore.record?.id && !record.isPublic) {
+          alert('У вас нет доступа к этому шаблону');
+          router.push('/');
+          return;
+        }
 
         setOriginalTemplate(JSON.parse(JSON.stringify(record)));
         setTemplate(record);
@@ -274,12 +302,15 @@ export default function FillerPage() {
         setFieldsData(init);
       } catch (err) {
         console.error("Ошибка загрузки шаблона:", err);
+        alert("Шаблон не найден или у вас нет доступа");
+        router.push('/');
       } finally {
         setLoading(false);
       }
     };
 
     loadTemplate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   useEffect(() => {
@@ -309,7 +340,7 @@ export default function FillerPage() {
     if (f.type === 'formula' && f.formula && f.variables) {
       try {
         // Проверяем, все ли переменные заполнены
-        const allFilled = f.variables.every((v: any, i: number) => {
+        const allFilled = f.variables.every((v, i: number) => {
           const val = fieldsData[`${f.id}_var_${i}`] || v.value || '';
           return String(val).trim() !== '';
         });
@@ -323,7 +354,7 @@ export default function FillerPage() {
         }
 
         const varMap = Object.fromEntries(
-          f.variables.map((v: any, i: number) => {
+          f.variables.map((v, i: number) => {
             const raw = fieldsData[`${f.id}_var_${i}`] || v.value || '';
             return [v.name, parseFloat(raw) || 0];
           })
@@ -350,9 +381,9 @@ export default function FillerPage() {
   if (changed) setFieldsData(newData);
 }, [fieldsData, template]);
 
-    // ====================== ГЛАВНЫЙ useEffect для finalText ======================
-  useEffect(() => {
-    if (!template) return;
+      // ====================== ГЕНЕРАЦИЯ ОТЧЁТА (useMemo) ======================
+  const { finalText, finalPlainText } = useMemo(() => {
+    if (!template) return { finalText: '', finalPlainText: '' };
 
     let htmlText = '';
     let plainText = '';
@@ -367,12 +398,11 @@ export default function FillerPage() {
     }
 
     template.fields.forEach((f: BuilderField) => {
-      if (deletedFieldIds.has(f.id)) return;
+      if (deletedFieldIds.includes(f.id)) return;
       if (f.type === 'header') return;
 
       const val = fieldsData[f.id];
 
-      // Пропускаем полностью пустые поля
       if (!val && !f.placeholder && f.type !== 'rating' && f.type !== 'comparison' && f.type !== 'checkbox') {
         return;
       }
@@ -380,23 +410,18 @@ export default function FillerPage() {
       let displayHtml = val || '';
       let displayPlain = val || '';
 
-      // Если ничего не введено — показываем placeholder серым
       if (!val && f.placeholder) {
         displayHtml = `<span style="color: #9ca3af;">${f.placeholder}</span>`;
         displayPlain = f.placeholder;
       }
 
-      // === ОСНОВНОЕ ИСПРАВЛЕНИЕ: amber-400 для всех введённых значений ===
       let coloredHtml = displayHtml;
-
-      if (val) {
-        if (['text', 'number', 'select', 'checkbox', 'formula', 'comparison'].includes(f.type)) {
-          coloredHtml = `<span class="text-amber-400">${val}</span>`;
-        }
+      if (val && ['text', 'number', 'select', 'checkbox', 'formula', 'comparison'].includes(f.type)) {
+        coloredHtml = `<span class="text-amber-400">${val}</span>`;
       }
 
       if (f.type === 'text') {
-        if ((f as any).isQuickText) {
+        if (f.isQuickText === true) {
           htmlText += `${coloredHtml}\n\n`;
           plainText += `${displayPlain}\n\n`;
         } else {
@@ -405,29 +430,15 @@ export default function FillerPage() {
         }
       } 
       else if (f.type === 'checkbox') {
-        // Всегда показываем чекбокс (даже если снят)
         const isChecked = fieldsData[f.id] === true;
-        const checkboxText = isChecked
-          ? (f.checkedPhrase || 'Да')
-          : (f.uncheckedPhrase || 'Нет');
-
+        const checkboxText = isChecked ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет');
         htmlText += `${f.label}: <span class="text-amber-400">${checkboxText}</span>\n\n`;
         plainText += `${f.label}: ${checkboxText}\n\n`;
       }
       else if (f.type === 'number') {
         if (!val) return;
-
-        let unitHtml = '';
-        let unitPlain = '';
-
-        if (f.unit && f.unit.trim() !== '') {
-          unitHtml = ` <span class="text-amber-400">${f.unit}</span>.`;
-          unitPlain = ` ${f.unit}.`;
-        } else {
-          unitHtml = '.';
-          unitPlain = '.';
-        }
-
+        const unitHtml = f.unit ? ` <span class="text-amber-400">${f.unit}</span>.` : '.';
+        const unitPlain = f.unit ? ` ${f.unit}.` : '.';
         htmlText += `${f.label}: <span class="text-amber-400">${val}</span>${unitHtml}\n\n`;
         plainText += `${f.label}: ${val}${unitPlain}\n\n`;
       }
@@ -443,32 +454,22 @@ export default function FillerPage() {
         plainText += `${f.label}: ${val}${expl}\n\n`;
       } 
       else if (f.type === 'formula') {
-  const hasAnyValue = (f.variables || []).some((v: any, i: number) => {
-    return fieldsData[`${f.id}_var_${i}`] && String(fieldsData[`${f.id}_var_${i}`]).trim() !== '';
-  });
+        const hasAnyValue = (f.variables || []).some((v: any, i: number) => 
+          fieldsData[`${f.id}_var_${i}`] && String(fieldsData[`${f.id}_var_${i}`]).trim() !== ''
+        );
+        if (!hasAnyValue) return;
 
-  if (!hasAnyValue) return;
+        const result = val || '';
+        if (!result || result === 'NaN') return;
 
-  const result = val || '';
-  if (!result || result === 'NaN') return;
-
-  let unitHtml = '';
-  let unitPlain = '';
-
-  if (f.unit && f.unit.trim() !== '') {
-    unitHtml = ` <span class="text-amber-400">${f.unit}</span>.`;
-    unitPlain = ` ${f.unit}.`;
-  } else {
-    unitHtml = '.';
-    unitPlain = '.';
-  }
-
-  htmlText += `${f.label}: <span class="text-amber-400">${result}</span>${unitHtml}\n\n`;
-  plainText += `${f.label}: ${result}${unitPlain}\n\n`;
-}
+        const unitHtml = f.unit ? ` <span class="text-amber-400">${f.unit}</span>.` : '.';
+        const unitPlain = f.unit ? ` ${f.unit}.` : '.';
+        htmlText += `${f.label}: <span class="text-amber-400">${result}</span>${unitHtml}\n\n`;
+        plainText += `${f.label}: ${result}${unitPlain}\n\n`;
+      }
       else if (f.type === 'comparison') {
         const headerText = fieldsData[`${f.id}_header`] || f.label || '';
-        const hasAnyValue = (f.items || []).some((item: any) => {
+        const hasAnyValue = (f.items || []).some((item) => {
           const v = fieldsData[`${f.id}_val_${item.id}`] || item.value || '';
           const p = fieldsData[`${f.id}_prev_${item.id}`] || item.previous || '';
           return v.trim() || p.trim();
@@ -480,7 +481,7 @@ export default function FillerPage() {
           plainText += `${headerText}:\n`;
         }
 
-        (f.items || []).forEach((item: any) => {
+        (f.items || []).forEach((item) => {
           const valuePart = fieldsData[`${f.id}_val_${item.id}`] || item.value || '';
           const previousPart = fieldsData[`${f.id}_prev_${item.id}`] || item.previous || '';
           htmlText += `<span class="text-amber-400">${item.number}. ${valuePart}, ранее ${previousPart}.</span>\n`;
@@ -491,16 +492,26 @@ export default function FillerPage() {
       }
     });
 
-    setFinalText(htmlText.trim());
-    setFinalPlainText(plainText.trim());
-  }, [fieldsData, template, deletedFieldIds, isComparisonActive, comparisonDate, isStateAfterActive, stateAfterText]);
+    return {
+      finalText: htmlText.trim(),
+      finalPlainText: plainText.trim()
+    };
+  }, [
+    fieldsData,
+    template,
+    deletedFieldIds,
+    isComparisonActive,
+    comparisonDate,
+    isStateAfterActive,
+    stateAfterText
+  ]);
 
-  const updateField = (fieldId: string, value: any) => {
+  const updateField = (fieldId: string, value: any) => {   // value может быть string | number | boolean
     saveToHistory();
     setFieldsData(prev => ({ ...prev, [fieldId]: value }));
   };
 
-  const handleFocus = (fieldId: string, el: any) => {
+    const handleFocus = (fieldId: string, el: HTMLTextAreaElement | HTMLInputElement | null) => {
   // Извлекаем основной ID карточки
   let mainId = fieldId;
   if (fieldId.includes('_')) {
@@ -558,7 +569,6 @@ const insertPhrase = (phrase: string) => {
   const input = activeInputRef.current;
   if (!input) {
     alert('Поставьте курсор в нужное текстовое поле слева');
-    setOpenButtonId(null);
     return;
   }
 
@@ -578,15 +588,13 @@ const insertPhrase = (phrase: string) => {
     // Главное исправление: принудительно растягиваем поле после вставки
     const textarea = inputRefs.current[fieldId];
     if (textarea && textarea.tagName === 'TEXTAREA') {
-      autoResize(textarea);
+      autoResize(textarea as HTMLTextAreaElement);
     }
     // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
 
     const newPos = start + phrase.length;
     input.setSelectionRange(newPos, newPos);
   }, 0);
-
-  setOpenButtonId(null);
 };
 
   const copyToClipboard = () => navigator.clipboard.writeText(finalPlainText);
@@ -620,16 +628,19 @@ const insertPhrase = (phrase: string) => {
     link.click();
   };
 
-  const importAbbreviations = (e: any) => {
-    const file = e.target.files[0];
+    const importAbbreviations = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
+
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const imported = JSON.parse(event.target?.result as string);
         saveData(imported.abbreviations || {}, imported.categories || ['Общие']);
         alert('✅ Импорт выполнен!');
-      } catch { alert('Ошибка импорта'); }
+      } catch { 
+        alert('Ошибка импорта'); 
+      }
     };
     reader.readAsText(file);
   };
@@ -656,17 +667,6 @@ const insertPhrase = (phrase: string) => {
     setNewFullText('');
   };
 
-  const renameCategory = (oldName: string) => {
-    const newName = prompt('Новое название группы:', oldName);
-    if (!newName || newName === oldName || categories.includes(newName)) return;
-    const newAbbr = { ...abbreviations };
-    Object.keys(newAbbr).forEach(key => {
-      if (newAbbr[key].category === oldName) newAbbr[key].category = newName;
-    });
-    const newCats = categories.map(cat => cat === oldName ? newName : cat);
-    saveData(newAbbr, newCats);
-    if (selectedCategory === oldName) setSelectedCategory(newName);
-  };
 
   const deleteCategory = (cat: string) => {
   // Удаляем все аббревиатуры из этой группы
@@ -693,21 +693,38 @@ const insertPhrase = (phrase: string) => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history]);
 
-  if (loading) return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-white text-2xl">Загрузка шаблона...</div>;
-  if (!template) return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-white text-2xl">Шаблон не найден</div>;
+        if (loading) return (
+    <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
+      <div className="text-2xl">Проверка доступа...</div>
+    </div>
+  );
 
-  const visibleFields = template.fields.filter((f: BuilderField) => !deletedFieldIds.has(f.id));
+  if (!template) return (
+    <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
+      <div className="text-2xl">Шаблон не найден</div>
+    </div>
+  );
+
+    const visibleFields = template.fields.filter((f: BuilderField) => !deletedFieldIds.includes(f.id));
 
   const activeField = template?.fields?.find((f: BuilderField) => f.id === activeFieldId);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white p-8">
-      <div className="max-w-7xl mx-auto grid grid-cols-12 gap-8">
+    <div className="min-h-screen bg-zinc-950 text-white">
+            
+        <div className="sticky top-0 z-50 bg-zinc-950 border-b border-white/10">
+        <UserHeader />
+      </div>
+
+                     
+
+      <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 py-8 grid grid-cols-12 gap-8">
         <div className="col-span-5 space-y-4">
-          <h1 className="text-4xl font-bold mb-6">{template.title}</h1>
-          <div className="space-y-4">
+        <h1 className="text-3xl font-bold mb-6 text-center mx-auto max-w-3xl tracking-tight">{template.title}</h1>
+        <div className="space-y-4">
   {visibleFields.map((f: BuilderField) => (
     <div
   key={f.id}
@@ -909,7 +926,7 @@ const insertPhrase = (phrase: string) => {
     />
 
     <div className="space-y-3">
-      {(f.items || []).map((item: any) => (
+      {(f.items || []).map((item) => (
         <div key={item.id} className="flex items-center gap-4">
           <span className="font-medium text-zinc-400 w-6 text-sm">{item.number}.</span>
 
@@ -938,8 +955,8 @@ const insertPhrase = (phrase: string) => {
           <button
             onClick={() => {
               const currentItems = f.items || [];
-              const newItems = currentItems.filter((i: any) => i.id !== item.id);
-              const newFields = template.fields.map((field: any) => 
+              const newItems = currentItems.filter((i) => i.id !== item.id);
+              const newFields = template.fields.map((field) =>
                 field.id === f.id ? { ...field, items: newItems } : field
               );
               setTemplate({ ...template, fields: newFields });
@@ -956,9 +973,9 @@ const insertPhrase = (phrase: string) => {
     <button
       onClick={() => {
         const currentItems = f.items || [];
-        const maxNumber = Math.max(...currentItems.map((i: any) => i.number || 0), 0);
+        const maxNumber = Math.max(...currentItems.map((i) => i.number || 0), 0);
         const newItem = { id: Date.now().toString(), number: maxNumber + 1, value: '', previous: '' };
-        const newFields = template.fields.map((field: any) => 
+        const newFields = template.fields.map((field) =>
           field.id === f.id ? { ...field, items: [...currentItems, newItem] } : field
         );
         setTemplate({ ...template, fields: newFields });
@@ -974,7 +991,7 @@ const insertPhrase = (phrase: string) => {
           </div>
         </div>
 
-        <div className="col-span-7 sticky top-8 self-start flex flex-col h-[calc(100vh-4rem)]">
+        <div className="col-span-7 sticky top-8 self-start flex flex-col h-[calc(100vh-4rem)] relative">
           <div className="mb-4 flex gap-3">
              {/* Кнопка Сравнение */}
 <button
@@ -987,8 +1004,8 @@ const insertPhrase = (phrase: string) => {
     }
   }}
   tabIndex={-1}
-  className={`flex-1 flex items-center justify-center gap-3 py-4 px-6 text-sm font-medium rounded-2xl transition-all
-    bg-transparent border border-transparent text-white
+  className={`justify-left gap-3 py-4 px-6 text-sm font-medium rounded-2xl transition-all
+    bg-transparent border border-none text-white
     hover:text-amber-400 cursor-pointer
     ${isComparisonActive ? '!text-amber-400' : ''}
   `}
@@ -1007,17 +1024,17 @@ const insertPhrase = (phrase: string) => {
     }
   }}
   tabIndex={-1}
-  className={`flex-1 flex items-center justify-center gap-3 py-4 px-6 text-sm font-medium rounded-2xl transition-all
+  className={`flex-0 justify-left gap-3 py-4 px-6 text-sm font-medium rounded-2xl transition-all
     bg-transparent border border-transparent text-white
     hover:text-amber-400 cursor-pointer
     ${isStateAfterActive ? '!text-amber-400' : ''}
   `}
 >
-  <span>Состояние после</span>
+  <span>Состояние</span>
 </button>
             </div>
 
-          <div className="card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-h-[42vh] flex flex-col min-h-0 overflow-hidden mb-4">
+                    <div className="card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-h-[42vh] flex flex-col min-h-0 overflow-hidden mb-6 p-1">
             <div className="flex-1 p-8 overflow-auto text-zinc-100 text-[14px] leading-relaxed"
                   style={{ lineHeight: '1.65' }}
                   dangerouslySetInnerHTML={{ __html: finalText }} 
@@ -1032,7 +1049,7 @@ const insertPhrase = (phrase: string) => {
     >
       
 
-      {(activeField.quickButtons || []).map((group: any) => {
+      {(activeField.quickButtons || []).map((group: QuickButtonGroup) => {
         const subgroups = group.subgroups || [];
         const isSingleSubgroupAndSinglePhrase =
           subgroups.length === 1 && (subgroups[0].phrases?.filter(Boolean).length || 0) === 1;
@@ -1061,7 +1078,7 @@ const insertPhrase = (phrase: string) => {
                 tabIndex={0} 
                 className="dropdown-content menu bg-zinc-900/90 backdrop-blur-2xl border border-zinc-700 rounded-box z-1 w-52 p-2"
               >
-                {subgroups.map((subgroup: any) => {
+                {subgroups.map((subgroup: QuickButtonSubgroup) => {
   const phrases = subgroup.phrases?.filter(Boolean) || [];
   const isSinglePhraseInSubgroup = phrases.length === 1;
 
@@ -1164,7 +1181,7 @@ const insertPhrase = (phrase: string) => {
       <div className="px-6 pb-6 pt-2 flex gap-3">
         <button 
           onClick={() => setShowComparisonModal(false)} 
-          className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all"
+          className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all cursor-pointer"
         >
           Отмена
         </button>
@@ -1175,7 +1192,7 @@ const insertPhrase = (phrase: string) => {
               setShowComparisonModal(false); 
             } 
           }} 
-          className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all"
+          className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all cursor-pointer"
         >
           Применить
         </button>
@@ -1222,7 +1239,7 @@ const insertPhrase = (phrase: string) => {
       <div className="px-6 pb-6 pt-2 flex gap-3">
         <button 
           onClick={() => setShowStateAfterModal(false)} 
-          className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all"
+          className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all cursor-pointer"
         >
           Отмена
         </button>
@@ -1233,7 +1250,7 @@ const insertPhrase = (phrase: string) => {
               setShowStateAfterModal(false); 
             } 
           }} 
-          className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all"
+          className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all cursor-pointer"
         >
           Применить
         </button>
@@ -1346,7 +1363,7 @@ const insertPhrase = (phrase: string) => {
   <div className="mt-auto pt-4">
     <button 
       onClick={addNewGroup}
-      className="w-full py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-white hover:text-amber-400 text-sm font-medium transition-colors"
+      className="w-full py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-white hover:text-amber-400 text-sm font-medium transition-colors cursor-pointer"
     >
       Добавить
     </button>
@@ -1471,7 +1488,7 @@ const insertPhrase = (phrase: string) => {
     />
     <button 
       onClick={addNewAbbreviation} 
-      className="px-8 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-white hover:text-amber-400 text-sm font-medium transition-colors">
+      className="px-8 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-white hover:text-amber-400 text-sm font-medium transition-colors cursor-pointer">
       Добавить
     </button>
   </div>
@@ -1590,3 +1607,4 @@ const insertPhrase = (phrase: string) => {
     </div>
   );
 }
+export default withAuth(FillerPage);

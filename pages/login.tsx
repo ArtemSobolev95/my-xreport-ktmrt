@@ -10,19 +10,18 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-    const { token: queryToken } = router.query;
+      const { token: queryToken } = router.query;
 
   // Автоматическое подтверждение email при переходе по ссылке из письма
   useEffect(() => {
-    // Берём токен либо из router.query, либо напрямую из URL (надёжнее)
-    let token = queryToken as string | undefined;
+    console.log('🔍 [Login] useEffect triggered. isReady:', router.isReady, 'token:', queryToken);
 
+    // Получаем токен из URL (надёжнее, чем router.query)
+    let token = queryToken as string | undefined;
     if (!token && typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
       token = urlParams.get('token') || undefined;
     }
-
-    console.log('🔍 [Login] useEffect → isReady:', router.isReady, 'token:', token ? token.substring(0, 30) + '...' : 'undefined');
 
     if (!router.isReady || !token || typeof token !== 'string') {
       return;
@@ -30,7 +29,7 @@ export default function Login() {
 
     const confirmEmail = async () => {
       try {
-        console.log('🚀 Выполняем confirmVerification...');
+        console.log('🚀 Выполняем confirmVerification с токеном:', token.substring(0, 30) + '...');
         await pb.collection('users').confirmVerification(token);
         console.log('✅ Email успешно подтверждён');
         alert('✅ Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
@@ -42,9 +41,6 @@ export default function Login() {
 
     confirmEmail();
   }, [router.isReady, queryToken]);
-
-    confirmEmail();
-  }, [router.isReady, token]);
 
   
 
@@ -104,7 +100,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-1 border-none hover:text-amber-400 text-zinc-900 font-semibold rounded-2xl transition-all disabled:opacity-50 cursor-pointer"
+            className="w-full py-1 border-none hover:text-amber-400 font-semibold rounded-2xl transition-all disabled:opacity-50 cursor-pointer"
           >
             {loading ? 'Вход...' : 'Войти'}
           </button>

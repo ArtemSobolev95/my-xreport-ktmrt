@@ -10,18 +10,19 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-      const { token: queryToken } = router.query;
+        const { token: queryToken } = router.query;
 
   // Автоматическое подтверждение email при переходе по ссылке из письма
   useEffect(() => {
-    console.log('🔍 [Login] useEffect triggered. isReady:', router.isReady, 'token:', queryToken);
-
-    // Получаем токен из URL (надёжнее, чем router.query)
+    // Более надёжный способ получения токена
     let token = queryToken as string | undefined;
+
     if (!token && typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
       token = urlParams.get('token') || undefined;
     }
+
+    console.log('🔍 [Login] useEffect → isReady:', router.isReady, 'token:', token ? token.substring(0, 30) + '...' : 'undefined');
 
     if (!router.isReady || !token || typeof token !== 'string') {
       return;
@@ -29,7 +30,7 @@ export default function Login() {
 
     const confirmEmail = async () => {
       try {
-        console.log('🚀 Выполняем confirmVerification с токеном:', token.substring(0, 30) + '...');
+        console.log('🚀 Выполняем confirmVerification...');
         await pb.collection('users').confirmVerification(token);
         console.log('✅ Email успешно подтверждён');
         alert('✅ Email успешно подтверждён! Теперь вы можете войти в аккаунт.');

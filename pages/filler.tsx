@@ -411,7 +411,7 @@ function FillerPage() {
 
         const val = fieldsData[f.id];
 
-        // Пропускаем поле text ТОЛЬКО если ничего не введено и нет placeholder
+        
         if (f.type === 'text' && isFieldEmpty(f, val) && !f.placeholder) {
           return;
         }
@@ -436,7 +436,7 @@ function FillerPage() {
           htmlText += `${f.label}: ${finalHtml}\n\n`;
           plainText += `${f.label}: ${finalPlain}\n\n`;
         }
-        
+
       else if (f.type === 'checkbox') {
         const isChecked = fieldsData[f.id] === true;
         const checkboxText = isChecked ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет');

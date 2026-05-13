@@ -10,22 +10,23 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-    const { token } = router.query;
+     const { token } = router.query;
 
   // Автоматическое подтверждение email при переходе по ссылке из письма
   useEffect(() => {
-    if (token && typeof token === 'string') {
-      const confirmEmail = async () => {
-        try {
-          await pb.collection('users').confirmVerification(token);
-          alert('✅ Email успешно подтверждён! Теперь вы можете войти.');
-        } catch (err: any) {
-          console.error(err);
-        }
-      };
-      confirmEmail();
-    }
-  }, [token]);
+    if (!router.isReady || !token || typeof token !== 'string') return;
+
+    const confirmEmail = async () => {
+      try {
+        await pb.collection('users').confirmVerification(token);
+        alert('✅ Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
+      } catch (err: any) {
+        console.error('Ошибка подтверждения email:', err);
+      }
+    };
+
+    confirmEmail();
+  }, [router.isReady, token]);
 
   
 

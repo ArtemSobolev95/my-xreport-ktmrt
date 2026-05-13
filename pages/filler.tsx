@@ -381,6 +381,13 @@ function FillerPage() {
   if (changed) setFieldsData(newData);
 }, [fieldsData, template]);
 
+  const isFieldEmpty = (field: BuilderField, value: any): boolean => {
+  if (value === undefined || value === null) return true;
+  if (typeof value === 'string' && value.trim() === '') return true;
+  if (field.type === 'rating') return value == 0 || value === null || value === undefined;
+  return false;
+};
+
       // ====================== ГЕНЕРАЦИЯ ОТЧЁТА (useMemo) ======================
   const { finalText, finalPlainText } = useMemo(() => {
     if (!template) return { finalText: '', finalPlainText: '' };
@@ -398,37 +405,38 @@ function FillerPage() {
     }
 
     template.fields.forEach((f: BuilderField) => {
-      if (deletedFieldIds.includes(f.id)) return;
-      if (f.type === 'header') return;
+        if (deletedFieldIds.includes(f.id)) return;
 
-      const val = fieldsData[f.id];
+        if (f.type === 'header') return;
 
-      if (!val && !f.placeholder && f.type !== 'rating' && f.type !== 'comparison' && f.type !== 'checkbox') {
-        return;
-      }
+        const val = fieldsData[f.id];
 
-      let displayHtml = val || '';
-      let displayPlain = val || '';
-
-      if (!val && f.placeholder) {
-        displayHtml = `<span style="color: #9ca3af;">${f.placeholder}</span>`;
-        displayPlain = f.placeholder;
-      }
-
-      let coloredHtml = displayHtml;
-      if (val && ['text', 'number', 'select', 'checkbox', 'formula', 'comparison'].includes(f.type)) {
-        coloredHtml = `<span class="text-amber-400">${val}</span>`;
-      }
-
-      if (f.type === 'text') {
-        if (f.isQuickText === true) {
-          htmlText += `${coloredHtml}\n\n`;
-          plainText += `${displayPlain}\n\n`;
-        } else {
-          htmlText += `${f.label}: ${coloredHtml}\n\n`;
-          plainText += `${f.label}: ${displayPlain}\n\n`;
+        // Пропускаем поле text ТОЛЬКО если ничего не введено и нет placeholder
+        if (f.type === 'text' && isFieldEmpty(f, val) && !f.placeholder) {
+          return;
         }
-      } 
+
+        let displayHtml = val || '';
+        let displayPlain = val || '';
+
+        if (!val && f.placeholder) {
+          displayHtml = `<span style="color: #9ca3af;">${f.placeholder}</span>`;
+          displayPlain = f.placeholder;
+        }
+
+        let coloredHtml = displayHtml;
+        if (val && ['text', 'number', 'select', 'checkbox', 'formula', 'comparison'].includes(f.type)) {
+          coloredHtml = `<span class="text-amber-400">${val}</span>`;
+        }
+
+        if (f.type === 'text') {
+          const finalHtml = val ? coloredHtml : displayHtml;
+          const finalPlain = displayPlain;
+
+          htmlText += `${f.label}: ${finalHtml}\n\n`;
+          plainText += `${f.label}: ${finalPlain}\n\n`;
+        }
+        
       else if (f.type === 'checkbox') {
         const isChecked = fieldsData[f.id] === true;
         const checkboxText = isChecked ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет');

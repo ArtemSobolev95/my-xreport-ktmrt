@@ -10,23 +10,38 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-     const { token } = router.query;
+        const { token: queryToken } = router.query;
 
   // Автоматическое подтверждение email при переходе по ссылке из письма
   useEffect(() => {
-    if (!router.isReady || !token || typeof token !== 'string') return;
+    // Более надёжный способ получения токена
+    let token = queryToken as string | undefined;
+
+    if (!token && typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      token = urlParams.get('token') || undefined;
+    }
+
+    console.log('🔍 [Login] useEffect → isReady:', router.isReady, 'token:', token ? token.substring(0, 30) + '...' : 'undefined');
+
+    if (!router.isReady || !token || typeof token !== 'string') {
+      return;
+    }
 
     const confirmEmail = async () => {
       try {
+        console.log('🚀 Выполняем confirmVerification...');
         await pb.collection('users').confirmVerification(token);
+        console.log('✅ Email успешно подтверждён');
         alert('✅ Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
       } catch (err: any) {
-        console.error('Ошибка подтверждения email:', err);
+        console.error('❌ Ошибка confirmVerification:', err);
+        alert('Не удалось подтвердить email. Попробуйте войти вручную.');
       }
     };
 
     confirmEmail();
-  }, [router.isReady, token]);
+  }, [router.isReady, queryToken]);
 
   
 
@@ -86,7 +101,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-1 border-none hover:text-amber-400 text-zinc-900 font-semibold rounded-2xl transition-all disabled:opacity-50 cursor-pointer"
+            className="w-full py-1 border-none hover:text-amber-400 font-semibold rounded-2xl transition-all disabled:opacity-50 cursor-pointer"
           >
             {loading ? 'Вход...' : 'Войти'}
           </button>

@@ -398,10 +398,16 @@ function FillerPage() {
     }
 
     template.fields.forEach((f: BuilderField) => {
-      if (deletedFieldIds.includes(f.id)) return;
-      if (f.type === 'header') return;
+  if (deletedFieldIds.includes(f.id)) return;
 
-      const val = fieldsData[f.id];
+  if (f.type === 'header') return;
+
+  // Название поля + ":" для всех остальных полей
+  const labelPrefix = f.label ? `${f.label}: ` : '';
+  htmlText += labelPrefix;
+  plainText += labelPrefix;
+
+  const val = fieldsData[f.id];
 
       if (!val && !f.placeholder && f.type !== 'rating' && f.type !== 'comparison' && f.type !== 'checkbox') {
         return;

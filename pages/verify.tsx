@@ -13,6 +13,11 @@ export default function VerifyPage() {
   const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
+    // Ждём, пока Next.js полностью загрузит query-параметры
+    if (!router.isReady) return;
+
+    console.log('[Verify] token received:', token); // для отладки
+
     if (!token || typeof token !== 'string') {
       setStatus('error');
       setErrorMessage('Токен не найден');
@@ -31,7 +36,7 @@ export default function VerifyPage() {
     };
 
     verifyEmail();
-  }, [token]);
+  }, [router.isReady, token]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center p-6">

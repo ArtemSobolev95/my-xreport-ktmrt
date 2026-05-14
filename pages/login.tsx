@@ -86,7 +86,7 @@ export default function Login() {
           </div>
 
           <div>
-            <label className="block text-sm mb-2 text-zinc-400">Пароль (минимум 8 символов)</label>
+            <label className="block text-sm mb-2 text-zinc-400">Пароль</label>
             <input
               type="password"
               value={password}

@@ -33,7 +33,7 @@ export default function Register() {
       // 2. Отправляем письмо для подтверждения
       await pb.collection('users').requestVerification(email);
 
-      alert('✅ Регистрация прошла успешно!\n\nНа вашу почту отправлено письмо с ссылкой для подтверждения.\n\nПосле подтверждения вы сможете войти.');
+      alert('Регистрация прошла успешно!\n\nНа вашу почту отправлено письмо с ссылкой для подтверждения.\n\nПосле подтверждения вы сможете войти.');
 
       router.push('/login'); // сразу отправляем на страницу входа
 
@@ -62,7 +62,7 @@ export default function Register() {
           </div>
 
           <div>
-            <label className="block text-sm mb-2 text-zinc-400">Пароль</label>
+            <label className="block text-sm mb-2 text-zinc-400">Пароль (минимум 8 символов)</label>
             <input
               type="password"
               value={password}
@@ -88,7 +88,7 @@ export default function Register() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-4 bg-amber-400 hover:bg-amber-500 text-zinc-950 font-semibold rounded-2xl transition-all disabled:opacity-50"
+            className="w-full py-4 bg-none hover:text-amber-400 font-semibold rounded-2xl transition-all disabled:opacity-50 cursor-pointer"
           >
             {loading ? 'Регистрация...' : 'Зарегистрироваться'}
           </button>
@@ -98,7 +98,7 @@ export default function Register() {
           Уже есть аккаунт?{' '}
           <button 
             onClick={() => router.push('/login')} 
-            className="text-amber-400 hover:underline font-medium"
+            className="text-white hover:underline hover:text-amber-400 font-medium transition-all cursor-pointer"
           >
             Войти
           </button>

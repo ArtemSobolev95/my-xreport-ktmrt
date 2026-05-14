@@ -732,7 +732,7 @@ const insertPhrase = (phrase: string) => {
 
                      
 
-      <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 py-8 grid grid-cols-12 gap-8">
+      <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 pt-8 pb-8 grid grid-cols-12 gap-8">
         <div className="col-span-5 space-y-4">
         <h1 className="text-3xl font-bold mb-6 text-center mx-auto max-w-3xl tracking-tight">{template.title}</h1>
         <div className="space-y-4">
@@ -1002,7 +1002,8 @@ const insertPhrase = (phrase: string) => {
           </div>
         </div>
 
-        <div className="col-span-7 sticky top-8 self-start flex flex-col h-[calc(100vh-4rem)] relative">
+        <div className="col-span-7 sticky top-20 z-50 self-start flex flex-col h-[calc(100vh-4rem)] relative">
+          
           <div className="mb-4 flex gap-3">
              {/* Кнопка Сравнение */}
 <button

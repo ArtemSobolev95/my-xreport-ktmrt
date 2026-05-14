@@ -32,10 +32,10 @@ export default function Login() {
       try {
         console.log('🚀 Выполняем confirmVerification...');
         await pb.collection('users').confirmVerification(token);
-        console.log('✅ Email успешно подтверждён');
-        alert('✅ Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
+        console.log('Email успешно подтверждён');
+        alert('Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
       } catch (err: any) {
-        console.error('❌ Ошибка confirmVerification:', err);
+        console.error('Ошибка confirmVerification:', err);
         alert('Не удалось подтвердить email. Попробуйте войти вручную.');
       }
     };

@@ -12,31 +12,42 @@ export default function VerifyPage() {
   const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    // Сначала пробуем взять токен из router.query
+    // Самый надёжный способ получить токен
+    let currentToken: string | null = null;
+
+    // 1. Из router.query
     if (router.isReady && router.query.token) {
-      setToken(router.query.token as string);
-      return;
+      currentToken = router.query.token as string;
     }
 
-    // Fallback — читаем напрямую из URL (самый надёжный способ)
-    if (typeof window !== 'undefined') {
+    // 2. Fallback — напрямую из URL (работает даже если Next.js "очистил" query)
+    if (!currentToken && typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
-      const urlToken = urlParams.get('token');
-      if (urlToken) {
-        setToken(urlToken);
-      }
+      currentToken = urlParams.get('token');
+    }
+
+    console.log('[Verify] Final token received:', currentToken ? currentToken.substring(0, 30) + '...' : 'undefined');
+
+    if (currentToken) {
+      setToken(currentToken);
+    } else {
+      setStatus('error');
+      setErrorMessage('Токен не найден в URL');
     }
   }, [router.isReady, router.query]);
 
+  // Основная логика подтверждения
   useEffect(() => {
     if (!token) return;
 
     const verifyEmail = async () => {
       try {
+        console.log('[Verify] Starting verification with token:', token.substring(0, 30) + '...');
         await pb.collection('users').confirmVerification(token);
         setStatus('success');
+        console.log('[Verify] Success!');
       } catch (err: any) {
-        console.error(err);
+        console.error('[Verify] Error:', err);
         setStatus('error');
         setErrorMessage(err?.message || 'Не удалось подтвердить email');
       }
@@ -45,6 +56,7 @@ export default function VerifyPage() {
     verifyEmail();
   }, [token]);
 
+  // UI
   if (status === 'loading') {
     return (
       <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center p-6">
@@ -75,7 +87,7 @@ export default function VerifyPage() {
           <>
             <XCircle className="w-16 h-16 text-red-500 mx-auto" />
             <h2 className="text-3xl font-semibold mt-6 text-red-400">Что-то пошло не так</h2>
-            <p className="text-zinc-400 mt-3">{errorMessage || 'Токен не найден'}</p>
+            <p className="text-zinc-400 mt-3">{errorMessage}</p>
             <Link
               href="/login"
               className="mt-8 block w-full py-4 bg-zinc-800 hover:bg-zinc-700 font-medium rounded-2xl transition-all"

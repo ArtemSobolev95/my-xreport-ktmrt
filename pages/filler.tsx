@@ -396,12 +396,12 @@ function FillerPage() {
     let plainText = '';
 
     if (isComparisonActive && comparisonDate) {
-      htmlText += `<span class="text-amber-400">Описание исследования в сравнении с предыдущим от ${comparisonDate}:</span>\n`;
-      plainText += `Описание исследования в сравнении с предыдущим от ${comparisonDate}:\n`;
+      htmlText += `<span class="text-amber-400">Описание исследования в сравнении с предыдущим от ${comparisonDate}:</span>\n\n`;
+      plainText += `Описание исследования в сравнении с предыдущим от ${comparisonDate}:\n\n`;
     }
     if (isStateAfterActive && stateAfterText) {
-      htmlText += `<span class="text-amber-400">Состояние после ${stateAfterText}</span>\n`;
-      plainText += `Состояние после ${stateAfterText}\n`;
+      htmlText += `<span class="text-amber-400">Состояние после ${stateAfterText}</span>\n\n`;
+      plainText += `Состояние после ${stateAfterText}\n\n`;
     }
 
     template.fields.forEach((f: BuilderField) => {
@@ -430,12 +430,19 @@ function FillerPage() {
         }
 
         if (f.type === 'text') {
-          const finalHtml = val ? coloredHtml : displayHtml;
-          const finalPlain = displayPlain;
+      if (f.isQuickText === true) {
+        // Для полей, добавленных через "+" — выводим только текст без названия и ":"
+        htmlText += `${coloredHtml}\n\n`;
+        plainText += `${displayPlain}\n\n`;
+      } else {
+        // Для обычных текстовых полей — Название: значение
+        const finalHtml = val ? coloredHtml : displayHtml;
+        const finalPlain = displayPlain;
 
-          htmlText += `${f.label}: ${finalHtml}\n\n`;
-          plainText += `${f.label}: ${finalPlain}\n\n`;
-        }
+        htmlText += `${f.label}: ${finalHtml}\n\n`;
+        plainText += `${f.label}: ${finalPlain}\n\n`;
+      }
+    }
 
       else if (f.type === 'checkbox') {
         const isChecked = fieldsData[f.id] === true;

@@ -9,52 +9,46 @@ export default function VerifyPage() {
   const router = useRouter();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState('');
-  const [token, setToken] = useState<string | null>(null);
 
   useEffect(() => {
-    console.log('[Verify] Full URL:', typeof window !== 'undefined' ? window.location.href : 'server');
+    if (typeof window === 'undefined') return;
 
-    let currentToken = null;
+    const fullUrl = window.location.href;
+    console.log('[Verify] Full URL:', fullUrl);
 
-    // 1. Из router.query
-    if (router.isReady && router.query.token) {
-      currentToken = router.query.token as string;
-      console.log('[Verify] Token from router.query:', currentToken);
+    const hash = window.location.hash;
+    console.log('[Verify] Hash:', hash);
+
+    // Извлекаем токен из #token=...
+    let token = null;
+    if (hash && hash.includes('token=')) {
+      token = hash.split('token=')[1];
     }
 
-    // 2. Прямо из URL (самый надёжный способ)
-    if (!currentToken && typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      currentToken = urlParams.get('token');
-      console.log('[Verify] Token from window.location.search:', currentToken);
-    }
+    console.log('[Verify] Extracted token:', token ? token.substring(0, 50) + '...' : 'NOT FOUND');
 
-    if (currentToken) {
-      setToken(currentToken);
-    } else {
+    if (!token) {
       setStatus('error');
-      setErrorMessage('Токен не найден в URL');
+      setErrorMessage('Токен не найден');
+      return;
     }
-  }, [router.isReady, router.query]);
 
-  useEffect(() => {
-    if (!token) return;
-
+    // Запускаем подтверждение
     const verifyEmail = async () => {
       try {
         await pb.collection('users').confirmVerification(token);
+        console.log('[Verify] SUCCESS!');
         setStatus('success');
       } catch (err: any) {
-        console.error(err);
+        console.error('[Verify] Error:', err);
         setStatus('error');
         setErrorMessage(err?.message || 'Не удалось подтвердить email');
       }
     };
 
     verifyEmail();
-  }, [token]);
+  }, []);
 
-  // UI остаётся прежним
   if (status === 'loading') {
     return (
       <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center p-6">
@@ -74,7 +68,10 @@ export default function VerifyPage() {
             <CheckCircle className="w-16 h-16 text-green-500 mx-auto" />
             <h2 className="text-3xl font-semibold mt-6">Email подтверждён!</h2>
             <p className="text-zinc-400 mt-3">Теперь вы можете войти в аккаунт.</p>
-            <Link href="/login" className="mt-8 block w-full py-4 bg-amber-400 hover:bg-amber-500 text-black font-medium rounded-2xl transition-all">
+            <Link
+              href="/login"
+              className="mt-8 block w-full py-4 bg-amber-400 hover:bg-amber-500 text-black font-medium rounded-2xl transition-all"
+            >
               Перейти ко входу
             </Link>
           </>
@@ -83,7 +80,10 @@ export default function VerifyPage() {
             <XCircle className="w-16 h-16 text-red-500 mx-auto" />
             <h2 className="text-3xl font-semibold mt-6 text-red-400">Что-то пошло не так</h2>
             <p className="text-zinc-400 mt-3">{errorMessage}</p>
-            <Link href="/login" className="mt-8 block w-full py-4 bg-zinc-800 hover:bg-zinc-700 font-medium rounded-2xl transition-all">
+            <Link
+              href="/login"
+              className="mt-8 block w-full py-4 bg-zinc-800 hover:bg-zinc-700 font-medium rounded-2xl transition-all"
+            >
               Вернуться на страницу входа
             </Link>
           </>

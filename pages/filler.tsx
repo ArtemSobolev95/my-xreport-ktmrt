@@ -590,7 +590,7 @@ const insertPhrase = (phrase: string) => {
   input.focus();
 
   setTimeout(() => {
-    const inputEl = input as HTMLInputElement | HTMLTextAreaElement | null;
+    const inputEl = input as HTMLTextAreaElement | null;
     if (!inputEl) return;
 
     const start = inputEl.selectionStart ?? 0;
@@ -602,15 +602,23 @@ const insertPhrase = (phrase: string) => {
     const fieldId = activeFieldRef.current!;
     updateField(fieldId, newText);
 
-    // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
-    // Главное исправление: принудительно растягиваем поле после вставки
+    // ←←← УЛУЧШЕННЫЙ autoResize — срабатывает надёжнее ←←←
     const textarea = inputRefs.current[fieldId];
     if (textarea && textarea.tagName === 'TEXTAREA') {
-      autoResize(textarea as HTMLTextAreaElement);
+      const ta = textarea as HTMLTextAreaElement;
+      
+      // Принудительно сбрасываем высоту и пересчитываем
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 400) + 'px';
+      
+      // Дополнительный вызов через небольшой таймаут (на случай длинных фраз)
+      setTimeout(() => {
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, 400) + 'px';
+      }, 10);
     }
-    // ←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←←
 
-        const newPos = start + phrase.length;
+    const newPos = start + phrase.length;
     inputEl.setSelectionRange(newPos, newPos);
   }, 0);
 };
@@ -1123,7 +1131,7 @@ const insertPhrase = (phrase: string) => {
         {!isSinglePhraseInSubgroup && (
           <ul tabIndex={0} className="dropdown-content menu bg-zinc-900 bg-zinc-900/90 backdrop-blur-2xl border border-zinc-700 rounded-xl shadow-xl min-w-[340px] z-[10000] p-1 duration-70 delay-0" 
           >
-            <div className="max-h-[420px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
+            <div className="max-h-[280px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
     {/* сюда остаётся весь .map по phrases */}
           
             

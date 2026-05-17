@@ -430,19 +430,13 @@ function FillerPage() {
         }
 
         if (f.type === 'text') {
-      if (f.isQuickText === true) {
-        // Для полей, добавленных через "+" — выводим только текст без названия и ":"
-        htmlText += `${coloredHtml}\n\n`;
-        plainText += `${displayPlain}\n\n`;
-      } else {
-        // Для обычных текстовых полей — Название: значение
-        const finalHtml = val ? coloredHtml : displayHtml;
-        const finalPlain = displayPlain;
+      const finalHtml = val ? coloredHtml : displayHtml;
+      const finalPlain = displayPlain;
 
-        htmlText += `${f.label}: ${finalHtml}\n\n`;
-        plainText += `${f.label}: ${finalPlain}\n\n`;
-      }
+      htmlText += `${f.label}: ${finalHtml}\n\n`;
+      plainText += `${f.label}: ${finalPlain}\n\n`;
     }
+
 
       else if (f.type === 'checkbox') {
         const isChecked = fieldsData[f.id] === true;

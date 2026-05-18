@@ -154,6 +154,19 @@ function FillerPage() {
   }, 20);
 };
 
+      const updateFieldLabel = (fieldId: string, newLabel: string) => {
+    saveToHistory();
+    setTemplate(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        fields: prev.fields.map((f: BuilderField) =>
+          f.id === fieldId ? { ...f, label: newLabel } : f
+        )
+      };
+    });
+  };
+
     const removeField = (fieldId: string) => {
     saveToHistory();
     setRemovingId(fieldId);
@@ -181,6 +194,10 @@ function FillerPage() {
       else init[f.id] = '';
     });
     setFieldsData(init);
+    setIsComparisonActive(false);
+    setComparisonDate('');
+    setIsStateAfterActive(false);
+    setStateAfterText('');
   };
  
   
@@ -799,16 +816,28 @@ const insertPhrase = (phrase: string) => {
      )}
 
       <div className="card-body p-5 pt-12">   {/* pt-12 — отступ сверху под кнопки */}
-        {/* Название поля — теперь белое */}
-        {f.type !== 'checkbox' && (
-          <label className="block text-white text-sm mb-2 font-medium text-center">
-            {f.type === 'header' ? (
-              <span className="text-2xl font-bold text-white">{f.label}</span>
-            ) : (
-              f.label
-            )}
-          </label>
-        )}
+        {/* Название поля */}
+{f.type !== 'checkbox' && f.type !== 'header' && (
+  <>
+    {f.isQuickText ? (
+      // === РЕДАКТИРУЕМЫЙ ЗАГОЛОВОК (для полей, добавленных через +) ===
+      <input
+        type="text"
+        value={f.label || ''}
+        onChange={(e) => updateFieldLabel(f.id, e.target.value)}
+        onFocus={() => handleFocus(f.id, null)}
+        onBlur={handleBlur}
+        placeholder="Введите значение"
+        className="w-full text-center bg-transparent px-0 py-1 mb-2 text-sm font-medium text-white placeholder:text-zinc-500 focus:border-amber-400 focus:outline-none transition-all"
+      />
+    ) : (
+      // === Статичное название (для полей из шаблона) ===
+      <label className="block text-white text-sm mb-2 font-medium text-center">
+        {f.label}
+      </label>
+    )}
+  </>
+)}
 
         {/* Все поля остаются без изменений */}
         {f.type === 'text' && (

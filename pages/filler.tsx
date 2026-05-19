@@ -165,7 +165,7 @@ function FillerPage() {
 
       const updateFieldLabel = (fieldId: string, newLabel: string) => {
     saveToHistory();
-    setTemplate(prev => {
+    setTemplate((prev: any) => {
       if (!prev) return prev;
       return {
         ...prev,

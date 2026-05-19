@@ -85,6 +85,7 @@ function FillerPage() {
   trigger: string;
   startPos: number;
   position: { top: number; left: number };
+  abbrKey: string;
 } | null>(null);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
@@ -702,7 +703,7 @@ const parseVariants = (text: string): { prefix: string; variants: string[] } | n
 const selectVariant = (index: number) => {
   if (!variantSelector) return;
 
-  const { fieldId, variants, prefix, trigger } = variantSelector;
+  const { fieldId, variants, prefix, trigger, abbrKey} = variantSelector;
   const chosen = variants[index];
 
   const textarea = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
@@ -713,6 +714,12 @@ const selectVariant = (index: number) => {
 
   saveToHistory();
   updateField(fieldId, newText);
+
+  if (abbrKey && abbreviations[abbrKey]) {
+    const updated = JSON.parse(JSON.stringify(abbreviations));
+    updated[abbrKey].usage = (updated[abbrKey].usage || 0) + 1;
+    saveData(updated, categories);
+  }
 
   const newCursorPos = prefix.length + chosen.length + 1;
 
@@ -767,6 +774,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
       top: rect ? rect.bottom + 4 : 200,
       left: rect ? rect.left : 100,
     },
+    abbrKey: wordLower,
   });
   setSelectedVariantIndex(0);
   return;
@@ -840,7 +848,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
       try {
         const imported = JSON.parse(event.target?.result as string);
         saveData(imported.abbreviations || {}, imported.categories || ['Общие']);
-        alert('✅ Импорт выполнен!');
+        alert('Импорт выполнен!');
       } catch { 
         alert('Ошибка импорта'); 
       }
@@ -928,7 +936,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
         <div className="col-span-5 space-y-4">
           {variantSelector && (
             <div
-              className="fixed z-[99999] bg-zinc-900/10 backdrop-blur-md rounded-xl shadow-xl py-1 min-w-[180px]"
+              className="fixed z-[99999] bg-zinc-900/10 backdrop-blur-md rounded-xl shadow-xl py-1 w-fit min-w-[160px] max-w-[420px]"
               style={{
                 top: variantSelector.position.top,
                 left: variantSelector.position.left,
@@ -941,7 +949,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
                   className={`w-full text-left px-4 py-[6px] text-sm transition-colors ${
                     index === selectedVariantIndex
                       ? 'bg-white/10 border-none rounded-xl font-medium'
-                      : 'text-white hover:bg-white/10 hover:border rounded-xl'
+                      : 'text-white hover:bg-white/10 hover:border-transparent rounded-xl cursor-pointer'
                   }`}
                 >
                   {variant}
@@ -1322,7 +1330,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
             {!isSingleSubgroupAndSinglePhrase && (
               <ul 
                 tabIndex={0} 
-                className="dropdown-content menu bg-zinc-900/90 backdrop-blur-2xl border border-zinc-700 rounded-box z-1 w-52 p-2"
+                className="dropdown-content menu bg-zinc-900/90 backdrop-blur-md border border-zinc-700 rounded-box z-1 w-52 p-2"
               >
                 {subgroups.map((subgroup: QuickButtonSubgroup) => {
   const phrases = subgroup.phrases?.filter(Boolean) || [];
@@ -1511,7 +1519,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
 
       {showAbbrModal && (
                     <dialog className="modal modal-open">
-          <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
+          <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl w-full max-w-5xl h-[620px] flex flex-col overflow-hidden">
           
 
       {/* Шапка модалки — кнопки в правом верхнем углу */}
@@ -1550,10 +1558,21 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   <div className="text-xs uppercase text-zinc-400 mb-3 px-2"></div>
   
   <div className="flex-1 overflow-auto space-y-1">
+    
+    {/* Кнопка "Все" */}
+    <div 
+      onClick={() => setSelectedCategory('Все')}
+      className={`flex items-center px-4 py-2.5 rounded-2xl text-sm cursor-pointer transition-colors ${
+        selectedCategory === 'Все' ? 'bg-zinc-700 text-white' : 'hover:bg-white/5 text-zinc-300'
+      }`}
+    >
+      Все
+    </div>
+
     {categories.map(cat => (
       <div 
         key={cat} 
-        className={`flex items-center px-4 py-2.5 rounded-2xl text-sm transition-colors ${
+        className={`flex items-center px-4 py-2 rounded-2xl text-sm transition-colors ${
           selectedCategory === cat ? 'bg-zinc-700 text-white' : 'hover:bg-white/5 text-zinc-300'
         }`}
       >
@@ -1597,7 +1616,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
         {/* Мусорка — жёстко зафиксирована */}
         <button 
           onClick={() => setDeleteConfirm({ type: 'category', id: cat, name: cat })}
-          className="flex-shrink-0 ml-4 text-white hover:text-red-400 transition-colors"
+          className="flex-shrink-0 ml-4 text-white hover:text-red-400 transition-colors cursor-pointer"
         >
           <Trash2 size={16} />
         </button>
@@ -1707,7 +1726,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
 
           <button 
             onClick={() => setDeleteConfirm({ type: 'abbreviation', id: abbr, name: abbr })}
-            className="text-white hover:text-red-400 transition-colors"
+            className="text-white hover:text-red-400 transition-colors cursor-pointer"
           >
             <Trash2 size={17} />
           </button>
@@ -1766,7 +1785,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
       <div className="px-6 py-5 flex gap-3">
         <button
           onClick={() => setDeleteConfirm(null)}
-          className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-white text-sm font-medium transition-all"
+          className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer"
         >
           Отмена
         </button>
@@ -1781,7 +1800,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
             }
             setDeleteConfirm(null);
           }}
-          className="flex-1 py-3 bg-white/5 hover:bg-red-500/10 border border-white/10 hover:border-red-400 rounded-2xl text-white hover:text-red-400 text-sm font-medium transition-all"
+          className="flex-1 py-3 bg-white/5 hover:bg-red-500/10 border border-white/10 hover:border-red-400 rounded-2xl text-white hover:text-red-400 text-sm font-medium transition-all cursor-pointer"
         >
           Удалить
         </button>

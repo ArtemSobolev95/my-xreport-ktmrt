@@ -1,8 +1,13 @@
 'use client';
 import pb from '../lib/pocketbase';
 import { LogOut, User } from 'lucide-react';
+import { ReactNode } from 'react';
 
-export default function UserHeader() {
+interface UserHeaderProps {
+  children?: ReactNode;
+}
+
+export default function UserHeader({ children }: UserHeaderProps) {
   const user = pb.authStore.record;
 
   const handleLogout = () => {
@@ -15,7 +20,7 @@ export default function UserHeader() {
   return (
     <div className="flex items-center justify-between w-full px-4 md:px-8 py-1 bg-zinc-900 border-b border-white/10">
       
-      {/* Левая часть — можно добавить название проекта */}
+      {/* Левая часть */}
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400">
           <User size={25} />
@@ -25,10 +30,13 @@ export default function UserHeader() {
         </span>
       </div>
 
-      {/* Правая часть — пользователь */}
+      {/* Правая часть */}
       <div className="flex items-center gap-4">
         
-        {/* Email с автоматическим укорачиванием */}
+        {/* === Сюда можно передавать уведомления и кнопки === */}
+        {children}
+
+        {/* Email */}
         <div className="max-w-[160px] sm:max-w-[220px] md:max-w-[280px] truncate text-sm text-amber-400 font-medium">
           {user.email}
         </div>

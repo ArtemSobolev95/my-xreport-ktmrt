@@ -108,7 +108,43 @@ function FillerPage() {
     deletedFieldIds: string[] 
   }>>([]);
   const MAX_HISTORY = 50;
+  // === Работа с черновиком в localStorage ===
+const DRAFT_KEY_PREFIX = 'filler_draft_';
 
+const getDraftKey = (templateId: string) => `${DRAFT_KEY_PREFIX}${templateId}`;
+
+const saveDraft = (templateId: string, data: Record<string, any>, deleted: string[]) => {
+  if (!templateId) return;
+  try {
+    const draft = {
+      fieldsData: data,
+      deletedFieldIds: deleted,
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(getDraftKey(templateId), JSON.stringify(draft));
+  } catch (e) {
+    console.warn('Не удалось сохранить черновик в localStorage');
+  }
+};
+
+const loadDraft = (templateId: string) => {
+  if (!templateId) return null;
+  try {
+    const raw = localStorage.getItem(getDraftKey(templateId));
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const clearDraft = (templateId: string) => {
+  if (!templateId) return;
+  localStorage.removeItem(getDraftKey(templateId));
+};
+
+// Состояние для уведомления о восстановлении черновика
+const [showDraftNotification, setShowDraftNotification] = useState(false);
 
   const saveToHistory = () => {
     setHistory(prev => {
@@ -128,6 +164,17 @@ function FillerPage() {
     setDeletedFieldIds([...lastState.deletedFieldIds]);   // массив!
     setHistory(prev => prev.slice(0, -1));
   };
+
+  // === Автосохранение черновика ===
+useEffect(() => {
+  if (!id || !template) return;
+
+  const timeout = setTimeout(() => {
+    saveDraft(id as string, fieldsData, deletedFieldIds);
+  }, 400); // небольшая задержка, чтобы не спамить localStorage
+
+  return () => clearTimeout(timeout);
+}, [fieldsData, deletedFieldIds, id, template]);
 
   const autoResize = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -192,23 +239,73 @@ function FillerPage() {
   };
 
   const resetToDefault = () => {
-    if (!originalTemplate) return;
-    saveToHistory();
-    setTemplate(JSON.parse(JSON.stringify(originalTemplate)));
-    setDeletedFieldIds([]);
-    const init: Record<string, any> = {};
-    originalTemplate.fields.forEach((f: BuilderField) => {
-      if (f.defaultValue !== undefined) init[f.id] = f.defaultValue;
-      else if (f.type === 'checkbox') init[f.id] = false;
-      else if (f.type === 'rating') init[f.id] = 0;
-      else init[f.id] = '';
-    });
-    setFieldsData(init);
-    setIsComparisonActive(false);
-    setComparisonDate('');
-    setIsStateAfterActive(false);
-    setStateAfterText('');
-  };
+  if (!originalTemplate || !id) return;
+
+  // Подтверждение перед сбросом
+  const confirmed = confirm(
+    'Сбросить протокол к исходному состоянию?\n\nВсе введённые данные будут удалены.'
+  );
+  if (!confirmed) return;
+
+  saveToHistory();
+
+  // Очищаем черновик
+  clearDraft(id as string);
+
+  // Сброс шаблона
+  setTemplate(JSON.parse(JSON.stringify(originalTemplate)));
+  setDeletedFieldIds([]);
+
+  // Сброс значений полей
+  const init: Record<string, any> = {};
+  originalTemplate.fields.forEach((f: BuilderField) => {
+    if (f.defaultValue !== undefined) init[f.id] = f.defaultValue;
+    else if (f.type === 'checkbox') init[f.id] = false;
+    else if (f.type === 'rating') init[f.id] = 0;
+    else init[f.id] = '';
+  });
+
+  setFieldsData(init);
+
+  // Сброс дополнительных состояний
+  setIsComparisonActive(false);
+  setComparisonDate('');
+  setIsStateAfterActive(false);
+  setStateAfterText('');
+  setShowDraftNotification(false);
+};
+
+  // === Очистка черновика + сброс к дефолтным значениям ===
+const handleClearDraft = () => {
+  if (!id || !template) return;
+
+  if (!confirm('Очистить черновик? Все введённые данные будут удалены.')) {
+    return;
+  }
+
+  // Удаляем из localStorage
+  clearDraft(id as string);
+
+  // Сбрасываем к исходному состоянию шаблона
+  setTemplate(JSON.parse(JSON.stringify(originalTemplate)));
+  setDeletedFieldIds([]);
+
+  // Создаём чистые значения полей
+  const init: Record<string, any> = {};
+  originalTemplate.fields.forEach((f: BuilderField) => {
+    if (f.defaultValue !== undefined) init[f.id] = f.defaultValue;
+    else if (f.type === 'checkbox') init[f.id] = false;
+    else if (f.type === 'rating') init[f.id] = 0;
+    else init[f.id] = '';
+  });
+
+  setFieldsData(init);
+  setIsComparisonActive(false);
+  setComparisonDate('');
+  setIsStateAfterActive(false);
+  setStateAfterText('');
+  setShowDraftNotification(false);
+};
  
   
   useEffect(() => {
@@ -363,47 +460,78 @@ function FillerPage() {
     .sort((a, b) => (b[1].usage || 0) - (a[1].usage || 0));
 
         useEffect(() => {
-    if (!id) return;
-    setLoading(true);
+  if (!id) return;
+  setLoading(true);
+  setShowDraftNotification(false)
 
-    const loadTemplate = async () => {
-      try {
-        const record = await pb.collection('templates').getOne(id as string, { 
-          $autoCancel: false 
+  const loadTemplate = async () => {
+    try {
+      const record = await pb.collection('templates').getOne(id as string, { 
+        $autoCancel: false 
+      });
+
+      // Проверка доступа
+      const ownerId = typeof record.user === 'string' ? record.user : record.user?.id || '';
+      if (ownerId !== pb.authStore.record?.id && !record.isPublic) {
+        alert('У вас нет доступа к этому шаблону');
+        router.push('/');
+        return;
+      }
+
+      setOriginalTemplate(JSON.parse(JSON.stringify(record)));
+      setTemplate(record);
+
+      // === УМНАЯ ИНИЦИАЛИЗАЦИЯ + ВОССТАНОВЛЕНИЕ ЧЕРНОВИКА ===
+      const draft = loadDraft(id as string);
+
+      setFieldsData(prev => {
+        const newData: Record<string, any> = { ...(draft?.fieldsData || prev) };
+
+        record.fields.forEach((f: BuilderField) => {
+          // Инициализируем только новые поля
+          if (newData[f.id] === undefined) {
+            if (f.defaultValue !== undefined) newData[f.id] = f.defaultValue;
+            else if (f.type === 'checkbox') newData[f.id] = false;
+            else if (f.type === 'rating') newData[f.id] = 0;
+            else newData[f.id] = '';
+          }
         });
 
-        // Проверяем доступ
-        const ownerId = typeof record.user === 'string' ? record.user : record.user?.id || '';
-        if (ownerId !== pb.authStore.record?.id && !record.isPublic) {
-          alert('У вас нет доступа к этому шаблону');
-          router.push('/');
-          return;
+        // Удаляем данные удалённых полей
+        const currentIds = new Set(record.fields.map((f: any) => f.id));
+        Object.keys(newData).forEach(key => {
+          if (!currentIds.has(key)) delete newData[key];
+        });
+
+        return newData;
+      });
+
+      // Восстанавливаем удалённые поля из черновика
+      if (draft?.deletedFieldIds) {
+        setDeletedFieldIds(draft.deletedFieldIds);
+      }
+
+      if (draft) {
+          setShowDraftNotification(true);
+          
+          // Плавно скрываем уведомление через 3.8 секунды
+          setTimeout(() => {
+            setShowDraftNotification(false);
+          }, 3800);
         }
 
-        setOriginalTemplate(JSON.parse(JSON.stringify(record)));
-        setTemplate(record);
+    } catch (err) {
+      console.error("Ошибка загрузки шаблона:", err);
+      alert("Шаблон не найден или у вас нет доступа");
+      router.push('/');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-        const init: Record<string, any> = {};
-        record.fields.forEach((f: BuilderField) => {
-          if (f.defaultValue !== undefined) init[f.id] = f.defaultValue;
-          else if (f.type === 'checkbox') init[f.id] = false;
-          else if (f.type === 'rating') init[f.id] = 0;
-          else init[f.id] = '';
-        });
-
-        setFieldsData(init);
-      } catch (err) {
-        console.error("Ошибка загрузки шаблона:", err);
-        alert("Шаблон не найден или у вас нет доступа");
-        router.push('/');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadTemplate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  loadTemplate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [id]);
 
   useEffect(() => {
     if (template && Object.keys(fieldsData).length > 0 && !initialized) {
@@ -923,14 +1051,25 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
 
   const activeField = template?.fields?.find((f: BuilderField) => f.id === activeFieldId);
 
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white">
             
         <div className="sticky top-0 z-50 bg-zinc-950 border-b border-white/10">
-        <UserHeader />
-      </div>
-
-                     
+        <UserHeader>
+          {/* Плавно исчезающее уведомление о черновике */}
+          <div
+            className={`flex items-center gap-2 px-3 py-1.5 bg-none border border-none 
+                        text-zinc-400 text-sm whitespace-nowrap overflow-hidden transition-all duration-300
+                        ${showDraftNotification 
+                          ? 'opacity-100 max-w-[200px] scale-100 mr-2' 
+                          : 'opacity-0 max-w-0 scale-95 pointer-events-none'
+                        }`}
+          >
+            Черновик восстановлен
+          </div>
+        </UserHeader>
+      </div>               
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 pt-8 pb-8 grid grid-cols-12 gap-8">
         <div className="col-span-5 space-y-4">
@@ -1035,7 +1174,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
     )}
   </>
 )}
-
+        
         {/* Все поля остаются без изменений */}
         {f.type === 'text' && (
           <textarea

@@ -78,6 +78,15 @@ function FillerPage() {
     id: string;
     name: string;
   } | null>(null);
+  const [variantSelector, setVariantSelector] = useState<{
+  fieldId: string;
+  variants: string[];
+  prefix: string;
+  trigger: string;
+  startPos: number;
+  position: { top: number; left: number };
+} | null>(null);
+  const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const inputRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>>({});
   const [initialized, setInitialized] = useState(false);
@@ -201,6 +210,71 @@ function FillerPage() {
   };
  
   
+  useEffect(() => {
+  if (!variantSelector) return;
+
+  const handleClickOutside = (e: MouseEvent) => {
+    const target = e.target as HTMLElement;
+    // Закрываем, если кликнули не по попапу
+    if (!target.closest('.fixed')) {
+      setVariantSelector(null);
+      setSelectedVariantIndex(0);
+    }
+  };
+
+  const handleBlur = () => {
+    // Закрываем при потере фокуса
+    setTimeout(() => {
+      setVariantSelector(null);
+      setSelectedVariantIndex(0);
+    }, 100);
+  };
+
+  document.addEventListener('mousedown', handleClickOutside);
+  
+  // Закрываем при потере фокуса активного поля
+  const activeTextarea = inputRefs.current[variantSelector.fieldId];
+  activeTextarea?.addEventListener('blur', handleBlur);
+
+  return () => {
+    document.removeEventListener('mousedown', handleClickOutside);
+    activeTextarea?.removeEventListener('blur', handleBlur);
+  };
+}, [variantSelector]);
+
+
+  useEffect(() => {
+  if (!variantSelector) return;
+
+  const handleGlobalKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      setVariantSelector(null);
+      setSelectedVariantIndex(0);
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSelectedVariantIndex(prev => Math.max(0, prev - 1));
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSelectedVariantIndex(prev => 
+        Math.min(variantSelector.variants.length - 1, prev + 1)
+      );
+    }
+
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      selectVariant(selectedVariantIndex);
+    }
+  };
+
+  window.addEventListener('keydown', handleGlobalKeyDown);
+  return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+}, [variantSelector, selectedVariantIndex]);
+
 
             // ====================== ЗАГРУЗКА АББРЕВИАТУР ======================
   useEffect(() => {
@@ -573,65 +647,157 @@ const handleBlur = () => {
 };
 
   const handleInputChange = (fieldId: string, value: string) => {
-    saveToHistory();
-    let newValue = value;
-    Object.keys(abbreviations).forEach(abbr => {
-      const regex = new RegExp(`(^|\\s|[.,!?;])(${abbr})(\\s|[.,!?;]|$)`, 'gi');
-      newValue = newValue.replace(regex, (match, before, word, after) => {
-        if (after === '' && value.endsWith(word)) return match;
-        const lowerWord = word.toLowerCase();
-        if (abbreviations[lowerWord]) {
-          const updated = JSON.parse(JSON.stringify(abbreviations));
-          updated[lowerWord].usage = (updated[lowerWord].usage || 0) + 1;
-          saveData(updated, categories);
-        }
-        return before + abbreviations[lowerWord].full + after;
-      });
-    });
-    updateField(fieldId, newValue);
-  };
+  saveToHistory();
+  updateField(fieldId, value);
+};
 
 const insertPhrase = (phrase: string) => {
-  const input = activeInputRef.current;
-  if (!input) {
+  const fieldId = activeFieldRef.current;
+  if (!fieldId) {
     alert('Поставьте курсор в нужное текстовое поле слева');
     return;
   }
 
-  input.focus();
+  const inputEl = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
+  if (!inputEl) return;
 
-  setTimeout(() => {
-    const inputEl = input as HTMLTextAreaElement | null;
-    if (!inputEl) return;
+  const start = inputEl.selectionStart ?? 0;
+  const end = inputEl.selectionEnd ?? start;
+  const current = inputEl.value || '';
 
-    const start = inputEl.selectionStart ?? 0;
-    const end = inputEl.selectionEnd ?? start;
-    const current = inputEl.value || '';
+  const newText = current.substring(0, start) + phrase + current.substring(end);
+  const newCursorPos = start + phrase.length;
 
-    const newText = current.substring(0, start) + phrase + current.substring(end);
+  saveToHistory();
+  updateField(fieldId, newText);
 
-    const fieldId = activeFieldRef.current!;
-    updateField(fieldId, newText);
+  // Восстанавливаем курсор + растягиваем textarea
+  requestAnimationFrame(() => {
+    const el = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
+    if (el) {
+      el.focus();
+      el.setSelectionRange(newCursorPos, newCursorPos);
 
-    // ←←← УЛУЧШЕННЫЙ autoResize — срабатывает надёжнее ←←←
-    const textarea = inputRefs.current[fieldId];
-    if (textarea && textarea.tagName === 'TEXTAREA') {
-      const ta = textarea as HTMLTextAreaElement;
-      
-      // Принудительно сбрасываем высоту и пересчитываем
-      ta.style.height = 'auto';
-      ta.style.height = Math.min(ta.scrollHeight, 400) + 'px';
-      
-      // Дополнительный вызов через небольшой таймаут (на случай длинных фраз)
+      // === Главное исправление: вызываем autoResize ===
+      autoResize(el);
+
+      // Дополнительная страховка на случай длинных фраз
       setTimeout(() => {
-        ta.style.height = 'auto';
-        ta.style.height = Math.min(ta.scrollHeight, 400) + 'px';
+        autoResize(el);
       }, 10);
     }
+  });
+};
 
-    const newPos = start + phrase.length;
-    inputEl.setSelectionRange(newPos, newPos);
-  }, 0);
+const parseVariants = (text: string): { prefix: string; variants: string[] } | null => {
+  const match = text.match(/^(.*)\{([^}]+)\}$/);
+  if (!match) return null;
+
+  const prefix = match[1];
+  const variants = match[2].split('|').map(v => v.trim()).filter(Boolean);
+  
+  return variants.length > 1 ? { prefix, variants } : null;
+};
+
+const selectVariant = (index: number) => {
+  if (!variantSelector) return;
+
+  const { fieldId, variants, prefix, trigger } = variantSelector;
+  const chosen = variants[index];
+
+  const textarea = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
+  if (!textarea) return;
+
+  const currentValue = textarea.value;
+  const newText = prefix + chosen + trigger + currentValue.substring(variantSelector.startPos);
+
+  saveToHistory();
+  updateField(fieldId, newText);
+
+  const newCursorPos = prefix.length + chosen.length + 1;
+
+  requestAnimationFrame(() => {
+    const el = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
+    if (el) {
+      el.focus();
+      el.setSelectionRange(newCursorPos, newCursorPos);
+      autoResize(el);
+    }
+  });
+
+  setVariantSelector(null);
+  setSelectedVariantIndex(0);
+};
+
+const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: string) => {
+  const triggerChars = [' ', '.', ',', ';', ':'];
+  if (!triggerChars.includes(e.key)) return;
+
+  const inputEl = e.currentTarget;
+  const cursorPos = inputEl.selectionStart ?? 0;
+  const value = inputEl.value;
+
+  const textBeforeCursor = value.substring(0, cursorPos);
+  const match = textBeforeCursor.match(/(\S+)$/);
+  if (!match) return;
+
+  const originalWord = match[1];
+  const wordLower = originalWord.toLowerCase();
+  const abbrInfo = abbreviations[wordLower];
+  if (!abbrInfo) return;
+
+  e.preventDefault();
+
+  const beforeWord = textBeforeCursor.substring(0, match.index ?? 0);
+
+  // === Проверяем, есть ли варианты в аббревиатуре ===
+  const parsed = parseVariants(abbrInfo.full);
+
+  if (parsed) {
+  const textareaEl = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
+  const rect = textareaEl?.getBoundingClientRect();
+
+  setVariantSelector({
+    fieldId,
+    variants: parsed.variants,
+    prefix: beforeWord + parsed.prefix,
+    trigger: e.key,
+    startPos: cursorPos,
+    position: {
+      top: rect ? rect.bottom + 4 : 200,
+      left: rect ? rect.left : 100,
+    },
+  });
+  setSelectedVariantIndex(0);
+  return;
+}
+
+  // === Обычная вставка (без вариантов) ===
+  let replacement = abbrInfo.full;
+
+  // Сохранение регистра
+  if (originalWord[0] === originalWord[0].toUpperCase()) {
+    replacement = replacement.charAt(0).toUpperCase() + replacement.slice(1);
+  }
+
+  const newText = beforeWord + replacement + e.key + value.substring(cursorPos);
+  const newCursorPos = beforeWord.length + replacement.length + 1;
+
+  saveToHistory();
+  updateField(fieldId, newText);
+
+  const updated = JSON.parse(JSON.stringify(abbreviations));
+  updated[wordLower].usage = (updated[wordLower].usage || 0) + 1;
+  saveData(updated, categories);
+
+  requestAnimationFrame(() => {
+    const el = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
+    if (el) {
+      el.focus();
+      el.setSelectionRange(newCursorPos, newCursorPos);
+      autoResize(el);
+    }
+  });
 };
 
   const copyToClipboard = () => navigator.clipboard.writeText(finalPlainText);
@@ -760,6 +926,29 @@ const insertPhrase = (phrase: string) => {
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 pt-8 pb-8 grid grid-cols-12 gap-8">
         <div className="col-span-5 space-y-4">
+          {variantSelector && (
+            <div
+              className="fixed z-[99999] bg-zinc-900/10 backdrop-blur-md rounded-xl shadow-xl py-1 min-w-[180px]"
+              style={{
+                top: variantSelector.position.top,
+                left: variantSelector.position.left,
+              }}
+            >
+              {variantSelector.variants.map((variant, index) => (
+                <button
+                  key={index}
+                  onClick={() => selectVariant(index)}
+                  className={`w-full text-left px-4 py-[6px] text-sm transition-colors ${
+                    index === selectedVariantIndex
+                      ? 'bg-white/10 border-none rounded-xl font-medium'
+                      : 'text-white hover:bg-white/10 hover:border rounded-xl'
+                  }`}
+                >
+                  {variant}
+                </button>
+              ))}
+            </div>
+          )}
         <h1 className="text-3xl font-bold mb-6 text-center mx-auto max-w-3xl tracking-tight">{template.title}</h1>
         <div className="space-y-4">
   {visibleFields.map((f: BuilderField) => (
@@ -845,6 +1034,7 @@ const insertPhrase = (phrase: string) => {
             ref={el => { if (el) inputRefs.current[f.id] = el; }}
             value={fieldsData[f.id] || ''}
             onChange={e => { handleInputChange(f.id, e.target.value); autoResize(e.target); }}
+            onKeyDown={e => handleKeyDown(e, f.id)}
             onFocus={(e) => handleFocus(f.id, e.target)}
             onBlur={handleBlur}
             className="w-full bg-transparent border-0 border-b-2 border-zinc-600 px-0 py-0 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
@@ -882,9 +1072,15 @@ const insertPhrase = (phrase: string) => {
                               focus:ring-2 focus:ring-amber-400/30 focus:outline-none transition-all cursor-pointer"
                   />
                   
-                  <span className="text-white group-hover:text-amber-400 transition-colors">
-                    {f.label}
-                  </span>
+                  <span 
+                      className={`transition-colors ${
+                        fieldsData[f.id] 
+                          ? 'text-amber-400' 
+                          : 'text-white group-hover:text-amber-400'
+                      }`}
+                    >
+                      {f.label}
+                    </span>
                 </label>
               )}
 

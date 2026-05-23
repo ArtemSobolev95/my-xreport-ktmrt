@@ -1225,6 +1225,15 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
     )}
   </>
 )}
+
+      {/* === HEADER — Большой заголовок раздела === */}
+        {f.type === 'header' && (
+          <div className="py-1">
+            <h2 className="text-2xl font-bold text-white text-center tracking-tight">
+              {f.label}
+            </h2>
+          </div>
+        )}
         
         {/* Все поля остаются без изменений */}
         {f.type === 'text' && (

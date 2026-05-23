@@ -8,6 +8,7 @@ import { StarIcon as StarSolidIcon } from '@heroicons/react/24/solid';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
 import { PlusIcon } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 function HomePage() {
   const router = useRouter();
@@ -34,7 +35,12 @@ function HomePage() {
 
       
 
-      setTemplates(myTemplates);
+      setTemplates(
+  [...myTemplates].sort((a, b) => {
+    if (a.is_favorite !== b.is_favorite) return a.is_favorite ? -1 : 1;
+    return new Date(b.created).getTime() - new Date(a.created).getTime();
+  })
+);
     } catch (err: any) {
       
       setTemplates([]);
@@ -50,19 +56,22 @@ function HomePage() {
   const toggleFavorite = async (id: string, currentFavorite: boolean) => {
   const newFavorite = !currentFavorite;
 
-  // Оптимистичное обновление
+  // Оптимистичное обновление + плавная сортировка
   setTemplates(prev => {
     const updated = prev.map(t =>
       t.id === id ? { ...t, is_favorite: newFavorite } : t
     );
 
-    return updated.sort((a, b) => {
-      if (a.is_favorite !== b.is_favorite) return a.is_favorite ? -1 : 1;
+    return [...updated].sort((a, b) => {
+      // 1. Избранные всегда сверху
+      if (a.is_favorite !== b.is_favorite) {
+        return a.is_favorite ? -1 : 1;
+      }
+      // 2. Внутри группы — новые сначала (по дате создания)
       return new Date(b.created).getTime() - new Date(a.created).getTime();
     });
   });
 
-  
   try {
     await pb.collection('templates').update(id, { is_favorite: newFavorite });
   } catch (err) {
@@ -102,7 +111,7 @@ function HomePage() {
         </div>
 
         
-        <div className="max-w-6xl mx-auto pt-8 px-4">
+        <div className="max-w-6xl mx-auto pt-8 px-4 pb-32">
 
           
           <div className="flex items-center gap-4 mb-8">
@@ -112,7 +121,7 @@ function HomePage() {
                 placeholder="Поиск"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-4 bg-zinc-900/75 border border-white/10 focus:border-amber-400 rounded-3xl px-6 py-6 text-white placeholder:text-zinc-400 outline-none transition-all"
+                className="w-full h-14 bg-zinc-900/75 border border-white/10 focus:border-amber-400 rounded-3xl px-6 text-white placeholder:text-zinc-400 outline-none transition-all"
               />
             </div>
 
@@ -126,71 +135,94 @@ function HomePage() {
 
           {/* === ВСЁ ОСТАЛЬНОЕ ОСТАЁТСЯ БЕЗ ИЗМЕНЕНИЙ === */}
           {filteredTemplates.length === 0 ? (
-            <div className="text-center py-20 text-zinc-400 text-xl">
-              {searchTerm ? 'Ничего не найдено' : 'Пока нет ни одного шаблона'}
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3">
-              {filteredTemplates.map((t) => (
-                <div
-                  key={t.id}
-                  className="group bg-zinc-900/75 backdrop-blur-2xl border border-white/10 hover:border-white/30 rounded-3xl p-1 shadow-2xl transition-all hover:shadow-[0_0_0_4px_rgba(245,158,11,0.4)] flex items-center gap-2"
-                >
-                  {/* Звёздочка слева от названия */}
-                  <button
-                    onClick={() => toggleFavorite(t.id, !!t.is_favorite)}
-                    className="shrink-0 text-zinc-400 hover:text-amber-400 transition-colors cursor-pointer tooltip tooltip-top" data-tip="Добавить в избранное"
-                  >
-                    {t.is_favorite ? (
-                      <StarSolidIcon className="w-5 h-5 text-amber-400" />
-                    ) : (
-                      <StarIcon className="w-4 h-4" />
-                    )}
-                  </button>
+  <div className="text-center py-20 text-zinc-400 text-xl">
+    {searchTerm ? 'Ничего не найдено' : 'Пока нет ни одного шаблона'}
+  </div>
+) : (
+  <AnimatePresence>
+    <div className="flex flex-col gap-3">
+      {filteredTemplates.map((t) => (
+        <motion.div
+          key={t.id}
+          layout
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -20 }}
+          transition={{
+            duration: 0.6,
+            ease: [0.4, 0, 0.2, 1], // очень плавная кривая
+            layout: { duration: 0.2, ease: [0.4, 0, 0.2, 1] }
+          }}
+          whileHover={{
+              y: -6,
+              scale: 1.02,
+              boxShadow: "0 25px 50px -12px rgb(0 0 0 / 0.25)"
+            }}
+          onDoubleClick={() => router.push(`/filler?id=${t.id}`)}
+          className="group bg-zinc-900/60 backdrop-blur-3xl border border-white/5 hover:border-amber-400/30 rounded-3xl p-3 shadow-xl flex items-center gap-4 cursor-pointer"
+        >
+          {/* Звёздочка */}
+          <motion.button
+                onClick={() => toggleFavorite(t.id, !!t.is_favorite)}
+                whileHover={{ scale: 1.15 }}
+                whileTap={{ scale: 1.4, rotate: 25 }}
+                transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                className="shrink-0 text-zinc-400 hover:text-amber-400 cursor-pointer tooltip tooltip-top"
+                data-tip="Добавить в избранное">
 
-                  {/* Название шаблона — по центру по вертикали */}
-                  <div className="flex-1 min-w-0">
-                    <h2 className="text-sm font-semibold line-clamp-2 text-white">
-                      {t.title}
-                    </h2>
-                  </div>
+            {t.is_favorite ? (
+              <StarSolidIcon className="w-5 h-5 text-amber-400" />
+            ) : (
+              <StarIcon className="w-4 h-4" />
+            )}
+          </motion.button>
 
-                  {/* Кнопки действий справа */}
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Link
-                      href={`/builder?edit=${t.id}`}
-                      className="p-3 text-white hover:text-amber-400 transition-all cursor-pointer tooltip tooltip-top" data-tip="Редактировать"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-5 h-5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
-                      </svg>
-                    </Link>
+          {/* Название */}
+          <div className="flex-1 min-w-0">
+            <h2 className="text-sm font-semibold line-clamp-2 text-white">
+              {t.title}
+            </h2>
+          </div>
 
-                    <Link
-                      href={`/filler?id=${t.id}`}
-                      className="p-3 text-white hover:text-amber-400 transition-all cursor-pointer tooltip tooltip-top" data-tip="Заполнить"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-5 h-5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
-                      </svg>
-                    </Link>
+          {/* Кнопки действий */}
+          <div className="flex items-center gap-1 shrink-0">
+            <Link
+              href={`/builder?edit=${t.id}`}
+              className="p-3 text-white hover:text-amber-400 transition-all cursor-pointer tooltip tooltip-top"
+              data-tip="Редактировать"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+              </svg>
+            </Link>
 
-                    <button
-                      onClick={() => deleteTemplate(t.id, t.title)}
-                      className="p-3 text-white hover:text-red-400 transition-all cursor-pointer tooltip tooltip-top" data-tip="Удалить"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-5 h-5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+            <Link
+              href={`/filler?id=${t.id}`}
+              className="p-3 text-white hover:text-amber-400 transition-all cursor-pointer tooltip tooltip-top"
+              data-tip="Заполнить"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+              </svg>
+            </Link>
+
+            <button
+              onClick={() => deleteTemplate(t.id, t.title)}
+              className="p-3 text-white hover:text-red-400 transition-all cursor-pointer tooltip tooltip-top"
+              data-tip="Удалить"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+              </svg>
+            </button>
+          </div>
+        </motion.div>
+      ))}
+    </div>
+  </AnimatePresence>
+)}
         </div>
       </div>
     );
 }
 export default withAuth(HomePage);
-

@@ -266,6 +266,7 @@ useEffect(() => {
   });
 
   setFieldsData(init);
+  resetTextareaHeights();
 
   // Сброс дополнительных состояний
   setIsComparisonActive(false);
@@ -300,6 +301,7 @@ const handleClearDraft = () => {
   });
 
   setFieldsData(init);
+  resetTextareaHeights();
   setIsComparisonActive(false);
   setComparisonDate('');
   setIsStateAfterActive(false);
@@ -345,29 +347,37 @@ const handleClearDraft = () => {
   if (!variantSelector) return;
 
   const handleGlobalKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
+  if (e.key === 'Escape') {
+    setVariantSelector(null);
+    setSelectedVariantIndex(0);
+    return;
+  }
+
+  if (e.key === 'Backspace') {
+      e.preventDefault();
       setVariantSelector(null);
       setSelectedVariantIndex(0);
       return;
     }
 
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setSelectedVariantIndex(prev => Math.max(0, prev - 1));
-    }
 
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setSelectedVariantIndex(prev => 
-        Math.min(variantSelector.variants.length - 1, prev + 1)
-      );
-    }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    setSelectedVariantIndex(prev => Math.max(0, prev - 1));
+  }
 
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      selectVariant(selectedVariantIndex);
-    }
-  };
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    setSelectedVariantIndex(prev => 
+      Math.min(variantSelector.variants.length - 1, prev + 1)
+    );
+  }
+
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    selectVariant(selectedVariantIndex);
+  }
+};
 
   window.addEventListener('keydown', handleGlobalKeyDown);
   return () => window.removeEventListener('keydown', handleGlobalKeyDown);
@@ -549,6 +559,20 @@ const handleClearDraft = () => {
       setInitialized(true);
     }
   }, [template, fieldsData, initialized]);
+
+  useEffect(() => {
+    if (!template || Object.keys(fieldsData).length === 0) return;
+
+    const timer = setTimeout(() => {
+      Object.entries(inputRefs.current).forEach(([id, el]) => {
+        if (el && el.tagName === 'TEXTAREA') {
+          autoResize(el as HTMLTextAreaElement);
+        }
+      });
+    }, 80);
+
+    return () => clearTimeout(timer);
+  }, [fieldsData, template]);
 
   useEffect(() => {
   if (!template) return;
@@ -818,6 +842,16 @@ const insertPhrase = (phrase: string) => {
   });
 };
 
+const resetTextareaHeights = () => {
+  setTimeout(() => {
+    Object.values(inputRefs.current).forEach((el) => {
+      if (el && el.tagName === 'TEXTAREA') {
+        el.style.height = '30px';        // дефолтная высота
+      }
+    });
+  }, 30);
+};
+
 const parseVariants = (text: string): { prefix: string; variants: string[] } | null => {
   const match = text.match(/^(.*)\{([^}]+)\}$/);
   if (!match) return null;
@@ -834,11 +868,23 @@ const selectVariant = (index: number) => {
   const { fieldId, variants, prefix, trigger, abbrKey} = variantSelector;
   const chosen = variants[index];
 
-  const textarea = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
-  if (!textarea) return;
+// === ЧУВСТВИТЕЛЬНОСТЬ К РЕГИСТРУ (не ломает ничего) ===
+let finalChosen = chosen;
+if (variantSelector?.originalWord) {
+  const firstChar = variantSelector.originalWord[0];
+  const isCapitalized = firstChar === firstChar.toUpperCase() && firstChar !== firstChar.toLowerCase();
 
-  const currentValue = textarea.value;
-  const newText = prefix + chosen + trigger + currentValue.substring(variantSelector.startPos);
+  if (isCapitalized) {
+    finalChosen = chosen.charAt(0).toUpperCase() + chosen.slice(1);
+  } else {
+    finalChosen = chosen.charAt(0).toLowerCase() + chosen.slice(1);
+  }
+}
+
+const textarea = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
+if (!textarea) return;
+const currentValue = textarea.value;
+const newText = prefix + finalChosen + trigger + currentValue.substring(variantSelector.startPos);
 
   saveToHistory();
   updateField(fieldId, newText);
@@ -865,6 +911,10 @@ const selectVariant = (index: number) => {
 };
 
 const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: string) => {
+  if (variantSelector && e.key.length === 1) {
+    setVariantSelector(null);
+    setSelectedVariantIndex(0);
+  }
   const triggerChars = [' ', '.', ',', ';', ':'];
   if (!triggerChars.includes(e.key)) return;
 
@@ -903,6 +953,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
       left: rect ? rect.left : 100,
     },
     abbrKey: wordLower,
+    originalWord: originalWord,
   });
   setSelectedVariantIndex(0);
   return;
@@ -1072,7 +1123,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
       </div>               
 
       <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 pt-8 pb-8 grid grid-cols-12 gap-8">
-        <div className="col-span-5 space-y-4">
+        <div className="col-span-5 space-y-4 pb-64">
           {variantSelector && (
             <div
               className="fixed z-[99999] bg-zinc-900/10 backdrop-blur-md rounded-xl shadow-xl py-1 w-fit min-w-[160px] max-w-[420px]"

@@ -51,6 +51,7 @@ import type { BuilderField, FieldType, QuickButtonGroup, QuickButtonSubgroup } f
 import { motion, AnimatePresence } from 'framer-motion';
 import withAuth from '../../components/withAuth';
 import UserHeader from '../../components/UserHeader';
+import dynamic from 'next/dynamic';
 
 
 
@@ -741,6 +742,8 @@ function TemplateBuilder() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
+  const DynamicUserHeader = dynamic(() => import('../../components/UserHeader'), { ssr: false });
+
 
   useEffect(() => {
   if (edit) {
@@ -902,8 +905,8 @@ function TemplateBuilder() {
     <div className="flex flex-col h-screen bg-zinc-950 text-white">
 
       <div className="sticky top-0 z-50 bg-zinc-900/90 backdrop-blur-xl border-b border-white/10">
-        <UserHeader />
-      </div>
+  <DynamicUserHeader />
+</div>
 
       <div className="flex flex-1 overflow-hidden">
 
@@ -923,7 +926,7 @@ function TemplateBuilder() {
         </div>
       </div>
 
-      <div className="flex-1 p-10 overflow-auto">
+      <div className="flex-1 p-10 pb-40 overflow-auto">
                 <div className="max-w-3xl mx-auto">
           <input 
             type="text" 

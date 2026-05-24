@@ -1216,7 +1216,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
       <div className="card-body p-5 pt-12">   {/* pt-12 — отступ сверху под кнопки */}
         {/* Название поля */}
 {/* === РЕДАКТИРУЕМЫЙ ЗАГОЛОВОК ДЛЯ ВСЕХ ПОЛЕЙ === */}
-        {f.type !== 'header' && f.type !== 'notes' && (
+        {f.type !== 'header' && f.type !== 'notes' && f.type !== 'checkbox' && (
           <input
             type="text"
             value={f.label || ''}

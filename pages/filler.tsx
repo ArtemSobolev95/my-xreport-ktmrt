@@ -13,6 +13,7 @@ import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
+
 const RatingField = ({ 
   field, 
   value, 
@@ -24,24 +25,33 @@ const RatingField = ({
   onChange: (value: number) => void;
   onFocus: (fieldId: string, el: HTMLElement | null) => void;
 }) => {
+  const handleClick = (score: number) => {
+    // Если уже выбрана эта оценка — сбрасываем в 0 (деактивируем)
+    if (value === score) {
+      onChange(0);
+    } else {
+      onChange(score);
+    }
+    onFocus(field.id, null);
+  };
+
   return (
     <div className="flex gap-2 justify-center">
       {Array.from({ length: field.max || 5 }, (_, i) => {
         const score = i + 1;
         const isActive = value === score;
+
         return (
           <button
             key={score}
-            onClick={() => {
-              onChange(score);
-              onFocus(field.id, null);
-            }}
+            onClick={() => handleClick(score)}
             tabIndex={0}
-            className={`w-10 h-10 flex items-center justify-center text-lg font-medium rounded-2xl transition-all border
-${isActive
-                ? 'bg-zinc-800 border-amber-400 text-white'
-                : 'bg-transparent border-white/30 hover:border-amber-400 text-white'
-}`}
+            className={`w-10 h-10 flex items-center justify-center text-lg font-medium rounded-2xl transition-all border cursor-pointer
+              ${isActive
+                ? 'bg-zinc-800 border-amber-400 text-white shadow-md'
+                : 'bg-transparent border-white/30 hover:border-amber-400 hover:bg-white/5 text-white'
+              }
+            `}
           >
             {score}
           </button>
@@ -86,6 +96,7 @@ function FillerPage() {
   startPos: number;
   position: { top: number; left: number };
   abbrKey: string;
+  originalWord?: string;
 } | null>(null);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
@@ -1204,27 +1215,18 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
 
       <div className="card-body p-5 pt-12">   {/* pt-12 — отступ сверху под кнопки */}
         {/* Название поля */}
-{f.type !== 'checkbox' && f.type !== 'header' && (
-  <>
-    {f.isQuickText ? (
-      // === РЕДАКТИРУЕМЫЙ ЗАГОЛОВОК (для полей, добавленных через +) ===
-      <input
-        type="text"
-        value={f.label || ''}
-        onChange={(e) => updateFieldLabel(f.id, e.target.value)}
-        onFocus={() => handleFocus(f.id, null)}
-        onBlur={handleBlur}
-        placeholder="Введите значение"
-        className="w-full text-center bg-transparent px-0 py-1 mb-2 text-sm font-medium text-white placeholder:text-zinc-500 focus:border-amber-400 focus:outline-none transition-all"
-      />
-    ) : (
-      // === Статичное название (для полей из шаблона) ===
-      <label className="block text-white text-sm mb-2 font-medium text-center">
-        {f.label}
-      </label>
-    )}
-  </>
-)}
+{/* === РЕДАКТИРУЕМЫЙ ЗАГОЛОВОК ДЛЯ ВСЕХ ПОЛЕЙ === */}
+        {f.type !== 'header' && f.type !== 'notes' && (
+          <input
+            type="text"
+            value={f.label || ''}
+            onChange={(e) => updateFieldLabel(f.id, e.target.value)}
+            onFocus={() => handleFocus(f.id, null)}
+            onBlur={handleBlur}
+            placeholder="Название поля"
+            className="w-full text-center bg-transparent px-0 py-1 mb-3 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-all"
+          />
+        )}
 
       {/* === HEADER — Большой заголовок раздела === */}
         {f.type === 'header' && (

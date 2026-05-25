@@ -97,6 +97,7 @@ function FillerPage() {
   position: { top: number; left: number };
   abbrKey: string;
   originalWord?: string;
+  isAbove?: boolean;
 } | null>(null);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
@@ -393,6 +394,44 @@ const handleClearDraft = () => {
   window.addEventListener('keydown', handleGlobalKeyDown);
   return () => window.removeEventListener('keydown', handleGlobalKeyDown);
 }, [variantSelector, selectedVariantIndex]);
+
+      // === FLIP-ЛОГИКА + ПРИЛИПАНИЕ ПОПАПА К ПОЛЮ ===
+  useEffect(() => {
+    if (!variantSelector) return;
+
+    const updatePosition = () => {
+      const textarea = inputRefs.current[variantSelector.fieldId] as HTMLTextAreaElement | undefined;
+      if (!textarea) return;
+
+      const rect = textarea.getBoundingClientRect();
+      const popupHeight = 280; // приблизительная высота попапа (можно подкорректировать)
+
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const shouldOpenAbove = spaceBelow < popupHeight;
+
+      setVariantSelector(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          position: {
+            top: shouldOpenAbove ? rect.top - 8 : rect.bottom + 4,
+            left: rect.left,
+          },
+          isAbove: shouldOpenAbove,
+        };
+      });
+    };
+
+    updatePosition(); // сразу при открытии
+
+    window.addEventListener('scroll', updatePosition, { passive: true });
+    window.addEventListener('resize', updatePosition);
+
+    return () => {
+      window.removeEventListener('scroll', updatePosition);
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [variantSelector?.fieldId]);
 
 
             // ====================== ЗАГРУЗКА АББРЕВИАТУР ======================
@@ -1137,7 +1176,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
         <div className="col-span-5 space-y-4 pb-64">
           {variantSelector && (
             <div
-              className="fixed z-[99999] bg-zinc-900/10 backdrop-blur-md rounded-xl shadow-xl py-1 w-fit min-w-[160px] max-w-[420px]"
+              className="fixed z-40 bg-zinc-900/90 backdrop-blur-md rounded-xl shadow-xl py-1 w-fit min-w-[160px] max-w-[420px]"
               style={{
                 top: variantSelector.position.top,
                 left: variantSelector.position.left,
@@ -1219,6 +1258,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
         {f.type !== 'header' && f.type !== 'notes' && f.type !== 'checkbox' && (
           <input
             type="text"
+            tabIndex={-1}
             value={f.label || ''}
             onChange={(e) => updateFieldLabel(f.id, e.target.value)}
             onFocus={() => handleFocus(f.id, null)}
@@ -1700,11 +1740,20 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
         </button>
         <button 
           onClick={() => { 
-            if (stateAfterText.trim()) { 
-              setIsStateAfterActive(true); 
-              setShowStateAfterModal(false); 
-            } 
-          }} 
+                    let text = stateAfterText.trim();
+                    
+                    // Добавляем точку, если её нет и строка не пустая
+                    if (text && !text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
+                      text += '.';
+                    }
+
+                    setStateAfterText(text);
+                    
+                    if (text) { 
+                      setIsStateAfterActive(true); 
+                      setShowStateAfterModal(false); 
+                    } 
+                  }}
           className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all cursor-pointer"
         >
           Применить

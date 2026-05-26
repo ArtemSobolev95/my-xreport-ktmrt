@@ -30,4 +30,4 @@ COPY pb_hooks /pb/pb_hooks/
 
 EXPOSE 8090
 
-CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/data", "--enable-wal", "--logLevel=error"]
+CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/data", "--logLevel=error"]

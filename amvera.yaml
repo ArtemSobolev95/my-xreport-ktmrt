@@ -6,4 +6,3 @@ meta:
 run:
   containerPort: 8090
   persistenceMount: /data
-  command: /pb/pocketbase serve --dir /data --http=0.0.0.0:8090 --logLevel=error

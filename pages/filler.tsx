@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle } from 'lucide-react';
+import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, ChevronsDownUp } from 'lucide-react';
 import { 
   ArrowDownOnSquareIcon, 
   ArrowUpOnSquareIcon        
@@ -106,10 +106,59 @@ function FillerPage() {
   const [newlyAddedId, setNewlyAddedId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [isComparisonActive, setIsComparisonActive] = useState(false);
-  const [comparisonDate, setComparisonDate] = useState('');
+  const [comparisonDates, setComparisonDates] = useState<string[]>([]);
+  const [isMultipleComparison, setIsMultipleComparison] = useState(false);
   const [isStateAfterActive, setIsStateAfterActive] = useState(false);
+  const [stateAfterPhrases, setStateAfterPhrases] = useState<string[]>([]);
+  const [stateAfterSearch, setStateAfterSearch] = useState('');
+
+
+  // === Валидация и форматирование даты ДД-ММ-ГГГГ ===
+  const isValidDateDDMMYYYY = (dateStr: string): boolean => {
+    if (!/^\d{2}-\d{2}-\d{4}$/.test(dateStr)) return false;
+    const [day, month, year] = dateStr.split('-').map(Number);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+    if (year < 1900 || year > 2100) return false;
+    const daysInMonth = new Date(year, month, 0).getDate();
+    return day <= daysInMonth;
+  };
+
+  const formatDateToDDMMYYYY = (dateStr: string): string => {
+    if (!dateStr) return '';
+    if (/^\d{2}-\d{2}-\d{4}$/.test(dateStr)) return dateStr;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      const [y, m, d] = dateStr.split('-');
+      return `${d}-${m}-${y}`;
+    }
+    return dateStr;
+  };
   const [stateAfterText, setStateAfterText] = useState('');
   const [showComparisonModal, setShowComparisonModal] = useState(false);
+  
+
+const handleComparisonDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  let value = e.target.value.replace(/\D/g, '');
+
+  if (value.length > 8) value = value.slice(0, 8);
+
+  // Форматируем в ДД-ММ-ГГГГ
+  if (value.length >= 5) {
+    value = `${value.slice(0, 2)}-${value.slice(2, 4)}-${value.slice(4)}`;
+  } else if (value.length >= 3) {
+    value = `${value.slice(0, 2)}-${value.slice(2)}`;
+  }
+
+  // Если введена полная дата — проверяем валидность
+  if (value.length === 10) {
+    if (!isValidDateDDMMYYYY(value)) {
+      // Можно либо не обновлять, либо оставить — здесь оставляем, но можно добавить визуальную ошибку
+      // Для строгости можно не сохранять невалидную дату:
+      // return;
+    }
+  }
+
+  setComparisonDate(value);
+};
   const [showStateAfterModal, setShowStateAfterModal] = useState(false);
   const [showAbbrModal, setShowAbbrModal] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -120,17 +169,35 @@ function FillerPage() {
     deletedFieldIds: string[] 
   }>>([]);
   const MAX_HISTORY = 50;
+
+  // === Состояние сворачивания разделов (по заголовкам) ===
+const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(new Set());
+
   // === Работа с черновиком в localStorage ===
 const DRAFT_KEY_PREFIX = 'filler_draft_';
 
 const getDraftKey = (templateId: string) => `${DRAFT_KEY_PREFIX}${templateId}`;
 
-const saveDraft = (templateId: string, data: Record<string, any>, deleted: string[]) => {
+const saveDraft = (
+  templateId: string, 
+  data: Record<string, any>, 
+  deleted: string[],
+  comparisonActive: boolean = false,
+  compDates: string[] = [],
+  multipleComparison: boolean = false,
+  stateActive: boolean = false,
+  stateText: string = ''
+) => {
   if (!templateId) return;
   try {
     const draft = {
       fieldsData: data,
       deletedFieldIds: deleted,
+      isComparisonActive: comparisonActive,
+      comparisonDates: compDates,
+      isMultipleComparison: multipleComparison,
+      isStateAfterActive: stateActive,
+      stateAfterText: stateText,
       savedAt: new Date().toISOString(),
     };
     localStorage.setItem(getDraftKey(templateId), JSON.stringify(draft));
@@ -177,16 +244,63 @@ const [showDraftNotification, setShowDraftNotification] = useState(false);
     setHistory(prev => prev.slice(0, -1));
   };
 
+  // === Логика сворачивания разделов ===
+const initializeCollapsedState = (fields: any[]) => {
+  const headerIds = fields
+    .filter((f: any) => f.type === 'header')
+    .map((f: any) => f.id);
+  setCollapsedHeaders(new Set(headerIds));
+};
+
+const toggleSection = (headerId: string) => {
+  setCollapsedHeaders(prev => {
+    const newSet = new Set(prev);
+    if (newSet.has(headerId)) {
+      newSet.delete(headerId);
+    } else {
+      newSet.add(headerId);
+    }
+    return newSet;
+  });
+};
+
+const toggleAllSections = () => {
+  if (!template) return;
+  const allHeaderIds = (template.fields || [])
+    .filter((f: BuilderField) => f.type === 'header' && !deletedFieldIds.includes(f.id))
+    .map((f: BuilderField) => f.id);
+
+  if (allHeaderIds.length === 0) return;
+
+  const currentlyAllCollapsed = allHeaderIds.every(id => collapsedHeaders.has(id));
+
+  if (currentlyAllCollapsed) {
+    setCollapsedHeaders(new Set());
+  } else {
+    setCollapsedHeaders(new Set(allHeaderIds));
+  }
+};
+
+  
   // === Автосохранение черновика ===
 useEffect(() => {
   if (!id || !template) return;
 
   const timeout = setTimeout(() => {
-    saveDraft(id as string, fieldsData, deletedFieldIds);
-  }, 400); // небольшая задержка, чтобы не спамить localStorage
+    saveDraft(
+      id as string, 
+      fieldsData, 
+      deletedFieldIds,
+      isComparisonActive,
+      comparisonDates,
+      isMultipleComparison,
+      isStateAfterActive,
+      stateAfterText
+    );
+  }, 400);
 
   return () => clearTimeout(timeout);
-}, [fieldsData, deletedFieldIds, id, template]);
+}, [fieldsData, deletedFieldIds, id, template, isComparisonActive, comparisonDates, isMultipleComparison, isStateAfterActive, stateAfterText]);
 
   const autoResize = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -282,7 +396,8 @@ useEffect(() => {
 
   // Сброс дополнительных состояний
   setIsComparisonActive(false);
-  setComparisonDate('');
+  setComparisonDates([]);
+  setIsMultipleComparison(false);
   setIsStateAfterActive(false);
   setStateAfterText('');
   setShowDraftNotification(false);
@@ -315,10 +430,12 @@ const handleClearDraft = () => {
   setFieldsData(init);
   resetTextareaHeights();
   setIsComparisonActive(false);
-  setComparisonDate('');
+  setComparisonDates([]);
+  setIsMultipleComparison(false);
   setIsStateAfterActive(false);
   setStateAfterText('');
   setShowDraftNotification(false);
+  initializeCollapsedState(originalTemplate.fields);
 };
  
   
@@ -477,6 +594,39 @@ const handleClearDraft = () => {
     loadAbbr();
   }, []);
 
+    // ====================== ЗАГРУЗКА ФРАЗ "СОСТОЯНИЕ ПОСЛЕ" С СЕРВЕРА ======================
+  useEffect(() => {
+    const loadStateAfterPhrases = async () => {
+      if (!pb.authStore.record?.id) return;
+
+      const userId = pb.authStore.record.id;
+
+      try {
+        const records = await pb.collection('state_after_phrases').getList(1, 1, {
+          filter: `user = "${userId}"`,
+          $autoCancel: false
+        });
+
+        if (records.items.length > 0) {
+          setStateAfterPhrases(records.items[0].phrases || []);
+          console.log('✅ Фразы "Состояние после" загружены с сервера');
+        } else {
+          // Создаём запись при первом использовании
+          const newRecord = await pb.collection('state_after_phrases').create({
+            user: userId,
+            phrases: []
+          });
+          setStateAfterPhrases([]);
+          console.log('✅ Создана новая запись фраз "Состояние после"');
+        }
+      } catch (err) {
+        console.error("Ошибка загрузки фраз 'Состояние после':", err);
+        setStateAfterPhrases([]);
+      }
+    };
+    loadStateAfterPhrases();
+  }, []);
+
               // ====================== СОХРАНЕНИЕ АББРЕВИАТУР ======================
   const saveData = async (newAbbr: Record<string, any>, newCats: string[]) => {
     setAbbreviations(newAbbr);
@@ -510,6 +660,75 @@ const handleClearDraft = () => {
     }
   };
 
+    // ====================== СОХРАНЕНИЕ ФРАЗ "СОСТОЯНИЕ ПОСЛЕ" ======================
+  const saveStateAfterPhrasesToServer = async (newPhrases: string[]) => {
+    if (!pb.authStore.record?.id) return;
+
+    const userId = pb.authStore.record.id;
+
+    try {
+      const records = await pb.collection('state_after_phrases').getList(1, 1, {
+        filter: `user = "${userId}"`,
+        $autoCancel: false
+      });
+
+      if (records.items.length > 0) {
+        await pb.collection('state_after_phrases').update(records.items[0].id, {
+          phrases: newPhrases
+        });
+      } else {
+        await pb.collection('state_after_phrases').create({
+          user: userId,
+          phrases: newPhrases
+        });
+      }
+    } catch (err) {
+      console.error("Ошибка сохранения фраз 'Состояние после':", err);
+    }
+  };
+
+    // ====================== РАБОТА С ФРАЗАМИ "СОСТОЯНИЕ ПОСЛЕ" ======================
+
+    // Добавить новую фразу в список сохранённых
+  const addStateAfterPhrase = async () => {
+    const text = stateAfterText.trim();
+    if (!text || stateAfterPhrases.includes(text)) return;
+
+    const newPhrases = [...stateAfterPhrases, text];
+    setStateAfterPhrases(newPhrases);
+    await saveStateAfterPhrasesToServer(newPhrases);
+    setStateAfterSearch('');
+  };
+
+  // Удалить фразу из списка
+  const deleteStateAfterPhrase = async (index: number) => {
+    const newPhrases = stateAfterPhrases.filter((_, i) => i !== index);
+    setStateAfterPhrases(newPhrases);
+    await saveStateAfterPhrasesToServer(newPhrases);
+  };
+
+    // Добавить выбранную фразу через запятую (накопление)
+  const selectStateAfterPhrase = (phrase: string) => {
+    let current = stateAfterText.trim();
+
+    // Убираем trailing запятую и пробелы в конце (если есть)
+    current = current.replace(/,\s*$/, '').trim();
+
+    let newText;
+    if (current) {
+      newText = `${current}, ${phrase}`;
+    } else {
+      newText = phrase;
+    }
+
+    setStateAfterText(newText);
+  };
+
+  // Фильтрация фраз по отдельному поиску
+  const filteredStateAfterPhrases = stateAfterPhrases.filter(phrase =>
+    phrase.toLowerCase().includes(stateAfterSearch.toLowerCase())
+  );
+
 
   const filteredAbbreviations = Object.entries(abbreviations)
     .filter(([abbr, info]) => {
@@ -541,6 +760,9 @@ const handleClearDraft = () => {
       setOriginalTemplate(JSON.parse(JSON.stringify(record)));
       setTemplate(record);
 
+      // Инициализируем все разделы как свёрнутые (по умолчанию при загрузке страницы)
+initializeCollapsedState(record.fields);
+
       // === УМНАЯ ИНИЦИАЛИЗАЦИЯ + ВОССТАНОВЛЕНИЕ ЧЕРНОВИКА ===
       const draft = loadDraft(id as string);
 
@@ -566,19 +788,33 @@ const handleClearDraft = () => {
         return newData;
       });
 
-      // Восстанавливаем удалённые поля из черновика
-      if (draft?.deletedFieldIds) {
+            // Восстанавливаем удалённые поля из черновика
+            if (draft?.deletedFieldIds) {
         setDeletedFieldIds(draft.deletedFieldIds);
       }
 
       if (draft) {
-          setShowDraftNotification(true);
-          
-          // Плавно скрываем уведомление через 3.8 секунды
-          setTimeout(() => {
-            setShowDraftNotification(false);
-          }, 3800);
+        if (typeof draft.isComparisonActive === 'boolean') {
+          setIsComparisonActive(draft.isComparisonActive);
         }
+        if (Array.isArray(draft.comparisonDates)) {
+          setComparisonDates(draft.comparisonDates);
+        } else if (typeof draft.comparisonDate === 'string' && draft.comparisonDate) {
+          setComparisonDates([draft.comparisonDate]);
+        }
+        if (typeof draft.isMultipleComparison === 'boolean') {
+          setIsMultipleComparison(draft.isMultipleComparison);
+        }
+        if (typeof draft.isStateAfterActive === 'boolean') {
+          setIsStateAfterActive(draft.isStateAfterActive);
+        }
+        if (typeof draft.stateAfterText === 'string') {
+          setStateAfterText(draft.stateAfterText);
+        }
+
+        setShowDraftNotification(true);
+        setTimeout(() => setShowDraftNotification(false), 3800);
+      }
 
     } catch (err) {
       console.error("Ошибка загрузки шаблона:", err);
@@ -689,9 +925,14 @@ const handleClearDraft = () => {
     let htmlText = '';
     let plainText = '';
 
-    if (isComparisonActive && comparisonDate) {
-      htmlText += `<span class="text-amber-400">Описание исследования в сравнении с предыдущим от ${comparisonDate}:</span>\n\n`;
-      plainText += `Описание исследования в сравнении с предыдущим от ${comparisonDate}:\n\n`;
+        if (isComparisonActive && comparisonDates.length > 0) {
+      const datesStr = comparisonDates.join(', ');
+      const label = comparisonDates.length === 1 
+        ? 'с предыдущим от' 
+        : 'с предыдущими от';
+      
+      htmlText += `<span class="text-amber-400">Описание исследования в сравнении ${label} ${datesStr}:</span>\n\n`;
+      plainText += `Описание исследования в сравнении ${label} ${datesStr}:\n\n`;
     }
     if (isStateAfterActive && stateAfterText) {
       htmlText += `<span class="text-amber-400">Состояние после ${stateAfterText}</span>\n\n`;
@@ -804,7 +1045,7 @@ const handleClearDraft = () => {
     template,
     deletedFieldIds,
     isComparisonActive,
-    comparisonDate,
+    comparisonDates,
     isStateAfterActive,
     stateAfterText
   ]);
@@ -1126,15 +1367,22 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
         undo();
+        return;
+      }
+
+      // Свернуть/Развернуть все разделы
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        toggleAllSections();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [history]);
+  }, [history, toggleAllSections]);
 
         if (loading) return (
     <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
@@ -1149,6 +1397,18 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   );
 
     const visibleFields = template.fields.filter((f: BuilderField) => !deletedFieldIds.includes(f.id));
+
+    // Карта: какое поле принадлежит какому заголовку (для сворачивания)
+const sectionHeaderMap = new Map<string, string | null>();
+let currentHeaderId: string | null = null;
+for (const f of visibleFields) {
+  if (f.type === 'header') {
+    currentHeaderId = f.id;
+    sectionHeaderMap.set(f.id, null);
+  } else {
+    sectionHeaderMap.set(f.id, currentHeaderId);
+  }
+}
 
   const activeField = template?.fields?.find((f: BuilderField) => f.id === activeFieldId);
 
@@ -1198,38 +1458,42 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
             </div>
           )}
         <h1 className="text-3xl font-bold mb-6 text-center mx-auto max-w-3xl tracking-tight">{template.title}</h1>
-        <div className="space-y-4">
-  {visibleFields.map((f: BuilderField) => (
-    <div
-  key={f.id}
-  data-field-id={f.id}
-  className={`card transition-all duration-250 ease-out rounded-2xl overflow-visible
-    ${f.type === 'header' || f.type === 'notes'
-      ? 'bg-transparent border-0 shadow-none' 
-      : 'bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl'
-    }
-    
-    
-    ${newlyAddedId === f.id 
-      ? 'opacity-0 max-h-0 mt-0 mb-0 py-0 scale-[0.95]' 
-      : ''
-    }
-    
-    
-    ${removingId === f.id 
-      ? 'opacity-0 max-h-0 mt-0 mb-0 py-0 scale-[0.95]' 
-      : ''
-    }
+                        <div className="space-y-4">
+  {visibleFields.map((f: BuilderField) => {
+    const parentHeaderId = f.type !== 'header' ? sectionHeaderMap.get(f.id) : null;
+    const isSectionCollapsed = parentHeaderId ? collapsedHeaders.has(parentHeaderId) : false;
 
-    ${activeFieldId === f.id
-      ? 'border-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.3)]' 
-      : 'hover:border-white/20'
-    }
-    relative`}
->
+    return (
+      <div
+        key={f.id}
+        data-field-id={f.id}
+        className={`card transition-all duration-200 ease-out rounded-2xl 
+            ${f.type === 'header' || f.type === 'notes'
+              ? 'bg-transparent border-0 shadow-none' 
+              : 'bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl'
+            }
+            ${isSectionCollapsed 
+              ? 'grid-rows-[0fr] overflow-hidden border-0 shadow-none bg-transparent py-0 my-0' 
+              : 'grid-rows-[1fr] overflow-visible'
+            }
+            ${newlyAddedId === f.id 
+              ? 'opacity-0 max-h-0 mt-0 mb-0 py-0 scale-[0.95]' 
+              : ''
+            }
+            ${removingId === f.id 
+              ? 'opacity-0 max-h-0 mt-0 mb-0 py-0 scale-[0.95]' 
+              : ''
+            }
+            ${activeFieldId === f.id
+              ? 'border-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.3)]' 
+              : 'hover:border-white/20'
+            }
+            relative grid
+          `}
+          >
       {/* Кнопки управления — правый верхний угол */}
      {f.type !== 'header' && f.type !== 'notes' && ( 
-      <div className="absolute top-4 right-4 flex gap-0 z-20">
+      <div className="absolute top-4 right-4 flex gap-0 z-60">
         {/* Сначала кнопка ДОБАВИТЬ */}
         <button
           onClick={() => addTextFieldAfter(f.id)}
@@ -1252,10 +1516,16 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
       </div>
      )}
 
+     {/* === Анимируемая обёртка (вставь сюда) === */}
+     <div className="overflow-hidden transition-all duration-200 ease-out">
+
       <div className="card-body p-5 pt-12">   {/* pt-12 — отступ сверху под кнопки */}
+
+
+
         {/* Название поля */}
 {/* === РЕДАКТИРУЕМЫЙ ЗАГОЛОВОК ДЛЯ ВСЕХ ПОЛЕЙ === */}
-        {f.type !== 'header' && f.type !== 'notes' && f.type !== 'checkbox' && (
+        {f.type !== 'header' && f.type !== 'notes' && f.type !== 'checkbox' && f.type !== 'comparison' && (
           <input
             type="text"
             tabIndex={-1}
@@ -1268,14 +1538,30 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
           />
         )}
 
-      {/* === HEADER — Большой заголовок раздела === */}
-        {f.type === 'header' && (
-          <div className="py-1">
-            <h2 className="text-2xl font-bold text-white text-center tracking-tight">
-              {f.label}
-            </h2>
-          </div>
-        )}
+      {/* === HEADER — Большой заголовок раздела (с кнопкой сворачивания) === */}
+{f.type === 'header' && (
+  <div 
+    className="py-1 flex items-center justify-between cursor-pointer group"
+    onClick={() => toggleSection(f.id)}
+  >
+    <h2 className="text-2xl font-bold text-white tracking-tight flex-1 text-center group-hover:text-amber-400 transition-colors">
+      {f.label}
+    </h2>
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleSection(f.id);
+      }}
+      tabIndex={-1}
+      className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all"
+      
+      
+      title={collapsedHeaders.has(f.id) ? 'Развернуть раздел' : 'Свернуть раздел'}
+    >
+      {collapsedHeaders.has(f.id) ? <ChevronRight size={22} /> : <ChevronDown size={22} />}
+    </button>
+  </div>
+)}
         
         {/* Все поля остаются без изменений */}
         {f.type === 'text' && (
@@ -1349,26 +1635,34 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
 
                 {f.type === 'rating' && <RatingField field={f} value={fieldsData[f.id] || 0} onChange={(val) => updateField(f.id, val)} onFocus={handleFocus}/>} 
               </div>
-                {f.type === 'notes' && (
-                  <div>
-                    <div className="flex items-center justify-center gap-1 pt-0 pb-6">
-                      <BookmarkIcon className="w-6 h-6" />
-                      <span className="font-semibold text-2xl">Заметки</span>
-                    </div>
-                    {f.notes && (
-                      <div className="space-y-3 pb-10">
-                        {f.notes.split('\n').filter(Boolean).map((line, i) => {
-                          const match = line.match(/\[(.*?)\]\((.*?)\)/);
-                          if (match) {
-                            const [, text, url] = match;
-                            return <div key={i} className="border border-transparent rounded-none px-5 py-0"><a href={url} target="_blank" rel="noopener noreferrer" className="block text-white hover:text-amber-400 underline text-sm transition-all">{text}</a></div>;
-                          }
-                          return <div key={i} className="text-zinc-300 text-sm border border-transparent rounded-none px-4 py-3">{line}</div>;
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
+                {f.type === 'notes' && f.notes && (
+  <div>
+    {f.notes.split('\n').filter(Boolean).map((line, i) => {
+      const match = line.match(/\[(.*?)\]\((.*?)\)/);
+      if (match) {
+        const [, text, url] = match;
+        return (
+          <div key={i} className="px-5 py-1">
+            <a 
+              href={url} 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="block text-white hover:text-amber-400 underline text-sm transition-all"
+            >
+              {text}
+            </a>
+          </div>
+        );
+      }
+      return (
+        <div key={i} className="px-5 py-1 text-zinc-300 text-sm">
+          {line}
+        </div>
+      );
+    })}
+  </div>
+)}
+
 
                 {f.type === 'formula' && (
                     <div className="px-6 pt-2 pb-6 space-y-4">
@@ -1478,63 +1772,78 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
     >
       Добавить
     </button>
-  </div>
+    </div>
 )}
-              </div>
-            ))}
+              </div>   
+
+    </div>     
+  )
+})}
           </div>
         </div>
 
-        <div className="col-span-7 sticky top-20 z-50 self-start flex flex-col h-[calc(100vh-4rem)] relative">
+        <div className="col-span-7 sticky top-20 z-50 self-start h-[calc(100vh-7rem)] relative">
           
           <div className="mb-4 flex gap-3">
-             {/* Кнопка Сравнение */}
-<button
-  onClick={() => {
-    if (isComparisonActive) {
-      setIsComparisonActive(false);
-      setComparisonDate('');
-    } else {
-      setShowComparisonModal(true);
-    }
-  }}
-  tabIndex={-1}
-  className={`justify-left gap-3 py-4 px-6 text-sm font-medium rounded-2xl transition-all
-    bg-transparent border border-none text-white
-    hover:text-amber-400 cursor-pointer
-    ${isComparisonActive ? '!text-amber-400' : ''}
-  `}
->
-  <span>Сравнение</span>
-</button>
+             
 
-{/* Кнопка Состояние после */}
-<button
-  onClick={() => {
-    if (isStateAfterActive) {
-      setIsStateAfterActive(false);
-      setStateAfterText('');
-    } else {
-      setShowStateAfterModal(true);
-    }
-  }}
-  tabIndex={-1}
-  className={`flex-0 justify-left gap-3 py-4 px-6 text-sm font-medium rounded-2xl transition-all
-    bg-transparent border border-transparent text-white
-    hover:text-amber-400 cursor-pointer
-    ${isStateAfterActive ? '!text-amber-400' : ''}
-  `}
->
-  <span>Состояние</span>
-</button>
+
             </div>
 
-                    <div className="card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-h-[42vh] flex flex-col min-h-0 overflow-hidden mb-6 p-1">
-            <div className="flex-1 p-8 overflow-auto text-zinc-100 text-[14px] leading-relaxed"
-                  style={{ lineHeight: '1.65' }}
-                  dangerouslySetInnerHTML={{ __html: finalText }} 
-                  />
-          </div>
+                    <div className="card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-h-[42vh] flex flex-col min-h-0 overflow-hidden mb-6 p-1 relative">
+  
+  {/* Градиентная защита от наложения */}
+  <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-zinc-900/95 via-zinc-900 to-transparent z-10 pointer-events-none" />
+  
+  {/* Кнопки Сравнение и Состояние в правом верхнем углу */}
+  <div className="absolute top-4 right-4 flex gap-2 z-10">
+    <button
+      onClick={() => {
+        if (isComparisonActive) {
+          setIsComparisonActive(false);
+          setComparisonDates([]);
+          setIsMultipleComparison(false);
+        } else {
+          if (comparisonDates.length === 0) setComparisonDates(['']);
+          if (comparisonDates.length > 1) setIsMultipleComparison(true);
+          setShowComparisonModal(true);
+        }
+      }}
+      className={`px-4 py-1.5 text-xs font-medium rounded-2xl border transition-all cursor-pointer
+        ${isComparisonActive 
+          ? 'bg-amber-400/10 border-amber-400 text-amber-400' 
+          : 'bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-white/20'
+        }`}
+    >
+      Сравнение
+    </button>
+
+    <button
+      onClick={() => {
+        if (isStateAfterActive) {
+          setIsStateAfterActive(false);
+          setStateAfterText('');
+        } else {
+          setStateAfterSearch('');
+          setShowStateAfterModal(true);
+        }
+      }}
+      className={`px-4 py-1.5 text-xs font-medium rounded-2xl border transition-all cursor-pointer
+        ${isStateAfterActive 
+          ? 'bg-amber-400/10 border-amber-400 text-amber-400' 
+          : 'bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-white/20'
+        }`}
+    >
+      Состояние
+    </button>
+  </div>
+
+  <div className="flex-1 p-8 pt-14 overflow-auto text-zinc-100 text-[14px] leading-relaxed"
+       style={{ lineHeight: '1.65' }}
+       dangerouslySetInnerHTML={{ __html: finalText }} 
+  />
+</div>
+            
           
                   {/* Кнопки патологий */}
 {activeFieldId && activeField?.quickButtons && activeField.quickButtons.length > 0 && (
@@ -1632,6 +1941,14 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
 
           {/* Нижний ряд кнопок — НЕ фокусируются по Tab */}
           <div className="flex justify-center gap-4 mt-10">
+            <button 
+                  onClick={toggleAllSections} 
+                  tabIndex={-1} 
+                  className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" 
+                  data-tip="Свернуть/Развернуть все разделы (Ctrl+E/Cmd+E)"
+                >
+                  <ChevronsDownUp size={22} />
+                </button>
             <button onClick={copyToClipboard} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Скопировать" ><Copy size={22} /></button>
             <button onClick={resetToDefault} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Сбросить протокол" ><RotateCcw size={22} /></button>
             <button onClick={downloadTxt} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Сохранить" ><Download size={22}/></button>
@@ -1642,130 +1959,257 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
       </div>
 
       {/* МОДАЛКИ (полностью без изменений) */}
-      {showComparisonModal && (
-  <dialog 
-    className="modal modal-open"
-    onKeyDown={(e) => {
-      if (e.key === 'Enter') {
-        if (comparisonDate.trim()) {
-          setIsComparisonActive(true);
-          setShowComparisonModal(false);
-        }
-      }
-      if (e.key === 'Escape') {
-        setShowComparisonModal(false);
-      }
-    }}
-  >
-    <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4">
-      <div className="px-6 pt-5 pb-3 border-b border-white/10">
-        <h2 className="text-xl font-semibold text-white">Сравнение с предыдущим</h2>
-      </div>
-
-      <div className="p-8">
-        <label className="block text-sm text-zinc-400 mb-2">Дата предыдущего исследования</label>
-        <input 
-          type="date" 
-          value={comparisonDate} 
-          onChange={e => setComparisonDate(e.target.value)} 
-          placeholder="ДД.ММ.ГГГГ." 
-          className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all"
-        />
-      </div>
-
-      <div className="px-6 pb-6 pt-2 flex gap-3">
-        <button 
-          onClick={() => setShowComparisonModal(false)} 
-          className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all cursor-pointer"
+            {showComparisonModal && (
+        <dialog 
+          className="modal modal-open"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              const hasValidDate = comparisonDates.some(d => isValidDateDDMMYYYY(d));
+              if (hasValidDate) {
+                setIsComparisonActive(true);
+                setShowComparisonModal(false);
+              }
+            }
+            if (e.key === 'Escape') {
+              setShowComparisonModal(false);
+            }
+          }}
         >
-          Отмена
-        </button>
-        <button 
-          onClick={() => { 
-            if (comparisonDate.trim()) { 
-              setIsComparisonActive(true); 
-              setShowComparisonModal(false); 
-            } 
-          }} 
-          className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all cursor-pointer"
-        >
-          Применить
-        </button>
-      </div>
-    </div>
+          <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4">
+            <div className="px-6 pt-5 pb-3 border-b border-white/10 flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-white">Сравнение с предыдущим</h2>
+            </div>
 
-    <form method="dialog" className="modal-backdrop">
-      <button onClick={() => setShowComparisonModal(false)}>close</button>
-    </form>
-  </dialog>
-)}
+            <div className="p-6 space-y-4">
+              {/* Основная дата */}
+              <div>
+                
+                
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    value={formatDateToDDMMYYYY(comparisonDates[0] || '')} 
+                    onChange={(e) => {
+                      let val = e.target.value.replace(/\D/g, '');
+                      if (val.length >= 5) val = val.slice(0,2)+'-'+val.slice(2,4)+'-'+val.slice(4);
+                      else if (val.length >= 3) val = val.slice(0,2)+'-'+val.slice(2);
 
-      {showStateAfterModal && (
-  <dialog 
-    className="modal modal-open"
-    onKeyDown={(e) => {
-      if (e.key === 'Enter') {
-        if (stateAfterText.trim()) {
-          setIsStateAfterActive(true);
-          setShowStateAfterModal(false);
-        }
-      }
-      if (e.key === 'Escape') {
-        setShowStateAfterModal(false);
-      }
-    }}
-  >
-    <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4">
-      <div className="px-6 pt-5 pb-3 border-b border-white/10">
-        <h2 className="text-xl font-semibold text-white">Состояние после</h2>
-      </div>
+                      const newDates = [...comparisonDates];
+                      newDates[0] = val;
+                      setComparisonDates(newDates.filter(Boolean));
+                    }} 
+                    placeholder="ДД-ММ-ГГГГ" 
+                    maxLength={10}
+                    className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all text-center"
+                  />
+                </div>
+              </div>
 
-      <div className="p-8">
-        <label className="block text-sm text-zinc-400 mb-2">Ранее проводимое лечение</label>
-        <input 
-          type="text" 
-          value={stateAfterText} 
-          onChange={e => setStateAfterText(e.target.value)} 
-          placeholder="Введите значение" 
-          className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all"
-        />
-      </div>
+              {/* Toggle */}
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-sm text-zinc-400">Сравнить с несколькими исследованиями</span>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={isMultipleComparison} 
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setIsMultipleComparison(checked);
+                      if (!checked && comparisonDates.length > 1) {
+                        setComparisonDates(comparisonDates.slice(0, 1));
+                      }
+                    }}
+                    className="sr-only peer" 
+                  />
+                  <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-400"></div>
+                </label>
+              </div>
 
-      <div className="px-6 pb-6 pt-2 flex gap-3">
-        <button 
-          onClick={() => setShowStateAfterModal(false)} 
-          className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all cursor-pointer"
-        >
-          Отмена
-        </button>
-        <button 
-          onClick={() => { 
-                    let text = stateAfterText.trim();
-                    
-                    // Добавляем точку, если её нет и строка не пустая
-                    if (text && !text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
-                      text += '.';
-                    }
+              {/* Дополнительные даты */}
+              {isMultipleComparison && (
+                <div className="space-y-3 pt-2">
+                  {comparisonDates.slice(1).map((date, index) => {
+                    const realIndex = index + 1;
+                    return (
+                      <div key={realIndex} className="flex gap-2 items-center">
+                        <input 
+                          type="text" 
+                          value={formatDateToDDMMYYYY(date)} 
+                          onChange={(e) => {
+                            let val = e.target.value.replace(/\D/g, '');
+                            if (val.length >= 5) val = val.slice(0,2)+'-'+val.slice(2,4)+'-'+val.slice(4);
+                            else if (val.length >= 3) val = val.slice(0,2)+'-'+val.slice(2);
 
-                    setStateAfterText(text);
-                    
-                    if (text) { 
-                      setIsStateAfterActive(true); 
-                      setShowStateAfterModal(false); 
-                    } 
-                  }}
-          className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all cursor-pointer"
-        >
-          Применить
-        </button>
-      </div>
-    </div>
+                            const newDates = [...comparisonDates];
+                            newDates[realIndex] = val;
+                            setComparisonDates(newDates);
+                          }} 
+                          placeholder="ДД-ММ-ГГГГ" 
+                          maxLength={10}
+                          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all text-center"
+                        />
+                        <button 
+                          onClick={() => {
+                            const newDates = comparisonDates.filter((_, i) => i !== realIndex);
+                            setComparisonDates(newDates);
+                          }}
+                          className="text-zinc-400 hover:text-red-400 transition-colors p-2 text-xl leading-none cursor-pointer"
+                        >
+                          -
+                        </button>
+                      </div>
+                    );
+                  })}
 
-    <form method="dialog" className="modal-backdrop">
-      <button onClick={() => setShowStateAfterModal(false)}>close</button>
-    </form>
-  </dialog>
-)}
+                  <button 
+                    onClick={() => setComparisonDates([...comparisonDates, ''])}
+                    className="w-full py-2.5 text-sm border border-transparent text-white/70 hover:text-amber-400 transition-colors cursor-pointer"
+                  >
+                    Добавить исследование
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 pb-6 pt-2 flex gap-3">
+              <button 
+                onClick={() => setShowComparisonModal(false)} 
+                className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button 
+                onClick={() => { 
+                  const validDates = comparisonDates.filter(d => isValidDateDDMMYYYY(d));
+                  if (validDates.length > 0) { 
+                    setComparisonDates(validDates);
+                    setIsComparisonActive(true); 
+                    setShowComparisonModal(false); 
+                  } 
+                }} 
+                disabled={!comparisonDates.some(d => isValidDateDDMMYYYY(d))}
+                className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Применить
+              </button>
+            </div>
+          </div>
+
+          <form method="dialog" className="modal-backdrop">
+            <button onClick={() => setShowComparisonModal(false)}>close</button>
+          </form>
+        </dialog>
+      )}
+
+                  {showStateAfterModal && (
+        <dialog className="modal modal-open">
+          <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-lg mx-4 max-h-[90vh]">
+            <div className="px-6 pt-5 pb-3 border-b border-white/10">
+              <h2 className="text-xl font-semibold text-white">Состояние после</h2>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Основное поле (textarea) */}
+              <div>
+                
+                <textarea
+                  value={stateAfterText}
+                  onChange={e => setStateAfterText(e.target.value)}
+                  placeholder="Введите значение или выберите фразу"
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all resize-none ]"
+                  rows={3}
+                />
+              </div>
+
+              {/* Отдельный поиск */}
+              <div>
+                
+                <input
+                  type="text"
+                  value={stateAfterSearch}
+                  onChange={e => setStateAfterSearch(e.target.value)}
+                  placeholder="Поиск по фразам"
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all"
+                />
+              </div>
+
+              {/* Список фраз */}
+              {stateAfterPhrases.length > 0 && (
+                <div>
+                  
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-2 max-h-[240px] overflow-y-auto">
+                    {filteredStateAfterPhrases.length > 0 ? (
+                      filteredStateAfterPhrases.map((phrase, index) => {
+                        const originalIndex = stateAfterPhrases.indexOf(phrase);
+                        return (
+                          <div
+                            key={originalIndex}
+                            onClick={() => selectStateAfterPhrase(phrase)}
+                            className="flex items-center justify-between px-4 py-2.5 hover:bg-white/10 rounded-xl cursor-pointer group transition-colors"
+                          >
+                            <span className="text-sm text-white pr-4">{phrase}</span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteStateAfterPhrase(originalIndex);
+                              }}
+                              className="text-zinc-400 hover:text-red-400 opacity-60 group-hover:opacity-100 transition-all p-1 text-xl leading-none cursor-pointer"
+                            >
+                              -
+                            </button>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="px-4 py-3 text-sm text-zinc-500 text-center">Ничего не найдено</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Кнопка добавления новой фразы в список */}
+              {stateAfterText.trim() && !stateAfterPhrases.includes(stateAfterText.trim()) && (
+                <button
+                  onClick={addStateAfterPhrase}
+                  className="w-full py-3 bg-transparent border border-none rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all cursor-pointer"
+                >
+                  Добавить фразу
+                </button>
+              )}
+            </div>
+
+            <div className="px-6 pb-6 pt-2 flex gap-3">
+              <button
+                onClick={() => setShowStateAfterModal(false)}
+                className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all cursor-pointer"
+              >
+                Отмена
+              </button>
+              <button
+                onClick={() => {
+                  let text = stateAfterText.trim();
+                  if (text && !text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
+                    text += '.';
+                  }
+                  setStateAfterText(text);
+                  if (text) {
+                    setIsStateAfterActive(true);
+                    setShowStateAfterModal(false);
+                  }
+                }}
+                disabled={!stateAfterText.trim()}
+                className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Применить
+              </button>
+            </div>
+          </div>
+
+          <form method="dialog" className="modal-backdrop">
+            <button onClick={() => setShowStateAfterModal(false)}>close</button>
+          </form>
+        </dialog>
+      )}
 
       {showAbbrModal && (
                     <dialog className="modal modal-open">

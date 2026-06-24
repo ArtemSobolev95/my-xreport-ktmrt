@@ -136,28 +136,21 @@ function FillerPage() {
   const [showComparisonModal, setShowComparisonModal] = useState(false);
   
 
-const handleComparisonDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+const handleComparisonDateChange = (e: React.ChangeEvent<HTMLInputElement>, index: number = 0) => {
   let value = e.target.value.replace(/\D/g, '');
 
   if (value.length > 8) value = value.slice(0, 8);
 
-  // Форматируем в ДД-ММ-ГГГГ
   if (value.length >= 5) {
     value = `${value.slice(0, 2)}-${value.slice(2, 4)}-${value.slice(4)}`;
   } else if (value.length >= 3) {
     value = `${value.slice(0, 2)}-${value.slice(2)}`;
   }
 
-  // Если введена полная дата — проверяем валидность
-  if (value.length === 10) {
-    if (!isValidDateDDMMYYYY(value)) {
-      // Можно либо не обновлять, либо оставить — здесь оставляем, но можно добавить визуальную ошибку
-      // Для строгости можно не сохранять невалидную дату:
-      // return;
-    }
-  }
-
-  setComparisonDate(value);
+  const newDates = [...comparisonDates];
+  newDates[index] = value;
+  
+  setComparisonDates(newDates);
 };
   const [showStateAfterModal, setShowStateAfterModal] = useState(false);
   const [showAbbrModal, setShowAbbrModal] = useState(false);
@@ -272,7 +265,7 @@ const toggleAllSections = () => {
 
   if (allHeaderIds.length === 0) return;
 
-  const currentlyAllCollapsed = allHeaderIds.every(id => collapsedHeaders.has(id));
+  const currentlyAllCollapsed = allHeaderIds.every((id: string) => collapsedHeaders.has(id));
 
   if (currentlyAllCollapsed) {
     setCollapsedHeaders(new Set());
@@ -1989,15 +1982,7 @@ for (const f of visibleFields) {
                   <input 
                     type="text" 
                     value={formatDateToDDMMYYYY(comparisonDates[0] || '')} 
-                    onChange={(e) => {
-                      let val = e.target.value.replace(/\D/g, '');
-                      if (val.length >= 5) val = val.slice(0,2)+'-'+val.slice(2,4)+'-'+val.slice(4);
-                      else if (val.length >= 3) val = val.slice(0,2)+'-'+val.slice(2);
-
-                      const newDates = [...comparisonDates];
-                      newDates[0] = val;
-                      setComparisonDates(newDates.filter(Boolean));
-                    }} 
+                    onChange={(e) => handleComparisonDateChange(e, 0)}
                     placeholder="ДД-ММ-ГГГГ" 
                     maxLength={10}
                     className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all text-center"
@@ -2035,15 +2020,7 @@ for (const f of visibleFields) {
                         <input 
                           type="text" 
                           value={formatDateToDDMMYYYY(date)} 
-                          onChange={(e) => {
-                            let val = e.target.value.replace(/\D/g, '');
-                            if (val.length >= 5) val = val.slice(0,2)+'-'+val.slice(2,4)+'-'+val.slice(4);
-                            else if (val.length >= 3) val = val.slice(0,2)+'-'+val.slice(2);
-
-                            const newDates = [...comparisonDates];
-                            newDates[realIndex] = val;
-                            setComparisonDates(newDates);
-                          }} 
+                          onChange={(e) => handleComparisonDateChange(e, realIndex)}
                           placeholder="ДД-ММ-ГГГГ" 
                           maxLength={10}
                           className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all text-center"

@@ -111,6 +111,12 @@ function FillerPage() {
   const [isStateAfterActive, setIsStateAfterActive] = useState(false);
   const [stateAfterPhrases, setStateAfterPhrases] = useState<string[]>([]);
   const [stateAfterSearch, setStateAfterSearch] = useState('');
+  const [pathNav, setPathNav] = useState<{
+    groupIdx: number;
+    level: 'sub' | 'phrase';
+    subIdx: number;
+    phraseIdx: number;
+  } | null>(null);
 
 
   // === Валидация и форматирование даты ДД-ММ-ГГГГ ===
@@ -1048,17 +1054,37 @@ initializeCollapsedState(record.fields);
     setFieldsData(prev => ({ ...prev, [fieldId]: value }));
   };
 
-  const handleFocus = (fieldId: string, el: HTMLElement | null) => {
-  // Извлекаем основной ID карточки
-  let mainId = fieldId;
-  if (fieldId.includes('_')) {
-    mainId = fieldId.split('_')[0];
-  }
+    const handleFocus = (fieldId: string, el: HTMLElement | null) => {
+    // Извлекаем основной ID карточки
+    let mainId = fieldId;
+    if (fieldId.includes('_')) {
+      mainId = fieldId.split('_')[0];
+    }
 
-  setActiveFieldId(mainId);
-  activeFieldRef.current = mainId;
-  activeInputRef.current = el;
-};
+    setActiveFieldId(mainId);
+    activeFieldRef.current = mainId;
+    activeInputRef.current = el;
+
+    // Авто-разворот секции, если поле находится в свёрнутом разделе
+    if (template) {
+      let currentHeader: string | null = null;
+      for (const f of template.fields) {
+        if (deletedFieldIds.includes(f.id)) continue;
+
+        if (f.type === 'header') {
+          currentHeader = f.id;
+        } else if (f.id === mainId && currentHeader) {
+          setCollapsedHeaders(prev => {
+            if (!prev.has(currentHeader!)) return prev;
+            const next = new Set(prev);
+            next.delete(currentHeader!);
+            return next;
+          });
+          break;
+        }
+      }
+    }
+  };
 
 const handleBlur = () => {
   setTimeout(() => {
@@ -1083,10 +1109,29 @@ const handleBlur = () => {
   }, 180); // увеличил задержку
 };
 
+useEffect(() => {
+    setPathNav(null);
+  }, [activeFieldId]);
+
   const handleInputChange = (fieldId: string, value: string) => {
   saveToHistory();
   updateField(fieldId, value);
 };
+
+// Автоскролл выбранной фразы при навигации стрелками
+  useEffect(() => {
+    if (!pathNav || pathNav.level !== 'phrase') return;
+
+    requestAnimationFrame(() => {
+      const el = document.querySelector(
+        `[data-path-group="${pathNav.groupIdx}"][data-path-sub="${pathNav.subIdx}"][data-path-phrase="${pathNav.phraseIdx}"]`
+      ) as HTMLElement | null;
+
+      if (el) {
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    });
+  }, [pathNav]);
 
 const insertPhrase = (phrase: string) => {
   const fieldId = activeFieldRef.current;
@@ -1095,6 +1140,7 @@ const insertPhrase = (phrase: string) => {
     return;
   }
 
+
   const inputEl = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
   if (!inputEl) return;
 
@@ -1102,26 +1148,47 @@ const insertPhrase = (phrase: string) => {
   const end = inputEl.selectionEnd ?? start;
   const current = inputEl.value || '';
 
-  const newText = current.substring(0, start) + phrase + current.substring(end);
-  const newCursorPos = start + phrase.length;
+  const before = current.substring(0, start);
+  const after = current.substring(end);
+
+  // Убираем пробелы в конце, чтобы понять последний значимый символ
+  const trimmedBefore = before.replace(/\s+$/, '');
+  const lastChar = trimmedBefore.slice(-1);
+
+  let finalPhrase = phrase;
+  let prefix = '';
+
+  if (lastChar === '.' || lastChar === '!' || lastChar === '?') {
+    // После точки / ! / ? — с большой буквы
+    finalPhrase = phrase.charAt(0).toUpperCase() + phrase.slice(1);
+    prefix = before.endsWith(' ') ? '' : ' ';
+  } else if (lastChar === ',') {
+    // После запятой — с маленькой буквы
+    finalPhrase = phrase.charAt(0).toLowerCase() + phrase.slice(1);
+    prefix = before.endsWith(' ') ? '' : ' ';
+  } else if (before.length === 0 || trimmedBefore.length === 0) {
+    // Начало поля — всегда с маленькой буквы, без пробела
+    finalPhrase = phrase.charAt(0).toLowerCase() + phrase.slice(1);
+    prefix = '';
+  } else {
+    // Обычный случай — оставляем регистр как в шаблоне,
+    // пробел добавляем только если его ещё нет
+    prefix = before.endsWith(' ') || before.length === 0 ? '' : ' ';
+  }
+
+  const newText = before + prefix + finalPhrase + after;
+  const newCursorPos = start + prefix.length + finalPhrase.length;
 
   saveToHistory();
   updateField(fieldId, newText);
 
-  // Восстанавливаем курсор + растягиваем textarea
   requestAnimationFrame(() => {
     const el = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
     if (el) {
       el.focus();
       el.setSelectionRange(newCursorPos, newCursorPos);
-
-      // === Главное исправление: вызываем autoResize ===
       autoResize(el);
-
-      // Дополнительная страховка на случай длинных фраз
-      setTimeout(() => {
-        autoResize(el);
-      }, 10);
+      setTimeout(() => autoResize(el), 10);
     }
   });
 };
@@ -1376,6 +1443,151 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history, toggleAllSections]);
+
+    // === Клавиатура: управление кнопками патологий ===
+  useEffect(() => {
+    if (!activeFieldId || !template) return;
+
+    const activeField = template.fields?.find((f: BuilderField) => f.id === activeFieldId);
+    const groups = activeField?.quickButtons || [];
+    if (groups.length === 0) {
+      setPathNav(null);
+      return;
+    }
+
+    const handlePathologyKeyDown = (e: KeyboardEvent) => {
+      // Не мешаем, когда открыты модалки / варианты автокоррекции
+      if (
+        variantSelector ||
+        showComparisonModal ||
+        showStateAfterModal ||
+        showAbbrModal ||
+        showSaveModal ||
+        deleteConfirm
+      ) return;
+
+      const isCtrl = e.ctrlKey || e.metaKey;
+
+      // Ctrl + 1..9 — выбор группы (кнопки патологии)
+      if (isCtrl && e.key >= '1' && e.key <= '9') {
+        e.preventDefault();
+        const idx = parseInt(e.key, 10) - 1;
+        if (idx >= groups.length) return;
+
+        const group = groups[idx];
+        const subgroups = group.subgroups || [];
+        const isSingle =
+          subgroups.length === 1 &&
+          (subgroups[0].phrases?.filter(Boolean).length || 0) === 1;
+
+        if (isSingle) {
+          insertPhrase(subgroups[0].phrases.filter(Boolean)[0]);
+          setPathNav(null);
+          return;
+        }
+
+        // Открываем навигацию по подгруппам
+        setPathNav({
+          groupIdx: idx,
+          level: 'sub',
+          subIdx: 0,
+          phraseIdx: 0,
+        });
+        return;
+      }
+
+      if (!pathNav) return;
+
+      // Escape — закрыть
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setPathNav(null);
+        return;
+      }
+
+      // Стрелки вниз/вверх
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setPathNav(prev => {
+          if (!prev) return prev;
+          if (prev.level === 'sub') {
+            const max = (groups[prev.groupIdx]?.subgroups?.length || 1) - 1;
+            return { ...prev, subIdx: Math.min(max, prev.subIdx + 1) };
+          } else {
+            const phrases =
+              groups[prev.groupIdx]?.subgroups?.[prev.subIdx]?.phrases?.filter(Boolean) || [];
+            return {
+              ...prev,
+              phraseIdx: Math.min(phrases.length - 1, prev.phraseIdx + 1),
+            };
+          }
+        });
+        return;
+      }
+
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setPathNav(prev => {
+          if (!prev) return prev;
+          if (prev.level === 'sub') {
+            return { ...prev, subIdx: Math.max(0, prev.subIdx - 1) };
+          } else {
+            return { ...prev, phraseIdx: Math.max(0, prev.phraseIdx - 1) };
+          }
+        });
+        return;
+      }
+
+      // → или Enter на уровне подгрупп
+      if (e.key === 'ArrowRight' || (e.key === 'Enter' && pathNav.level === 'sub')) {
+        e.preventDefault();
+        const group = groups[pathNav.groupIdx];
+        const sub = group?.subgroups?.[pathNav.subIdx];
+        const phrases = sub?.phrases?.filter(Boolean) || [];
+        if (phrases.length === 0) return;
+
+        if (phrases.length === 1) {
+          insertPhrase(phrases[0]);
+          setPathNav(null);
+        } else {
+          setPathNav(prev => (prev ? { ...prev, level: 'phrase', phraseIdx: 0 } : null));
+        }
+        return;
+      }
+
+      // ← — вернуться с уровня фраз
+      if (e.key === 'ArrowLeft' && pathNav.level === 'phrase') {
+        e.preventDefault();
+        setPathNav(prev => (prev ? { ...prev, level: 'sub' } : null));
+        return;
+      }
+
+            // Enter на уровне фраз — вставить
+      if (e.key === 'Enter' && pathNav.level === 'phrase') {
+        e.preventDefault();
+        const phrases =
+          groups[pathNav.groupIdx]?.subgroups?.[pathNav.subIdx]?.phrases?.filter(Boolean) || [];
+        if (phrases[pathNav.phraseIdx]) {
+          insertPhrase(phrases[pathNav.phraseIdx]);
+          // меню остаётся открытым
+        }
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handlePathologyKeyDown);
+    return () => window.removeEventListener('keydown', handlePathologyKeyDown);
+  }, [
+    activeFieldId,
+    template,
+    pathNav,
+    variantSelector,
+    showComparisonModal,
+    showStateAfterModal,
+    showAbbrModal,
+    showSaveModal,
+    deleteConfirm,
+  ]);
 
         if (loading) return (
     <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
@@ -1838,15 +2050,16 @@ for (const f of visibleFields) {
 </div>
             
           
+                  
                   {/* Кнопки патологий */}
 {activeFieldId && activeField?.quickButtons && activeField.quickButtons.length > 0 && (
   <div className="sticky bottom-0 bg-zinc-950/80 backdrop-blur-xl border-t border-white/10 pt-4 pb-2 z-30">
-    <div className="flex flex-wrap gap-2"
-    onMouseDown={(e) => e.preventDefault()}
+        <div
+      className="flex flex-wrap gap-2"
+      onMouseDown={(e) => e.preventDefault()}
+      onMouseEnter={() => setPathNav(null)}
     >
-      
-
-      {(activeField.quickButtons || []).map((group: QuickButtonGroup) => {
+      {(activeField.quickButtons || []).map((group: QuickButtonGroup, gIdx: number) => {
         const subgroups = group.subgroups || [];
         const isSingleSubgroupAndSinglePhrase =
           subgroups.length === 1 && (subgroups[0].phrases?.filter(Boolean).length || 0) === 1;
@@ -1854,75 +2067,109 @@ for (const f of visibleFields) {
           ? subgroups[0].phrases.filter(Boolean)[0]
           : '';
 
+        const isNavOpen = pathNav?.groupIdx === gIdx;
+        const isSubLevel = isNavOpen && pathNav?.level === 'sub';
+        const isPhraseLevel = isNavOpen && pathNav?.level === 'phrase';
+
         return (
-          <div key={group.id} className="dropdown dropdown-hover">
+          <div
+            key={group.id}
+            className={`dropdown dropdown-hover ${isNavOpen ? 'dropdown-open' : ''}`}
+          >
             {/* 1-й уровень — группа */}
-            <div
+                        <div
               tabIndex={0}
               role="button"
-              className="btn btn-ghost btn-sm px-6 py-2.5 text-sm text-white border border-transparent hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all"
+              className={`btn btn-ghost btn-sm px-6 py-2.5 text-sm text-white border border-transparent hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all ${
+                isNavOpen ? 'text-amber-400 border-amber-400/40' : ''
+              }`}
               onClick={() => {
                 if (isSingleSubgroupAndSinglePhrase && singlePhrase) insertPhrase(singlePhrase);
               }}
             >
+              {gIdx < 9 && (
+                <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-medium rounded bg-white/10 text-zinc-300 mr-1.5 shrink-0">
+                  {gIdx + 1}
+                </span>
+              )}
               {group.label || 'Группа'}
               {!isSingleSubgroupAndSinglePhrase && <ChevronDown size={12} className="ml-1" />}
             </div>
 
             {/* Меню 2-го уровня */}
             {!isSingleSubgroupAndSinglePhrase && (
-              <ul 
-                tabIndex={0} 
+              <ul
+                tabIndex={0}
                 className="dropdown-content menu bg-zinc-900/90 backdrop-blur-md border border-zinc-700 rounded-box z-1 w-52 p-2"
               >
-                {subgroups.map((subgroup: QuickButtonSubgroup) => {
-  const phrases = subgroup.phrases?.filter(Boolean) || [];
-  const isSinglePhraseInSubgroup = phrases.length === 1;
+                {subgroups.map((subgroup: QuickButtonSubgroup, sIdx: number) => {
+                  const phrases = subgroup.phrases?.filter(Boolean) || [];
+                  const isSinglePhraseInSubgroup = phrases.length === 1;
+                  const isThisSubSelected = isSubLevel && pathNav?.subIdx === sIdx;
+                  const isThisPhraseOpen = isPhraseLevel && pathNav?.subIdx === sIdx;
 
-  return (
-    <li 
-      key={subgroup.id} 
-      className="group rounded-lg hover:bg-zinc-800 transition-all"   
+                  return (
+                    <li
+                      key={subgroup.id}
+                      className={`group rounded-lg hover:bg-zinc-800 transition-all ${
+  isThisSubSelected ? 'bg-zinc-800' : ''
+}`}
+                    >
+                      <div
+                        className={`dropdown dropdown-left dropdown-hover w-full ${
+                          isThisPhraseOpen ? 'dropdown-open' : ''
+                        }`}
+                      >
+                        <button
+                          onClick={
+                            isSinglePhraseInSubgroup
+                              ? () => insertPhrase(phrases[0])
+                              : undefined
+                          }
+                          tabIndex={0}
+                          className="w-full text-left justify-start text-white text-xs py-1 px-3 rounded-lg flex items-center 
+                                     hover:bg-transparent group-hover:bg-transparent transition-colors cursor-pointer"
+                        >
+                          {subgroup.label || 'Подгруппа'}
+                          {!isSinglePhraseInSubgroup && (
+                            <ChevronRight size={14} className="ml-auto" />
+                          )}
+                          {isSinglePhraseInSubgroup && (
+                            <span className="ml-auto w-4 flex-shrink-0" />
+                          )}
+                        </button>
+
+                        {/* Третий уровень */}
+                        {!isSinglePhraseInSubgroup && (
+                          <ul
+                            tabIndex={0}
+                            className="dropdown-content menu bg-zinc-900 bg-zinc-900/90 backdrop-blur-2xl border border-zinc-700 rounded-xl shadow-xl min-w-[340px] z-[10000] p-1 duration-70 delay-0"
+                          >
+                            <div className="max-h-[280px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
+                              {phrases.map((phrase: string, pIdx: number) => (
+                                <li key={pIdx}>
+                                  <button
+      data-path-group={gIdx}
+      data-path-sub={sIdx}
+      data-path-phrase={pIdx}
+      onClick={() => insertPhrase(phrase)}
+      className={`w-full text-left justify-start hover:bg-zinc-800 text-white text-xs py-3 px-5 rounded-lg transition-colors ${
+        isThisPhraseOpen && pathNav?.phraseIdx === pIdx
+          ? 'bg-zinc-800'
+          : ''
+      }`}
     >
-      <div className="dropdown dropdown-left dropdown-hover w-full">
-        <button
-          onClick={isSinglePhraseInSubgroup ? () => insertPhrase(phrases[0]) : undefined}
-          tabIndex={0}
-          className="w-full text-left justify-start text-white text-xs py-1 px-3 rounded-lg flex items-center 
-                     hover:bg-transparent group-hover:bg-transparent transition-colors cursor-pointer"
-        >
-          {subgroup.label || 'Подгруппа'}
-          
-          {!isSinglePhraseInSubgroup && <ChevronRight size={14} className="ml-auto" />}
-          {isSinglePhraseInSubgroup && <span className="ml-auto w-4 flex-shrink-0" />}
-        </button>
-
-        {/* Третий уровень */}
-        {!isSinglePhraseInSubgroup && (
-          <ul tabIndex={0} className="dropdown-content menu bg-zinc-900 bg-zinc-900/90 backdrop-blur-2xl border border-zinc-700 rounded-xl shadow-xl min-w-[340px] z-[10000] p-1 duration-70 delay-0" 
-          >
-            <div className="max-h-[280px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
-    {/* сюда остаётся весь .map по phrases */}
-          
-            
-            {phrases.map((phrase: string, i: number) => (
-              <li key={i}>
-                <button
-                  onClick={() => insertPhrase(phrase)}
-                  className="w-full text-left justify-start hover:bg-zinc-800 text-white text-xs py-3 px-5 rounded-lg transition-colors"
-                >
-                  {phrase}
-                </button>
-              </li>
-            ))}
-            </div>
-          </ul>
-          
-        )}
-      </div>
-    </li>
-  );
-})}
+      {phrase}
+    </button>
+                                </li>
+                              ))}
+                            </div>
+                          </ul>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

@@ -16,6 +16,7 @@ function HomePage() {
   const [templates, setTemplates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
           const loadTemplates = async () => {
     setLoading(true);
@@ -91,9 +92,94 @@ function HomePage() {
   }
 };
 
-  const filteredTemplates = templates.filter(t =>
+
+    const filteredTemplates = templates.filter(t =>
     t.title.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+    // Глобальный поиск + навигация стрелками + Enter
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Если фокус уже в input / textarea / select — ничего не делаем
+      const active = document.activeElement as HTMLElement | null;
+      const tag = active?.tagName;
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        active?.isContentEditable
+      ) {
+        return;
+      }
+
+      // Игнорируем комбинации с Ctrl / Cmd / Alt
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      // Escape — очистить поиск
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSearchTerm('');
+        return;
+      }
+
+      // Backspace — удалить последний символ
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        setSearchTerm(prev => prev.slice(0, -1));
+        return;
+      }
+
+      // Стрелка вниз
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedIndex(prev =>
+          Math.min(prev + 1, Math.max(filteredTemplates.length - 1, 0))
+        );
+        return;
+      }
+
+      // Стрелка вверх
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedIndex(prev => Math.max(prev - 1, 0));
+        return;
+      }
+
+      // Enter — открыть выбранный шаблон в режиме заполнения
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const selected = filteredTemplates[selectedIndex];
+        if (selected) {
+          router.push(`/filler?id=${selected.id}`);
+        }
+        return;
+      }
+
+      // Печатный символ (буквы, цифры, пробел, кириллица и т.д.)
+      if (e.key.length === 1) {
+        e.preventDefault();
+        setSearchTerm(prev => prev + e.key);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [filteredTemplates, selectedIndex, router]);
+
+
+
+      // При изменении поиска или списка — всегда выбираем первый
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [searchTerm, filteredTemplates.length]);
+
+    // Прокрутка выбранного шаблона в видимую область
+  useEffect(() => {
+    const el = document.querySelector(`[data-template-index="${selectedIndex}"]`) as HTMLElement | null;
+    if (el) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [selectedIndex]);
 
     if (loading) return (
     <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
@@ -141,7 +227,7 @@ function HomePage() {
 ) : (
   <AnimatePresence>
     <div className="flex flex-col gap-3">
-      {filteredTemplates.map((t) => (
+            {filteredTemplates.map((t, idx) => (
         <motion.div
           key={t.id}
           layout
@@ -149,17 +235,22 @@ function HomePage() {
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -20 }}
           transition={{
-            duration: 0.6,
-            ease: [0.4, 0, 0.2, 1], // очень плавная кривая
-            layout: { duration: 0.2, ease: [0.4, 0, 0.2, 1] }
+            duration: 0.25,
+            ease: [0.4, 0, 0.2, 1],
+            layout: { duration: 0.18, ease: [0.4, 0, 0.2, 1] }
           }}
           whileHover={{
-              y: -6,
-              scale: 1.02,
-              boxShadow: "0 25px 50px -12px rgb(0 0 0 / 0.25)"
-            }}
+            y: -4,
+            scale: 1.015,
+            transition: { duration: 0.15, ease: 'easeOut' }
+          }}
           onDoubleClick={() => router.push(`/filler?id=${t.id}`)}
-          className="group bg-zinc-900/60 backdrop-blur-3xl border border-white/5 hover:border-amber-400/30 rounded-3xl p-3 shadow-xl flex items-center gap-4 cursor-pointer"
+                    data-template-index={idx}
+          className={`group bg-zinc-900/60 backdrop-blur-3xl border rounded-3xl p-3 shadow-xl flex items-center gap-4 cursor-pointer ${
+            idx === selectedIndex
+              ? 'border-amber-400 shadow-[0_0_0_3px_rgba(245,158,11,0.25)]'
+              : 'border-white/5 hover:border-amber-400/30'
+          }`}
         >
           {/* Звёздочка */}
           <motion.button

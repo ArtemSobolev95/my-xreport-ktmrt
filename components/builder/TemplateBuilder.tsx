@@ -17,7 +17,6 @@ import {
   HomeIcon,
   PlusIcon,
   MinusIcon,
-  EyeIcon,
   PhotoIcon,
   ArrowRightCircleIcon,
   DocumentDuplicateIcon
@@ -46,12 +45,13 @@ import {
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { restrictToVerticalAxis } from '@dnd-kit/modifiers';
-import type { BuilderField, FieldType, QuickButtonGroup, QuickButtonSubgroup } from '../../types/builder';
+import type { BuilderField, FieldType, QuickButtonGroup } from '../../types/builder';
 
 import { motion, AnimatePresence } from 'framer-motion';
 import withAuth from '../../components/withAuth';
 import UserHeader from '../../components/UserHeader';
 import dynamic from 'next/dynamic';
+import { migrateQuickButtons } from '../../lib/migrateQuickButtons';
 
 
 
@@ -68,7 +68,6 @@ const availableFields = [
   )},
   { type: 'notes' as FieldType, label: 'Заметки', icon: <BookmarkIcon className="w-7 h-7" /> },
   { type: 'formula' as FieldType, label: 'Формула', icon: <CalculatorIcon className="w-7 h-7" /> },
-  { type: 'comparison' as FieldType, label: 'Сравнение', icon: <EyeIcon className="w-7 h-7" /> },
 ];
 
 function SortableField({ 
@@ -608,80 +607,9 @@ function SortableField({
               <input type="text" value={field.unit || ''} onChange={e => onUpdate(field.id, { unit: e.target.value })} className="w-9 text-center mt-1 bg-transparent border-0 border-b-2 border-white/20 px-0 py-2 text-white text-sm hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all" />
             </div>
           </div>
-        ) : field.type === 'comparison' ? (
-          <div>
-            <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="w-full text-sm px-0 py-0 text-white mb-1 focus:outline-none focus:ring-0 focus:ring-offset-0" placeholder="Введите значение" />
-            <div className="space-y-0">
-              {(field.items || []).map((item) => (
-                <div key={item.id} className="w-full bg-transparent px-1 py-0 text-sm text-white placeholder:text-zinc-400">
-                  <span className="font-medium text-zinc-400 w-6">{item.number}.</span>
-                  <input type="text" value={item.value} onChange={e => {
-                    const newItems = (field.items || []).map(i => i.id === item.id ? { ...i, value: e.target.value } : i);
-                    onUpdate(field.id, { items: newItems });
-                  }} className="w-50 flex-1 py-3 bg-transparent outline-none text-sm text-white border-b-2 border-white/20 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all" placeholder="Введите значение" />
-                  <span className="text-zinc-400"> , ранее </span>
-                  <input type="text" value={item.previous} onChange={e => {
-                    const newItems = (field.items || []).map(i => i.id === item.id ? { ...i, previous: e.target.value } : i);
-                    onUpdate(field.id, { items: newItems });
-                  }} className="w-50 flex-1 py-3 bg-transparent outline-none text-sm text-white border-b-2 border-white/20 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all" placeholder="Введите значение" />
-                  <button onClick={(e) => { e.stopPropagation(); const newItems = (field.items || []).filter(i => i.id !== item.id); onUpdate(field.id, { items: newItems }); }} className="text-white hover:text-red-400 cursor-pointer py-0"><MinusIcon className="w-4 h-4" /></button>
-                </div>
-              ))}
-            </div>
-            <button onClick={() => {
-              const currentItems = field.items || [];
-              const maxNumber = Math.max(...currentItems.map((i) => i.number || 0), 0);
-              const newItem = { id: Date.now().toString(), number: maxNumber + 1, value: '', previous: '' };
-              onUpdate(field.id, { items: [...currentItems, newItem] });
-            }} className="w-full mt-6 flex items-center justify-center py-3 text-blue-400 hover:text-blue-300">
-              <PlusIcon className="w-5 h-5 text-white hover:text-amber-400 cursor-pointer" />
-            </button>
-          </div>
-        ) : (
-          <>
-            <label className="block text-sm font-medium text-zinc-400 mb-1.5">{field.label || 'Название поля'}</label>
-            <div className="mb-4">
-              
-              {field.type === 'checkbox' ? (
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={!!field.defaultValue} onChange={e => onUpdate(field.id, { defaultValue: e.target.checked })} className="w-5 h-5 accent-white" />
-                  <span className="text-zinc-300">Галочка по умолчанию</span>
-                </label>
-              ) : field.type === 'rating' ? (
-                <input type="number" value={field.defaultValue || ''} onChange={e => onUpdate(field.id, { defaultValue: parseInt(e.target.value) || 0 })} min={0} max={field.max || 5} className="w-full px-5 py-3 bg-zinc-800 border border-zinc-700 rounded-none text-white" />
-              ) : (
-                <input type={field.type === 'number' ? 'number' : 'text'} value={field.defaultValue || ''} onChange={e => onUpdate(field.id, { defaultValue: e.target.value })} className="w-full px-5 py-3 bg-zinc-800 border border-zinc-700 rounded-none text-white" placeholder={field.type === 'number' ? "0.00" : "Значение по умолчанию"} />
-              )}
-            </div>
-            {field.type === 'text' && <input type="text" className="w-full px-5 py-3 bg-zinc-800 border border-zinc-700 rounded-none text-white" placeholder="Введите значение" />}
-            {field.type === 'number' && (
-              <div className="flex gap-2">
-                <input type="number" step="any" className="flex-1 px-5 py-3 bg-zinc-800 border border-zinc-700 rounded-none text-white" placeholder="Введите значение" />
-                {field.unit && <span className="self-center text-zinc-400">{field.unit}</span>}
-              </div>
-            )}
-            {field.type === 'select' && (
-              <select className="w-full px-5 py-3 bg-zinc-800 border border-zinc-700 rounded-none text-white">
-                <option>Выберите вариант...</option>
-                {field.options?.map((opt, i) => <option key={i}>{opt}</option>)}
-              </select>
-            )}
-            {field.type === 'rating' && (
-              <div>
-                <div className="flex gap-3 mt-1">
-                  {Array.from({ length: field.max || 5 }, (_, i) => {
-                    const score = i + 1;
-                    return (
-                      <button key={i} onClick={(e) => { e.stopPropagation(); setSelectedRating(score); }} className={`w-9 h-9 flex items-center justify-center border rounded-none text-lg font-medium transition-all ${selectedRating === score ? 'bg-zinc-600 text-white border-zinc-600' : 'hover:bg-zinc-700 border-zinc-600'}`}>
-                        {score}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-          </>
-        )}
+        
+          ) : null}
+            
       </div>
 
       
@@ -752,9 +680,15 @@ function TemplateBuilder() {
     const loadTemplate = async () => {
       try {
         const record = await pb.collection('templates').getOne(edit as string, { $autoCancel: false });
-        
-        setTemplateTitle(record.title || "Новый шаблон");
-        setFields(record.fields || []);
+
+setTemplateTitle(record.title || "Новый шаблон");
+
+const migratedFields = (record.fields || []).map((f: any) => ({
+  ...f,
+  quickButtons: migrateQuickButtons(f.quickButtons),
+}));
+
+setFields(migratedFields);
       } catch (err) {
         console.error("Ошибка загрузки шаблона в Builder:", err);
       }
@@ -782,7 +716,7 @@ function TemplateBuilder() {
       notes: type === 'notes' ? '' : undefined,
       formula: type === 'formula' ? 'a + b' : undefined,
       variables: type === 'formula' ? [{ name: 'a', value: '0' }, { name: 'b', value: '0' }] : undefined,
-      items: type === 'comparison' ? [{ id: '1', number: 1, value: '', previous: '' }] : undefined,
+      
     };
 
     if (type === 'text') {
@@ -982,23 +916,42 @@ function TemplateBuilder() {
       <h3 className="font-semibold text-lg tracking-tigh">Быстрые кнопки</h3>
       <button
         onClick={() => {
-          const field = fields.find(f => f.id === selectedFieldId);
-          if (!field) return;
-          updateQuickButtons(selectedFieldId!, (draft) => {
-  draft.push({
-    id: Date.now().toString(36),
-    label: '',
-    isExpanded: true,
-    subgroups: [{
-      id: Date.now().toString(36) + '1',
+  if (!selectedFieldId) return;
+
+  updateQuickButtons(selectedFieldId, (draft) => {
+    // 1. Находим индекс последней раскрытой группы
+    let insertAfterIndex = -1;
+    for (let i = 0; i < draft.length; i++) {
+      if (draft[i].isExpanded) {
+        insertAfterIndex = i;
+      }
+    }
+
+    // 2. Создаём новую группу
+    const newGroup: QuickButtonGroup = {
+      id: Date.now().toString(36),
       label: '',
       isExpanded: true,
-      phrases: ['']
-    }]
+      phrases: [''],
+    };
+
+    // 3. Вставляем
+    if (insertAfterIndex === -1) {
+      // Никто не раскрыт → в конец
+      draft.push(newGroup);
+    } else {
+      // Вставляем сразу после последней раскрытой
+      draft.splice(insertAfterIndex + 1, 0, newGroup);
+    }
+
+    // 4. (рекомендую) Закрываем все остальные группы
+    draft.forEach((g, idx) => {
+      g.isExpanded = idx === (insertAfterIndex === -1 ? draft.length - 1 : insertAfterIndex + 1);
+    });
+
+    return draft;
   });
-  return draft;
-});
-        }}
+}}  
         className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
       >
         <PlusIcon className="w-5 h-5 text-white hover:text-amber-400 cursor-pointer transition-all" />
@@ -1006,199 +959,103 @@ function TemplateBuilder() {
     </div>
 
     <div className="space-y-1">
-      {(fields.find(f => f.id === selectedFieldId)?.quickButtons || []).map((group: QuickButtonGroup, gIndex: number) => (
-        <div key={group.id} className="bg-none border border-transparent p-0">
-          {/* Группа */}
-          <div className="flex items-center gap-1 mb-3">
-            <button
-              onClick={() => {
-                const field = fields.find(f => f.id === selectedFieldId);
-                if (!field) return;
-                updateQuickButtons(selectedFieldId!, (draft) => {
-  draft[gIndex].isExpanded = !draft[gIndex].isExpanded;
-  return draft;
-});
-              }}
-              className="text-zinc-400 hover:text-white transition-all cursor-pointer"
-              style={{ transform: group.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-            >
-              <ChevronRight size={18} />
-            </button>
-            <input
-              type="text"
-              value={group.label}
-              onChange={e => {
-                const field = fields.find(f => f.id === selectedFieldId);
-                if (!field) return;
-                updateQuickButtons(selectedFieldId!, (draft) => {
-  draft[gIndex].label = e.target.value;
-  return draft;
-});
-              }}
-              className="flex-1 bg-transparent text-sm font-semibold outline-none"
-              placeholder="Введите значение"
-            />
-            <button
-              onClick={() => {
-                const field = fields.find(f => f.id === selectedFieldId);
-                if (!field) return;
-                updateQuickButtons(selectedFieldId!, (draft) => {
-  draft.splice(gIndex, 1);
-  return draft;
-});
-              }}
-              className="text-white hover:text-red-400 transition-all cursor-pointer"
-            >
-              <Trash2 size={17} />
-            </button>
-          </div>
+  {(fields.find(f => f.id === selectedFieldId)?.quickButtons || []).map((group: QuickButtonGroup, gIndex: number) => (
+    <div key={group.id} className="bg-none border border-transparent p-0">
+      {/* Группа */}
+      <div className="flex items-center gap-1 mb-3">
+        <button
+          onClick={() => {
+            updateQuickButtons(selectedFieldId!, (draft) => {
+              draft[gIndex].isExpanded = !draft[gIndex].isExpanded;
+              return draft;
+            });
+          }}
+          className="text-zinc-400 hover:text-white transition-all cursor-pointer"
+          style={{ transform: group.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+        >
+          <ChevronRight size={18} />
+        </button>
+        <input
+          type="text"
+          value={group.label}
+          onChange={e => {
+            updateQuickButtons(selectedFieldId!, (draft) => {
+              draft[gIndex].label = e.target.value;
+              return draft;
+            });
+          }}
+          className="flex-1 bg-transparent text-sm font-semibold outline-none"
+          placeholder="Название группы"
+        />
+        <button
+          onClick={() => {
+            updateQuickButtons(selectedFieldId!, (draft) => {
+              draft.splice(gIndex, 1);
+              return draft;
+            });
+          }}
+          className="text-white hover:text-red-400 transition-all cursor-pointer"
+        >
+          <Trash2 size={17} />
+        </button>
+      </div>
 
-          {/* Анимированное раскрытие подгрупп */}
-          <AnimatePresence>
-            {group.isExpanded && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.15, ease: "easeInOut" }}
-                className="pl-4 space-y-3 overflow-hidden"
-              >
-                {group.subgroups.map((subgroup, sIndex) => (
-                  <div key={subgroup.id}>
-                    <div className="flex items-center gap-1 mb-2">
-                      <button
-                        onClick={() => {
-                          const field = fields.find(f => f.id === selectedFieldId);
-                          if (!field) return;
-                          updateQuickButtons(selectedFieldId!, (draft) => {
-  draft[gIndex].subgroups[sIndex].isExpanded = !draft[gIndex].subgroups[sIndex].isExpanded;
-  return draft;
-});
-                        }}
-                        className="text-zinc-400 hover:text-white transition-transform duration-200 cursor-pointer"
-                        style={{ transform: subgroup.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-                      >
-                        <ChevronRight size={18} />
-                      </button>
-                      <input
-                        type="text"
-                        value={subgroup.label}
-                        onChange={e => {
-                          const field = fields.find(f => f.id === selectedFieldId);
-                          if (!field) return;
-                          updateQuickButtons(selectedFieldId!, (draft) => {
-  draft[gIndex].subgroups[sIndex].label = e.target.value;
-  return draft;
-});
-                        }}
-                        className="flex-1 bg-transparent text-xs font-medium outline-none"
-                        placeholder="Введите значение"
-                      />
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => {
-                            const field = fields.find(f => f.id === selectedFieldId);
-                            if (!field) return;
-                            updateQuickButtons(selectedFieldId!, (draft) => {
-  const newSubgroup: QuickButtonSubgroup = {
-    id: Date.now().toString(36),
-    label: '',
-    isExpanded: true,
-    phrases: ['']
-  };
-  draft[gIndex].subgroups.splice(sIndex + 1, 0, newSubgroup);
-  return draft;
-});
-                          }}
-                          className="text-white hover:text-amber-400 transition-all p-1 cursor-pointer"
-                        >
-                          <FolderPlus size={18} />
-                        </button>
-                        {sIndex > 0 && (
-                          <button
-                            onClick={() => {
-                              const field = fields.find(f => f.id === selectedFieldId);
-                              if (!field) return;
-                              updateQuickButtons(selectedFieldId!, (draft) => {
-  draft[gIndex].subgroups.splice(sIndex, 1);
-  return draft;
-});
-                            }}
-                            className="text-white hover:text-red-400 transition-all p-1 cursor-pointer"
-                          >
-                            <FolderMinus size={18} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Анимированное раскрытие фраз */}
-                    <AnimatePresence>
-                      {subgroup.isExpanded && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: "auto", opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          transition={{ duration: 0.15, ease: "easeInOut" }}
-                          className="pl-4 space-y-2 overflow-hidden"
-                        >
-                          {subgroup.phrases.map((phrase, pIndex) => (
-                            <div key={pIndex} className="flex items-center gap-1">
-                              <input
-                                type="text"
-                                value={phrase}
-                                onChange={e => {
-                                  const field = fields.find(f => f.id === selectedFieldId);
-                                  if (!field) return;
-                                  updateQuickButtons(selectedFieldId!, (draft) => {
-  draft[gIndex].subgroups[sIndex].phrases[pIndex] = e.target.value;
-  return draft;
-});
-                                }}
-                                className="flex-1 min-w-0 bg-transparent border border-transparent px-4 py-2 text-xs focus:outline-none focus:ring-0"
-                                placeholder="Введите значение"
-                              />
-                              <button
-                                onClick={() => {
-                                  const field = fields.find(f => f.id === selectedFieldId);
-                                  if (!field) return;
-                                  updateQuickButtons(selectedFieldId!, (draft) => {
-  draft[gIndex].subgroups[sIndex].phrases.splice(pIndex + 1, 0, '');
-  return draft;
-});
-                                }}
-                                className="text-white hover:text-amber-400 cursor-pointer transition-all"
-                              >
-                                <PlusIcon className="w-4 h-4" />
-                              </button>
-                              {pIndex > 0 && (
-                                <button
-                                  onClick={() => {
-                                    const field = fields.find(f => f.id === selectedFieldId);
-                                    if (!field) return;
-                                    updateQuickButtons(selectedFieldId!, (draft) => {
-  draft[gIndex].subgroups[sIndex].phrases.splice(pIndex, 1);
-  return draft;
-});
-                                  }}
-                                  className="text-white hover:text-red-400 cursor-pointer transition-all"
-                                >
-                                  <MinusIcon className="w-4 h-4" />
-                                </button>
-                              )}
-                            </div>
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      ))}
+      {/* Фразы */}
+      <AnimatePresence>
+        {group.isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeInOut' }}
+            className="pl-4 space-y-2 overflow-hidden"
+          >
+            {(group.phrases || []).map((phrase, pIndex) => (
+              <div key={pIndex} className="flex items-center gap-1">
+                <input
+                  type="text"
+                  value={phrase}
+                  onChange={e => {
+                    updateQuickButtons(selectedFieldId!, (draft) => {
+                      draft[gIndex].phrases[pIndex] = e.target.value;
+                      return draft;
+                    });
+                  }}
+                  className="flex-1 min-w-0 bg-transparent border border-transparent px-4 py-2 text-xs focus:outline-none focus:ring-0"
+                  placeholder="Фраза"
+                />
+                <button
+                  onClick={() => {
+                    updateQuickButtons(selectedFieldId!, (draft) => {
+                      draft[gIndex].phrases.splice(pIndex + 1, 0, '');
+                      return draft;
+                    });
+                  }}
+                  className="text-white hover:text-amber-400 cursor-pointer transition-all"
+                >
+                  <PlusIcon className="w-4 h-4" />
+                </button>
+                {pIndex > 0 && (
+                  <button
+                    onClick={() => {
+                      updateQuickButtons(selectedFieldId!, (draft) => {
+                        draft[gIndex].phrases.splice(pIndex, 1);
+                        return draft;
+                      });
+                    }}
+                    className="text-white hover:text-red-400 cursor-pointer transition-all"
+                  >
+                    <MinusIcon className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+  ))}
+</div>
   <div className="h-[300px] flex-shrink-0"></div>
   </div>
 ) : (

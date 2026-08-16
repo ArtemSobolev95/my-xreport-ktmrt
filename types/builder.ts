@@ -1,19 +1,12 @@
 export type FieldType = 
   'header' | 'text' | 'number' | 'checkbox' | 'select' | 
-  'rating' | 'notes' | 'formula' | 'comparison';
-
-export interface QuickButtonSubgroup {
-  id: string;
-  label: string;
-  isExpanded: boolean;
-  phrases: string[];
-}
+  'rating' | 'notes' | 'formula' ;
 
 export interface QuickButtonGroup {
   id: string;
   label: string;
   isExpanded: boolean;
-  subgroups: QuickButtonSubgroup[];
+  phrases: string[];
 }
 
 export interface BuilderField {

@@ -3,14 +3,15 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, ChevronsDownUp } from 'lucide-react';
+import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, ChevronsDownUp, Paperclip } from 'lucide-react';
 import { 
   ArrowDownOnSquareIcon, 
   ArrowUpOnSquareIcon        
 } from '@heroicons/react/24/outline';
-import type { BuilderField, QuickButtonGroup, QuickButtonSubgroup } from '../types/builder';
+import type { BuilderField, QuickButtonGroup } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
+import { migrateQuickButtons } from '../lib/migrateQuickButtons';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
 
@@ -43,18 +44,19 @@ const RatingField = ({
 
         return (
           <button
-            key={score}
-            onClick={() => handleClick(score)}
-            tabIndex={0}
-            className={`w-10 h-10 flex items-center justify-center text-lg font-medium rounded-2xl transition-all border cursor-pointer
-              ${isActive
-                ? 'bg-zinc-800 border-amber-400 text-white shadow-md'
-                : 'bg-transparent border-white/30 hover:border-amber-400 hover:bg-white/5 text-white'
-              }
-            `}
-          >
-            {score}
-          </button>
+              key={score}
+              onClick={() => handleClick(score)}
+              tabIndex={0}
+              className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-xl transition-all border cursor-pointer
+                focus:outline-none focus-visible:border-amber-400 focus-visible:ring-2 focus-visible:ring-amber-400/40
+                ${isActive
+                  ? 'bg-zinc-800 border-amber-400 text-white shadow-md'
+                  : 'bg-transparent border-white/30 hover:border-amber-400 hover:bg-white/5 text-white'
+                }
+              `}
+            >
+              {score}
+            </button>
         );
       })}
     </div>
@@ -112,11 +114,9 @@ function FillerPage() {
   const [stateAfterPhrases, setStateAfterPhrases] = useState<string[]>([]);
   const [stateAfterSearch, setStateAfterSearch] = useState('');
   const [pathNav, setPathNav] = useState<{
-    groupIdx: number;
-    level: 'sub' | 'phrase';
-    subIdx: number;
-    phraseIdx: number;
-  } | null>(null);
+  groupIdx: number;
+  phraseIdx: number;
+} | null>(null);
 
 
   // === Валидация и форматирование даты ДД-ММ-ГГГГ ===
@@ -158,6 +158,7 @@ const handleComparisonDateChange = (e: React.ChangeEvent<HTMLInputElement>, inde
   
   setComparisonDates(newDates);
 };
+  const [showNotesModal, setShowNotesModal] = useState(false);
   const [showStateAfterModal, setShowStateAfterModal] = useState(false);
   const [showAbbrModal, setShowAbbrModal] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -169,8 +170,28 @@ const handleComparisonDateChange = (e: React.ChangeEvent<HTMLInputElement>, inde
   }>>([]);
   const MAX_HISTORY = 50;
 
+  const typingSessionRef = useRef(false);
+  const typingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const endTypingSession = () => {
+    typingSessionRef.current = false;
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current);
+      typingTimerRef.current = null;
+    }
+  };
+
+    const fieldsDataRef = useRef(fieldsData);
+  const deletedFieldIdsRef = useRef(deletedFieldIds);
+
+  useEffect(() => {
+    fieldsDataRef.current = fieldsData;
+    deletedFieldIdsRef.current = deletedFieldIds;
+  }, [fieldsData, deletedFieldIds]);
+
   // === Состояние сворачивания разделов (по заголовкам) ===
 const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(new Set());
+const [skipSectionTransition, setSkipSectionTransition] = useState(false);
 
   // === Работа с черновиком в localStorage ===
 const DRAFT_KEY_PREFIX = 'filler_draft_';
@@ -224,23 +245,36 @@ const clearDraft = (templateId: string) => {
 // Состояние для уведомления о восстановлении черновика
 const [showDraftNotification, setShowDraftNotification] = useState(false);
 
-  const saveToHistory = () => {
+    const saveToHistory = () => {
+    const snapshot = {
+      fieldsData: { ...fieldsDataRef.current },
+      deletedFieldIds: [...deletedFieldIdsRef.current],
+    };
+
     setHistory(prev => {
-      const snapshot = {
-        fieldsData: { ...fieldsData },
-        deletedFieldIds: [...deletedFieldIds]   // массив!
-      };
-      const newHistory = [...prev, snapshot];
-      return newHistory.slice(-MAX_HISTORY);
+      const last = prev[prev.length - 1];
+      if (
+        last &&
+        JSON.stringify(last.fieldsData) === JSON.stringify(snapshot.fieldsData) &&
+        JSON.stringify(last.deletedFieldIds) === JSON.stringify(snapshot.deletedFieldIds)
+      ) {
+        return prev;
+      }
+      return [...prev, snapshot].slice(-MAX_HISTORY);
     });
   };
 
-  const undo = () => {
+    const undo = () => {
     if (history.length === 0) return;
     const lastState = history[history.length - 1];
+
+    fieldsDataRef.current = lastState.fieldsData;
+    deletedFieldIdsRef.current = lastState.deletedFieldIds;
+
     setFieldsData(lastState.fieldsData);
-    setDeletedFieldIds([...lastState.deletedFieldIds]);   // массив!
+    setDeletedFieldIds([...lastState.deletedFieldIds]);
     setHistory(prev => prev.slice(0, -1));
+    endTypingSession();
   };
 
   // === Логика сворачивания разделов ===
@@ -277,6 +311,61 @@ const toggleAllSections = () => {
     setCollapsedHeaders(new Set());
   } else {
     setCollapsedHeaders(new Set(allHeaderIds));
+  }
+};
+
+
+const openOnlySection = (headerId: string) => {
+  if (!template) return;
+
+  const allHeaderIds = (template.fields || [])
+    .filter((f: BuilderField) => f.type === 'header' && !deletedFieldIds.includes(f.id))
+    .map((f: BuilderField) => f.id);
+
+  const isCurrentlyOpen = !collapsedHeaders.has(headerId);
+
+  // Если раздел уже открыт — просто закрываем
+  if (isCurrentlyOpen) {
+    setCollapsedHeaders(prev => new Set([...prev, headerId]));
+    return;
+  }
+
+  // Открываем этот раздел, остальные закрываем
+  setSkipSectionTransition(true);
+  setCollapsedHeaders(new Set(allHeaderIds.filter((id: string) => id !== headerId)));
+
+  // Ищем первое поле после этого заголовка
+  let foundHeader = false;
+  let firstFieldId: string | null = null;
+
+  for (const f of template.fields) {
+    if (deletedFieldIds.includes(f.id)) continue;
+
+    if (f.id === headerId) {
+      foundHeader = true;
+      continue;
+    }
+
+    if (foundHeader) {
+      if (f.type === 'header') break; // следующий раздел
+      if (f.type !== 'notes') {
+        firstFieldId = f.id;
+        break;
+      }
+    }
+  }
+
+  // Фокус на первое поле → сработает onFocus → автоскролл
+  if (firstFieldId) {
+    requestAnimationFrame(() => {
+      const el = inputRefs.current[firstFieldId!];
+      if (el) {
+        el.focus();
+      } else {
+        setActiveFieldId(firstFieldId);
+        activeFieldRef.current = firstFieldId;
+      }
+    });
   }
 };
 
@@ -437,6 +526,40 @@ const handleClearDraft = () => {
   initializeCollapsedState(originalTemplate.fields);
 };
  
+    // Закрытие модалок по Escape (работает независимо от фокуса)
+  useEffect(() => {
+    const anyModalOpen =
+      showComparisonModal ||
+      showStateAfterModal ||
+      showAbbrModal ||
+      showNotesModal ||
+      showSaveModal ||
+      !!deleteConfirm;
+
+    if (!anyModalOpen) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+
+      if (showComparisonModal) setShowComparisonModal(false);
+      if (showStateAfterModal) setShowStateAfterModal(false);
+      if (showAbbrModal) setShowAbbrModal(false);
+      if (showNotesModal) setShowNotesModal(false);
+      if (showSaveModal) setShowSaveModal(false);
+      if (deleteConfirm) setDeleteConfirm(null);
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    showComparisonModal,
+    showStateAfterModal,
+    showAbbrModal,
+    showNotesModal,
+    showSaveModal,
+    deleteConfirm,
+  ]);
   
   useEffect(() => {
   if (!variantSelector) return;
@@ -451,6 +574,7 @@ const handleClearDraft = () => {
   };
 
   const handleBlur = () => {
+    endTypingSession(); //
     // Закрываем при потере фокуса
     setTimeout(() => {
       setVariantSelector(null);
@@ -728,6 +852,23 @@ const handleClearDraft = () => {
     phrase.toLowerCase().includes(stateAfterSearch.toLowerCase())
   );
 
+    const notesLinks = useMemo(() => {
+    if (!template?.fields) return [];
+    const links: { text: string; url: string }[] = [];
+
+    for (const f of template.fields) {
+      if (f.type !== 'notes' || !f.notes) continue;
+      if (deletedFieldIds.includes(f.id)) continue;
+
+      f.notes.split('\n').filter(Boolean).forEach((line: string) => {
+        const match = line.match(/\[(.*?)\]\((.*?)\)/);
+        if (match) {
+          links.push({ text: match[1], url: match[2] });
+        }
+      });
+    }
+    return links;
+  }, [template, deletedFieldIds]);
 
   const filteredAbbreviations = Object.entries(abbreviations)
     .filter(([abbr, info]) => {
@@ -742,6 +883,9 @@ const handleClearDraft = () => {
   setLoading(true);
   setShowDraftNotification(false)
 
+
+
+
   const loadTemplate = async () => {
     try {
       const record = await pb.collection('templates').getOne(id as string, { 
@@ -755,9 +899,19 @@ const handleClearDraft = () => {
         router.push('/');
         return;
       }
+      
+      // Миграция quickButtons: старый формат (subgroups) → новый (phrases)
+if (Array.isArray(record.fields)) {
+  record.fields = record.fields.map((f: any) => ({
+    ...f,
+    quickButtons: migrateQuickButtons(f.quickButtons),
+  }));
+}
 
       setOriginalTemplate(JSON.parse(JSON.stringify(record)));
       setTemplate(record);
+
+    
 
       // Инициализируем все разделы как свёрнутые (по умолчанию при загрузке страницы)
 initializeCollapsedState(record.fields);
@@ -959,17 +1113,33 @@ initializeCollapsedState(record.fields);
         }
 
         let coloredHtml = displayHtml;
-        if (val && ['text', 'number', 'select', 'checkbox', 'formula', 'comparison'].includes(f.type)) {
+        if (val && ['text', 'number', 'select', 'checkbox', 'formula'].includes(f.type)) {
           coloredHtml = `<span class="text-amber-400">${val}</span>`;
         }
 
         if (f.type === 'text') {
-      const finalHtml = val ? coloredHtml : displayHtml;
-      const finalPlain = displayPlain;
+  // Берём реальное значение пользователя (или placeholder)
+  let textValue = (val || displayPlain || '').trim();
 
-      htmlText += `${f.label}: ${finalHtml}\n\n`;
-      plainText += `${f.label}: ${finalPlain}\n\n`;
-    }
+  // Автоматически ставим точку, если её (или ! ?) ещё нет
+  if (textValue && !/[.!?…]$/.test(textValue)) {
+    textValue += '.';
+  }
+
+  // HTML-версия (с подсветкой, если есть значение)
+  let finalHtml: string;
+  if (val) {
+    finalHtml = `<span class="text-amber-400">${textValue}</span>`;
+  } else {
+    // placeholder — тоже с точкой (если она была добавлена)
+    finalHtml = textValue
+      ? `<span style="color: #9ca3af;">${textValue}</span>`
+      : displayHtml;
+  }
+
+  htmlText += `${f.label}: ${finalHtml}\n\n`;
+  plainText += `${f.label}: ${textValue}\n\n`;
+} 
 
 
       else if (f.type === 'checkbox') {
@@ -996,7 +1166,7 @@ initializeCollapsedState(record.fields);
         htmlText += `${f.label}: <span class="text-amber-400">${val}${expl}</span>\n\n`;
         plainText += `${f.label}: ${val}${expl}\n\n`;
       } 
-      else if (f.type === 'formula') {
+            else if (f.type === 'formula') {
         const hasAnyValue = (f.variables || []).some((v: any, i: number) => 
           fieldsData[`${f.id}_var_${i}`] && String(fieldsData[`${f.id}_var_${i}`]).trim() !== ''
         );
@@ -1010,30 +1180,7 @@ initializeCollapsedState(record.fields);
         htmlText += `${f.label}: <span class="text-amber-400">${result}</span>${unitHtml}\n\n`;
         plainText += `${f.label}: ${result}${unitPlain}\n\n`;
       }
-      else if (f.type === 'comparison') {
-        const headerText = fieldsData[`${f.id}_header`] || f.label || '';
-        const hasAnyValue = (f.items || []).some((item) => {
-          const v = fieldsData[`${f.id}_val_${item.id}`] || item.value || '';
-          const p = fieldsData[`${f.id}_prev_${item.id}`] || item.previous || '';
-          return v.trim() || p.trim();
-        });
-        if (!hasAnyValue) return;
-
-        if (headerText) {
-          htmlText += `${headerText}:\n`;
-          plainText += `${headerText}:\n`;
-        }
-
-        (f.items || []).forEach((item) => {
-          const valuePart = fieldsData[`${f.id}_val_${item.id}`] || item.value || '';
-          const previousPart = fieldsData[`${f.id}_prev_${item.id}`] || item.previous || '';
-          htmlText += `<span class="text-amber-400">${item.number}. ${valuePart}, ранее ${previousPart}.</span>\n`;
-          plainText += `${item.number}. ${valuePart}, ранее ${previousPart}.\n`;
-        });
-        htmlText += '\n';
-        plainText += '\n';
-      }
-    });
+    });   // ← эта строка обязательна — закрывает forEach
 
     return {
       finalText: htmlText.trim(),
@@ -1049,13 +1196,36 @@ initializeCollapsedState(record.fields);
     stateAfterText
   ]);
 
-  const updateField = (fieldId: string, value: any) => {   // value может быть string | number | boolean
-    saveToHistory();
-    setFieldsData(prev => ({ ...prev, [fieldId]: value }));
-  };
+  const updateField = (
+  fieldId: string,
+  value: any,
+  options?: { groupTyping?: boolean }
+) => {
+  const groupTyping = options?.groupTyping === true;
 
-    const handleFocus = (fieldId: string, el: HTMLElement | null) => {
-    // Извлекаем основной ID карточки
+  if (groupTyping) {
+    if (!typingSessionRef.current) {
+      saveToHistory();
+      typingSessionRef.current = true;
+    }
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
+    typingTimerRef.current = setTimeout(() => {
+      typingSessionRef.current = false;
+      typingTimerRef.current = null;
+    }, 600);
+  } else {
+    endTypingSession();
+    saveToHistory();
+  }
+
+    setFieldsData(prev => {
+    const next = { ...prev, [fieldId]: value };
+    fieldsDataRef.current = next;
+    return next;
+  });
+};
+
+          const handleFocus = (fieldId: string, el: HTMLElement | null) => {
     let mainId = fieldId;
     if (fieldId.includes('_')) {
       mainId = fieldId.split('_')[0];
@@ -1065,25 +1235,28 @@ initializeCollapsedState(record.fields);
     activeFieldRef.current = mainId;
     activeInputRef.current = el;
 
-    // Авто-разворот секции, если поле находится в свёрнутом разделе
+    // Сворачиваем все разделы, кроме активного
     if (template) {
+      const allHeaderIds: string[] = [];
       let currentHeader: string | null = null;
+      let found = false;
+
       for (const f of template.fields) {
         if (deletedFieldIds.includes(f.id)) continue;
 
         if (f.type === 'header') {
-          currentHeader = f.id;
-        } else if (f.id === mainId && currentHeader) {
-          setCollapsedHeaders(prev => {
-            if (!prev.has(currentHeader!)) return prev;
-            const next = new Set(prev);
-            next.delete(currentHeader!);
-            return next;
-          });
-          break;
+          allHeaderIds.push(f.id);
+          if (!found) currentHeader = f.id;
+        } else if (f.id === mainId) {
+          found = true;
         }
       }
-    }
+
+      if (currentHeader && found) {
+        setSkipSectionTransition(true);
+        setCollapsedHeaders(new Set(allHeaderIds.filter(id => id !== currentHeader)));
+      }
+    }   // ← эта скобка должна быть
   };
 
 const handleBlur = () => {
@@ -1109,29 +1282,50 @@ const handleBlur = () => {
   }, 180); // увеличил задержку
 };
 
+      useEffect(() => {
+    if (!activeFieldId) return;
+
+    const raf = requestAnimationFrame(() => {
+      const el =
+        inputRefs.current[activeFieldId] ||
+        (document.querySelector(`[data-field-id="${activeFieldId}"]`) as HTMLElement | null);
+
+      if (el) {
+        el.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+      }
+
+      // возвращаем анимацию разделов после скролла
+      setTimeout(() => setSkipSectionTransition(false), 50);
+    });
+
+    return () => cancelAnimationFrame(raf);
+  }, [activeFieldId, collapsedHeaders]);
+
 useEffect(() => {
     setPathNav(null);
   }, [activeFieldId]);
 
   const handleInputChange = (fieldId: string, value: string) => {
-  saveToHistory();
-  updateField(fieldId, value);
+  updateField(fieldId, value, { groupTyping: true });
 };
 
 // Автоскролл выбранной фразы при навигации стрелками
-  useEffect(() => {
-    if (!pathNav || pathNav.level !== 'phrase') return;
+useEffect(() => {
+  if (!pathNav) return;
 
-    requestAnimationFrame(() => {
-      const el = document.querySelector(
-        `[data-path-group="${pathNav.groupIdx}"][data-path-sub="${pathNav.subIdx}"][data-path-phrase="${pathNav.phraseIdx}"]`
-      ) as HTMLElement | null;
+  requestAnimationFrame(() => {
+    const el = document.querySelector(
+      `[data-path-group="${pathNav.groupIdx}"][data-path-phrase="${pathNav.phraseIdx}"]`
+    ) as HTMLElement | null;
 
-      if (el) {
-        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      }
-    });
-  }, [pathNav]);
+    if (el) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  });
+}, [pathNav]);
 
 const insertPhrase = (phrase: string) => {
   const fieldId = activeFieldRef.current;
@@ -1179,7 +1373,7 @@ const insertPhrase = (phrase: string) => {
   const newText = before + prefix + finalPhrase + after;
   const newCursorPos = start + prefix.length + finalPhrase.length;
 
-  saveToHistory();
+  
   updateField(fieldId, newText);
 
   requestAnimationFrame(() => {
@@ -1237,7 +1431,7 @@ if (!textarea) return;
 const currentValue = textarea.value;
 const newText = prefix + finalChosen + trigger + currentValue.substring(variantSelector.startPos);
 
-  saveToHistory();
+  
   updateField(fieldId, newText);
 
   if (abbrKey && abbreviations[abbrKey]) {
@@ -1321,7 +1515,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   const newText = beforeWord + replacement + e.key + value.substring(cursorPos);
   const newCursorPos = beforeWord.length + replacement.length + 1;
 
-  saveToHistory();
+  
   updateField(fieldId, newText);
 
   const updated = JSON.parse(JSON.stringify(abbreviations));
@@ -1425,169 +1619,152 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
     if (selectedCategory === cat) setSelectedCategory('Все');
   };
 
-  useEffect(() => {
+      useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      const isCtrl = e.ctrlKey || e.metaKey;
+
+      // Ctrl+Z — отмена
+      if (isCtrl && e.code === 'KeyZ' && !e.shiftKey) {
         e.preventDefault();
         undo();
         return;
       }
 
-      // Свернуть/Развернуть все разделы
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
+      // Ctrl+E — свернуть/развернуть все разделы
+      if (isCtrl && e.code === 'KeyE') {
         e.preventDefault();
         toggleAllSections();
+        return;
+      }
+
+      // Ctrl+Shift+C — скопировать протокол
+      if (isCtrl && e.shiftKey && e.code === 'KeyC') {
+        e.preventDefault();
+        copyToClipboard();
+        return;
+      }
+
+      // Ctrl+Shift+R — сбросить протокол
+      if (isCtrl && e.shiftKey && e.code === 'KeyR') {
+        e.preventDefault();
+        resetToDefault();
+        return;
+      }
+
+      // Ctrl+Shift+H — к списку шаблонов
+      if (isCtrl && e.shiftKey && e.code === 'KeyH') {
+        e.preventDefault();
+        goToTemplateList();
+        return;
       }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [history, toggleAllSections]);
 
     // === Клавиатура: управление кнопками патологий ===
-  useEffect(() => {
-    if (!activeFieldId || !template) return;
+useEffect(() => {
+  if (!activeFieldId || !template) return;
 
-    const activeField = template.fields?.find((f: BuilderField) => f.id === activeFieldId);
-    const groups = activeField?.quickButtons || [];
-    if (groups.length === 0) {
-      setPathNav(null);
-      return;
-    }
+  const activeField = template.fields?.find((f: BuilderField) => f.id === activeFieldId);
+  const groups = activeField?.quickButtons || [];
+  if (groups.length === 0) {
+    setPathNav(null);
+    return;
+  }
 
-    const handlePathologyKeyDown = (e: KeyboardEvent) => {
-      // Не мешаем, когда открыты модалки / варианты автокоррекции
-      if (
-        variantSelector ||
-        showComparisonModal ||
-        showStateAfterModal ||
-        showAbbrModal ||
-        showSaveModal ||
-        deleteConfirm
-      ) return;
+  const handlePathologyKeyDown = (e: KeyboardEvent) => {
+    if (
+      variantSelector ||
+      showComparisonModal ||
+      showStateAfterModal ||
+      showAbbrModal ||
+      showSaveModal ||
+      deleteConfirm
+    ) return;
 
-      const isCtrl = e.ctrlKey || e.metaKey;
+    const isCtrl = e.ctrlKey || e.metaKey;
 
-      // Ctrl + 1..9 — выбор группы (кнопки патологии)
-      if (isCtrl && e.key >= '1' && e.key <= '9') {
-        e.preventDefault();
-        const idx = parseInt(e.key, 10) - 1;
-        if (idx >= groups.length) return;
+    // Ctrl + 1..9 — выбор группы
+    if (isCtrl && e.key >= '1' && e.key <= '9') {
+      e.preventDefault();
+      const idx = parseInt(e.key, 10) - 1;
+      if (idx >= groups.length) return;
 
-        const group = groups[idx];
-        const subgroups = group.subgroups || [];
-        const isSingle =
-          subgroups.length === 1 &&
-          (subgroups[0].phrases?.filter(Boolean).length || 0) === 1;
+      const group = groups[idx];
+      const phrases = (group.phrases || []).filter(Boolean);
 
-        if (isSingle) {
-          insertPhrase(subgroups[0].phrases.filter(Boolean)[0]);
-          setPathNav(null);
-          return;
-        }
+      if (phrases.length === 0) return;
 
-        // Открываем навигацию по подгруппам
-        setPathNav({
-          groupIdx: idx,
-          level: 'sub',
-          subIdx: 0,
-          phraseIdx: 0,
-        });
-        return;
-      }
-
-      if (!pathNav) return;
-
-      // Escape — закрыть
-      if (e.key === 'Escape') {
-        e.preventDefault();
+      if (phrases.length === 1) {
+        insertPhrase(phrases[0]);
         setPathNav(null);
         return;
       }
 
-      // Стрелки вниз/вверх
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setPathNav(prev => {
-          if (!prev) return prev;
-          if (prev.level === 'sub') {
-            const max = (groups[prev.groupIdx]?.subgroups?.length || 1) - 1;
-            return { ...prev, subIdx: Math.min(max, prev.subIdx + 1) };
-          } else {
-            const phrases =
-              groups[prev.groupIdx]?.subgroups?.[prev.subIdx]?.phrases?.filter(Boolean) || [];
-            return {
-              ...prev,
-              phraseIdx: Math.min(phrases.length - 1, prev.phraseIdx + 1),
-            };
-          }
-        });
-        return;
+      setPathNav({ groupIdx: idx, phraseIdx: 0 });
+      return;
+    }
+
+    if (!pathNav) return;
+
+    // Escape — закрыть
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setPathNav(null);
+      return;
+    }
+
+    // Стрелки вниз/вверх по фразам
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setPathNav(prev => {
+        if (!prev) return prev;
+        const phrases = (groups[prev.groupIdx]?.phrases || []).filter(Boolean);
+        return {
+          ...prev,
+          phraseIdx: Math.min(phrases.length - 1, prev.phraseIdx + 1),
+        };
+      });
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setPathNav(prev => {
+        if (!prev) return prev;
+        return { ...prev, phraseIdx: Math.max(0, prev.phraseIdx - 1) };
+      });
+      return;
+    }
+
+    // Enter — вставить фразу
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const phrases = (groups[pathNav.groupIdx]?.phrases || []).filter(Boolean);
+      if (phrases[pathNav.phraseIdx]) {
+        insertPhrase(phrases[pathNav.phraseIdx]);
+        // меню остаётся открытым
       }
+      return;
+    }
+  };
 
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setPathNav(prev => {
-          if (!prev) return prev;
-          if (prev.level === 'sub') {
-            return { ...prev, subIdx: Math.max(0, prev.subIdx - 1) };
-          } else {
-            return { ...prev, phraseIdx: Math.max(0, prev.phraseIdx - 1) };
-          }
-        });
-        return;
-      }
-
-      // → или Enter на уровне подгрупп
-      if (e.key === 'ArrowRight' || (e.key === 'Enter' && pathNav.level === 'sub')) {
-        e.preventDefault();
-        const group = groups[pathNav.groupIdx];
-        const sub = group?.subgroups?.[pathNav.subIdx];
-        const phrases = sub?.phrases?.filter(Boolean) || [];
-        if (phrases.length === 0) return;
-
-        if (phrases.length === 1) {
-          insertPhrase(phrases[0]);
-          setPathNav(null);
-        } else {
-          setPathNav(prev => (prev ? { ...prev, level: 'phrase', phraseIdx: 0 } : null));
-        }
-        return;
-      }
-
-      // ← — вернуться с уровня фраз
-      if (e.key === 'ArrowLeft' && pathNav.level === 'phrase') {
-        e.preventDefault();
-        setPathNav(prev => (prev ? { ...prev, level: 'sub' } : null));
-        return;
-      }
-
-            // Enter на уровне фраз — вставить
-      if (e.key === 'Enter' && pathNav.level === 'phrase') {
-        e.preventDefault();
-        const phrases =
-          groups[pathNav.groupIdx]?.subgroups?.[pathNav.subIdx]?.phrases?.filter(Boolean) || [];
-        if (phrases[pathNav.phraseIdx]) {
-          insertPhrase(phrases[pathNav.phraseIdx]);
-          // меню остаётся открытым
-        }
-        return;
-      }
-    };
-
-    window.addEventListener('keydown', handlePathologyKeyDown);
-    return () => window.removeEventListener('keydown', handlePathologyKeyDown);
-  }, [
-    activeFieldId,
-    template,
-    pathNav,
-    variantSelector,
-    showComparisonModal,
-    showStateAfterModal,
-    showAbbrModal,
-    showSaveModal,
-    deleteConfirm,
-  ]);
+  window.addEventListener('keydown', handlePathologyKeyDown);
+  return () => window.removeEventListener('keydown', handlePathologyKeyDown);
+}, [
+  activeFieldId,
+  template,
+  pathNav,
+  variantSelector,
+  showComparisonModal,
+  showStateAfterModal,
+  showAbbrModal,
+  showSaveModal,
+  deleteConfirm,
+]);
 
         if (loading) return (
     <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
@@ -1601,7 +1778,9 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
     </div>
   );
 
-    const visibleFields = template.fields.filter((f: BuilderField) => !deletedFieldIds.includes(f.id));
+    const visibleFields = template.fields.filter(
+  (f: BuilderField) => !deletedFieldIds.includes(f.id) && f.type !== 'notes'
+);
 
     // Карта: какое поле принадлежит какому заголовку (для сворачивания)
 const sectionHeaderMap = new Map<string, string | null>();
@@ -1616,6 +1795,8 @@ for (const f of visibleFields) {
 }
 
   const activeField = template?.fields?.find((f: BuilderField) => f.id === activeFieldId);
+
+    
 
 
   return (
@@ -1632,7 +1813,7 @@ for (const f of visibleFields) {
                           : 'opacity-0 max-w-0 scale-95 pointer-events-none'
                         }`}
           >
-            Черновик восстановлен
+            Шаблон восстановлен
           </div>
         </UserHeader>
       </div>               
@@ -1667,15 +1848,16 @@ for (const f of visibleFields) {
   {visibleFields.map((f: BuilderField) => {
     const parentHeaderId = f.type !== 'header' ? sectionHeaderMap.get(f.id) : null;
     const isSectionCollapsed = parentHeaderId ? collapsedHeaders.has(parentHeaderId) : false;
+    
 
     return (
       <div
         key={f.id}
         data-field-id={f.id}
-        className={`card transition-all duration-200 ease-out rounded-2xl 
+        className={`card transition-all ${skipSectionTransition ? 'duration-0' : 'duration-200'} ease-out 
             ${f.type === 'header' || f.type === 'notes'
               ? 'bg-transparent border-0 shadow-none' 
-              : 'bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl'
+              : 'bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl'
             }
             ${isSectionCollapsed 
               ? 'grid-rows-[0fr] overflow-hidden border-0 shadow-none bg-transparent py-0 my-0' 
@@ -1696,58 +1878,68 @@ for (const f of visibleFields) {
             relative grid
           `}
           >
-      {/* Кнопки управления — правый верхний угол */}
-     {f.type !== 'header' && f.type !== 'notes' && ( 
-      <div className="absolute top-4 right-4 flex gap-0 z-60">
-        {/* Сначала кнопка ДОБАВИТЬ */}
-        <button
-          onClick={() => addTextFieldAfter(f.id)}
-          tabIndex={-1}
-          className="btn btn-ghost btn-square w-6 h-6 text-white hover:text-amber-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Добавить поле">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-            </svg>
-        </button>
-
-        {/* Потом кнопка УДАЛИТЬ */}
-        <button
-          onClick={() => removeField(f.id)}
-          tabIndex={-1}
-          className="btn btn-ghost btn-square w-6 h-6 text-white hover:text-red-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Удалить">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-          </svg>
-        </button>
-      </div>
-     )}
+      
 
      {/* === Анимируемая обёртка (вставь сюда) === */}
      <div className="overflow-hidden transition-all duration-200 ease-out">
 
-      <div className="card-body p-5 pt-12">   {/* pt-12 — отступ сверху под кнопки */}
+      <div className={`card-body ${
+  f.type === 'header'
+    ? 'px-1 py-0'
+    : 'px-4 pt-3 pb-3'
+}`}>
 
 
 
         {/* Название поля */}
 {/* === РЕДАКТИРУЕМЫЙ ЗАГОЛОВОК ДЛЯ ВСЕХ ПОЛЕЙ === */}
-        {f.type !== 'header' && f.type !== 'notes' && f.type !== 'checkbox' && f.type !== 'comparison' && (
-          <input
-            type="text"
-            tabIndex={-1}
-            value={f.label || ''}
-            onChange={(e) => updateFieldLabel(f.id, e.target.value)}
-            onFocus={() => handleFocus(f.id, null)}
-            onBlur={handleBlur}
-            placeholder="Название поля"
-            className="w-full text-center bg-transparent px-0 py-1 mb-3 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-all"
-          />
+                {f.type !== 'header' && f.type !== 'checkbox' && (
+          <div className="flex items-center gap-1 mb-1">
+    <div className="flex-1 flex justify-center min-w-0">
+      <input
+        type="text"
+        tabIndex={-1}
+        value={f.label || ''}
+        onChange={(e) => updateFieldLabel(f.id, e.target.value)}
+        onFocus={() => handleFocus(f.id, null)}
+        onBlur={handleBlur}
+        placeholder="Название поля"
+        style={{
+          width: `${Math.max((f.label || 'Название поля').length + 2, 10)}ch`,
+        }}
+        className="max-w-full text-center bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-all"
+      />
+    </div>
+    <div className="flex shrink-0">
+              <button
+                onClick={() => addTextFieldAfter(f.id)}
+                tabIndex={-1}
+                className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-amber-400 hover:bg-transparent border-0 shadow-none p-0"
+                title="Добавить поле"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                </svg>
+              </button>
+              <button
+                onClick={() => removeField(f.id)}
+                tabIndex={-1}
+                className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-red-400 hover:bg-transparent border-0 shadow-none p-0"
+                title="Удалить"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                </svg>
+              </button>
+            </div>
+          </div>
         )}
 
       {/* === HEADER — Большой заголовок раздела (с кнопкой сворачивания) === */}
 {f.type === 'header' && (
   <div 
-    className="py-1 flex items-center justify-between cursor-pointer group"
-    onClick={() => toggleSection(f.id)}
+    className="py-0.5 flex items-center justify-between cursor-pointer group"
+    onClick={() => openOnlySection(f.id)}
   >
     <h2 className="text-2xl font-bold text-white tracking-tight flex-1 text-center group-hover:text-amber-400 transition-colors">
       {f.label}
@@ -1755,7 +1947,7 @@ for (const f of visibleFields) {
     <button
       onClick={(e) => {
         e.stopPropagation();
-        toggleSection(f.id);
+        openOnlySection(f.id);
       }}
       tabIndex={-1}
       className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all"
@@ -1771,16 +1963,16 @@ for (const f of visibleFields) {
         {/* Все поля остаются без изменений */}
         {f.type === 'text' && (
           <textarea
-            ref={el => { if (el) inputRefs.current[f.id] = el; }}
-            value={fieldsData[f.id] || ''}
-            onChange={e => { handleInputChange(f.id, e.target.value); autoResize(e.target); }}
-            onKeyDown={e => handleKeyDown(e, f.id)}
-            onFocus={(e) => handleFocus(f.id, e.target)}
-            onBlur={handleBlur}
-            className="w-full bg-transparent border-0 border-b-2 border-zinc-600 px-0 py-0 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
-            placeholder={f.placeholder || 'Введите значение'}
-            style={{ minHeight: '30px' }}
-          />
+  ref={el => { if (el) inputRefs.current[f.id] = el; }}
+  value={fieldsData[f.id] || ''}
+  onChange={e => { handleInputChange(f.id, e.target.value); autoResize(e.target); }}
+  onKeyDown={e => handleKeyDown(e, f.id)}
+  onFocus={(e) => handleFocus(f.id, e.target)}
+  onBlur={handleBlur}
+  rows={1}
+  className="w-full bg-transparent border-0 border-b-2 border-zinc-600 px-1 py-0.5 leading-tight text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
+  placeholder={f.placeholder || 'Введите значение'}
+/>
         )}
 
         {f.type === 'number' && (
@@ -1791,38 +1983,54 @@ for (const f of visibleFields) {
             onChange={e => handleInputChange(f.id, e.target.value)}
             onFocus={(e) => handleFocus(f.id, e.target)}
             onBlur={handleBlur}
-            className="w-20 text-center bg-transparent border-0 border-b-2 border-zinc-600 px-0 py-2 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
+            className="w-20 text-center bg-transparent border-0 border-b-2 border-zinc-600 px-1 py-0.5 mb-1 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
             placeholder={f.placeholder || '0.00'}
           />
         )}
 
                 {f.type === 'checkbox' && (
-                <label 
-                  className="flex items-center gap-3 cursor-pointer text-sm group mb-6"
-                  onClick={() => handleFocus(f.id, null)}
-                >
-                  <input
-                    ref={el => { if (el) inputRefs.current[f.id] = el; }}
-                    type="checkbox"
-                    checked={!!fieldsData[f.id]}
-                    onChange={e => updateField(f.id, e.target.checked)}
-                    onFocus={() => handleFocus(f.id, null)}
-                    onBlur={handleBlur}
-                    className="w-5 h-5 accent-amber-400 border-2 border-white/40 bg-transparent rounded 
-                              focus:ring-2 focus:ring-amber-400/30 focus:outline-none transition-all cursor-pointer"
-                  />
-                  
-                  <span 
-                      className={`transition-colors ${
-                        fieldsData[f.id] 
-                          ? 'text-amber-400' 
-                          : 'text-white group-hover:text-amber-400'
-                      }`}
-                    >
-                      {f.label}
-                    </span>
-                </label>
-              )}
+  <div className="flex items-center gap-1">
+    <label
+      className="flex flex-1 items-center gap-3 cursor-pointer text-sm group min-w-0"
+      onClick={() => handleFocus(f.id, null)}
+    >
+      <input
+        ref={el => { if (el) inputRefs.current[f.id] = el; }}
+        type="checkbox"
+        checked={!!fieldsData[f.id]}
+        onChange={e => updateField(f.id, e.target.checked)}
+        onFocus={() => handleFocus(f.id, null)}
+        onBlur={handleBlur}
+        className="w-5 h-5 accent-amber-400 border-2 border-white/40 bg-transparent rounded focus:ring-2 focus:ring-amber-400/30 focus:outline-none transition-all cursor-pointer"
+      />
+      <span className={`transition-colors ${fieldsData[f.id] ? 'text-amber-400' : 'text-white group-hover:text-amber-400'}`}>
+        {f.label}
+      </span>
+    </label>
+    <div className="flex shrink-0">
+      <button
+        onClick={() => addTextFieldAfter(f.id)}
+        tabIndex={-1}
+        className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-amber-400 hover:bg-transparent border-0 shadow-none p-0"
+        title="Добавить поле"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+        </svg>
+      </button>
+      <button
+        onClick={() => removeField(f.id)}
+        tabIndex={-1}
+        className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-red-400 hover:bg-transparent border-0 shadow-none p-0"
+        title="Удалить"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+        </svg>
+      </button>
+    </div>
+  </div>
+)}
 
                 {f.type === 'select' && (
                   <select
@@ -1831,7 +2039,7 @@ for (const f of visibleFields) {
                     onChange={e => updateField(f.id, e.target.value)}
                     onFocus={() => handleFocus(f.id, null)}
                     onBlur={handleBlur}
-                    className="w-full bg-zinc-800 border border-zinc-600 rounded-none px-5 py-3 outline-none text-sm cursor-pointer"
+                    className="w-full bg-zinc-800 border border-zinc-600 rounded-none px-5 py-1.5 mb-1 outline-none text-sm cursor-pointer"
                   >
                     <option value="">Выберите вариант...</option>
                     {f.options?.map((opt: string, i: number) => <option key={i} value={opt}>{opt}</option>)}
@@ -1840,145 +2048,43 @@ for (const f of visibleFields) {
 
                 {f.type === 'rating' && <RatingField field={f} value={fieldsData[f.id] || 0} onChange={(val) => updateField(f.id, val)} onFocus={handleFocus}/>} 
               </div>
-                {f.type === 'notes' && f.notes && (
-  <div>
-    {f.notes.split('\n').filter(Boolean).map((line, i) => {
-      const match = line.match(/\[(.*?)\]\((.*?)\)/);
-      if (match) {
-        const [, text, url] = match;
-        return (
-          <div key={i} className="px-5 py-1">
-            <a 
-              href={url} 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="block text-white hover:text-amber-400 underline text-sm transition-all"
-            >
-              {text}
-            </a>
-          </div>
-        );
-      }
-      return (
-        <div key={i} className="px-5 py-1 text-zinc-300 text-sm">
-          {line}
-        </div>
-      );
-    })}
-  </div>
-)}
+                
 
 
                 {f.type === 'formula' && (
-                    <div className="px-6 pt-2 pb-6 space-y-4">
-                      
-                      {/* Переменные */}
-                      <div className="space-y-5">
-                        {(f.variables || []).map((v: any, i: number) => (
-                          <div key={i} className="flex items-center gap-4">
-                            <span className="w-12 text-zinc-400 text-sm flex-shrink-0">{v.name}</span>
-                            <span className="text-zinc-400">=</span>
-                            <input
-                              ref={el => { if (el) inputRefs.current[`${f.id}_var_${i}`] = el; }}
-                              type="text"
-                              value={fieldsData[`${f.id}_var_${i}`] || ''}
-                              onChange={e => updateField(`${f.id}_var_${i}`, e.target.value)}
-                              onFocus={() => handleFocus(f.id, null)}
-                              onBlur={handleBlur}
-                              className="w-20 text-center bg-transparent border-0 border-b-2 border-white/20 px-0 py-2 text-white text-sm 
-                       hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
-                              placeholder="0.00"
-                            />
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Результат */}
-                      <div className="pt-6 border-t border-white/10 flex items-baseline gap-3">
-                        <span className="text-zinc-400 text-sm">Результат</span>
-                        <span className="text-sm text-white">
-                          {fieldsData[f.id] || '—'}
-                        </span>
-                        {f.unit && <span className="text-zinc-400 text-sm">{f.unit}</span>}
-                      </div>
-                    </div>
-                  )}
-
-                {f.type === 'comparison' && (
-  <div className="px-6 pt-1 pb-6 space-y-6">
-
-    <input
-      ref={el => { if (el) inputRefs.current[`${f.id}_header`] = el; }}
-      type="text"
-      value={fieldsData[`${f.id}_header`] || f.label || ''}
-      onChange={e => updateField(`${f.id}_header`, e.target.value)}
-      onFocus={() => handleFocus(`${f.id}_header`, null)}
-      onBlur={handleBlur}
-      className="w-full text-sm bg-transparent border-0 border-b-2 border-white/20 px-0 py-3 text-white text-center text-base hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
-      placeholder="Введите значение"
-    />
-
-    <div className="space-y-3">
-      {(f.items || []).map((item) => (
-        <div key={item.id} className="flex items-center gap-4">
-          <span className="font-medium text-zinc-400 w-6 text-sm">{item.number}.</span>
-
+  <div className="px-3 pt-0 pb-1 space-y-2">
+    {/* Переменные */}
+    <div className="space-y-1">
+      {(f.variables || []).map((v: any, i: number) => (
+        <div key={i} className="flex items-center gap-3">
+          <span className="w-8 text-zinc-400 text-sm flex-shrink-0">{v.name}</span>
+          <span className="text-zinc-400">=</span>
           <input
+            ref={el => { if (el) inputRefs.current[`${f.id}_var_${i}`] = el; }}
             type="text"
-            value={fieldsData[`${f.id}_val_${item.id}`] || item.value || ''}
-            onChange={e => updateField(`${f.id}_val_${item.id}`, e.target.value)}
-            onFocus={() => handleFocus(`${f.id}_val_${item.id}`, null)}
+            value={fieldsData[`${f.id}_var_${i}`] || ''}
+            onChange={e => updateField(`${f.id}_var_${i}`, e.target.value)}
+            onFocus={() => handleFocus(f.id, null)}
             onBlur={handleBlur}
-            className="w-full text-sm bg-transparent border-0 border-b-2 border-white/20 px-0 py-2 text-white hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
-            placeholder="Текущее значение"
+            className="w-20 text-center bg-transparent border-0 border-b-2 border-zinc-600 px-0 py-0.5 leading-tight text-white text-sm placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
+            placeholder="0.00"
           />
-
-          <span className="text-zinc-400 text-sm whitespace-nowrap">ранее</span>
-
-          <input
-            type="text"
-            value={fieldsData[`${f.id}_prev_${item.id}`] || item.previous || ''}
-            onChange={e => updateField(`${f.id}_prev_${item.id}`, e.target.value)}
-            onFocus={() => handleFocus(`${f.id}_prev_${item.id}`, null)}
-            onBlur={handleBlur}
-            className="w-full text-sm bg-transparent border-0 border-b-2 border-white/20 px-0 py-2 text-white hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
-            placeholder="Предыдущее значение"
-          />
-
-          <button
-            onClick={() => {
-              const currentItems = f.items || [];
-              const newItems = currentItems.filter((i) => i.id !== item.id);
-              const newFields = (template.fields as BuilderField[]).map((field) =>
-                field.id === f.id ? { ...field, items: newItems } : field
-              );
-              setTemplate({ ...template, fields: newFields });
-            }}
-            tabIndex={-1}
-            className="text-white hover:text-red-400 transition-colors cursor-pointer"
-          >
-            <Trash2 size={18} />
-          </button>
         </div>
       ))}
     </div>
 
-    <button
-      onClick={() => {
-        const currentItems = f.items || [];
-        const maxNumber = Math.max(...currentItems.map((i) => i.number || 0), 0);
-        const newItem = { id: Date.now().toString(), number: maxNumber + 1, value: '', previous: '' };
-        const newFields = template.fields.map((field: BuilderField) =>
-          field.id === f.id ? { ...field, items: [...currentItems, newItem] } : field
-        );
-        setTemplate({ ...template, fields: newFields });
-      }}
-      className=" mx-auto block w-fit py-3.5 px-8 ghost btn py-3.6 bg-transparent hover:bg-transparent border border-transparent hover:text-amber-400 rounded-2xl focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none text-white text-sm font-medium transition-all"
-    >
-      Добавить
-    </button>
+    {/* Результат */}
+    <div className="pt-2 border-t border-white/10 flex items-baseline gap-3">
+      <span className="text-zinc-400 text-sm">Результат</span>
+      <span className="text-sm text-white">
+        {fieldsData[f.id] || '—'}
+      </span>
+      {f.unit && <span className="text-zinc-400 text-sm">{f.unit}</span>}
     </div>
+  </div>
 )}
+
+                
               </div>   
 
     </div>     
@@ -2000,19 +2106,32 @@ for (const f of visibleFields) {
   {/* Градиентная защита от наложения */}
   <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-zinc-900/95 via-zinc-900 to-transparent z-10 pointer-events-none" />
   
+    {/* Заметки — левый верхний угол */}
+  {notesLinks.length > 0 && (
+    <div className="absolute top-4 left-4 z-10">
+      <button
+        onClick={() => setShowNotesModal(true)}
+        className="btn btn-ghost btn-square btn-sm text-white hover:text-amber-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 shadow-none transition-all tooltip tooltip-right"
+        data-tip="Заметки"
+      >
+        <Paperclip size={18} />
+      </button>
+    </div>
+  )}
+  
+  
   {/* Кнопки Сравнение и Состояние в правом верхнем углу */}
   <div className="absolute top-4 right-4 flex gap-2 z-10">
     <button
       onClick={() => {
         if (isComparisonActive) {
-          setIsComparisonActive(false);
-          setComparisonDates([]);
-          setIsMultipleComparison(false);
-        } else {
-          if (comparisonDates.length === 0) setComparisonDates(['']);
-          if (comparisonDates.length > 1) setIsMultipleComparison(true);
-          setShowComparisonModal(true);
-        }
+  setIsComparisonActive(false);
+  // даты и режим не очищаем — остаются в памяти
+} else {
+  if (comparisonDates.length === 0) setComparisonDates(['']);
+  if (comparisonDates.length > 1) setIsMultipleComparison(true);
+  setShowComparisonModal(true);
+}
       }}
       className={`px-4 py-1.5 text-xs font-medium rounded-2xl border transition-all cursor-pointer
         ${isComparisonActive 
@@ -2026,12 +2145,12 @@ for (const f of visibleFields) {
     <button
       onClick={() => {
         if (isStateAfterActive) {
-          setIsStateAfterActive(false);
-          setStateAfterText('');
-        } else {
-          setStateAfterSearch('');
-          setShowStateAfterModal(true);
-        }
+  setIsStateAfterActive(false);
+  // текст не очищаем
+} else {
+  setStateAfterSearch('');
+  setShowStateAfterModal(true);
+}
       }}
       className={`px-4 py-1.5 text-xs font-medium rounded-2xl border transition-all cursor-pointer
         ${isStateAfterActive 
@@ -2054,37 +2173,32 @@ for (const f of visibleFields) {
                   {/* Кнопки патологий */}
 {activeFieldId && activeField?.quickButtons && activeField.quickButtons.length > 0 && (
   <div className="sticky bottom-0 bg-zinc-950/80 backdrop-blur-xl border-t border-white/10 pt-4 pb-2 z-30">
-        <div
+    <div
       className="flex flex-wrap gap-2"
       onMouseDown={(e) => e.preventDefault()}
       onMouseEnter={() => setPathNav(null)}
     >
       {(activeField.quickButtons || []).map((group: QuickButtonGroup, gIdx: number) => {
-        const subgroups = group.subgroups || [];
-        const isSingleSubgroupAndSinglePhrase =
-          subgroups.length === 1 && (subgroups[0].phrases?.filter(Boolean).length || 0) === 1;
-        const singlePhrase = isSingleSubgroupAndSinglePhrase
-          ? subgroups[0].phrases.filter(Boolean)[0]
-          : '';
+        const phrases = (group.phrases || []).filter(Boolean);
+        const isSinglePhrase = phrases.length === 1;
+        const singlePhrase = isSinglePhrase ? phrases[0] : '';
 
         const isNavOpen = pathNav?.groupIdx === gIdx;
-        const isSubLevel = isNavOpen && pathNav?.level === 'sub';
-        const isPhraseLevel = isNavOpen && pathNav?.level === 'phrase';
 
         return (
           <div
             key={group.id}
             className={`dropdown dropdown-hover ${isNavOpen ? 'dropdown-open' : ''}`}
           >
-            {/* 1-й уровень — группа */}
-                        <div
+            {/* Кнопка группы */}
+            <div
               tabIndex={0}
               role="button"
               className={`btn btn-ghost btn-sm px-6 py-2.5 text-sm text-white border border-transparent hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all ${
                 isNavOpen ? 'text-amber-400 border-amber-400/40' : ''
               }`}
               onClick={() => {
-                if (isSingleSubgroupAndSinglePhrase && singlePhrase) insertPhrase(singlePhrase);
+                if (isSinglePhrase && singlePhrase) insertPhrase(singlePhrase);
               }}
             >
               {gIdx < 9 && (
@@ -2093,83 +2207,31 @@ for (const f of visibleFields) {
                 </span>
               )}
               {group.label || 'Группа'}
-              {!isSingleSubgroupAndSinglePhrase && <ChevronDown size={12} className="ml-1" />}
+              {!isSinglePhrase && <ChevronDown size={12} className="ml-1" />}
             </div>
 
-            {/* Меню 2-го уровня */}
-            {!isSingleSubgroupAndSinglePhrase && (
+            {/* Список фраз (2-й уровень) */}
+            {!isSinglePhrase && (
               <ul
                 tabIndex={0}
-                className="dropdown-content menu bg-zinc-900/90 backdrop-blur-md border border-zinc-700 rounded-box z-1 w-52 p-2"
+                className="dropdown-content menu bg-zinc-900/90 backdrop-blur-md border border-zinc-700 rounded-box z-[10000] min-w-[340px] p-1"
               >
-                {subgroups.map((subgroup: QuickButtonSubgroup, sIdx: number) => {
-                  const phrases = subgroup.phrases?.filter(Boolean) || [];
-                  const isSinglePhraseInSubgroup = phrases.length === 1;
-                  const isThisSubSelected = isSubLevel && pathNav?.subIdx === sIdx;
-                  const isThisPhraseOpen = isPhraseLevel && pathNav?.subIdx === sIdx;
-
-                  return (
-                    <li
-                      key={subgroup.id}
-                      className={`group rounded-lg hover:bg-zinc-800 transition-all ${
-  isThisSubSelected ? 'bg-zinc-800' : ''
-}`}
-                    >
-                      <div
-                        className={`dropdown dropdown-left dropdown-hover w-full ${
-                          isThisPhraseOpen ? 'dropdown-open' : ''
+                <div className="max-h-[280px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
+                  {phrases.map((phrase: string, pIdx: number) => (
+                    <li key={pIdx}>
+                      <button
+                        data-path-group={gIdx}
+                        data-path-phrase={pIdx}
+                        onClick={() => insertPhrase(phrase)}
+                        className={`w-full text-left justify-start hover:bg-zinc-800 text-white text-xs py-3 px-5 rounded-lg transition-colors ${
+                          isNavOpen && pathNav?.phraseIdx === pIdx ? 'bg-zinc-800' : ''
                         }`}
                       >
-                        <button
-                          onClick={
-                            isSinglePhraseInSubgroup
-                              ? () => insertPhrase(phrases[0])
-                              : undefined
-                          }
-                          tabIndex={0}
-                          className="w-full text-left justify-start text-white text-xs py-1 px-3 rounded-lg flex items-center 
-                                     hover:bg-transparent group-hover:bg-transparent transition-colors cursor-pointer"
-                        >
-                          {subgroup.label || 'Подгруппа'}
-                          {!isSinglePhraseInSubgroup && (
-                            <ChevronRight size={14} className="ml-auto" />
-                          )}
-                          {isSinglePhraseInSubgroup && (
-                            <span className="ml-auto w-4 flex-shrink-0" />
-                          )}
-                        </button>
-
-                        {/* Третий уровень */}
-                        {!isSinglePhraseInSubgroup && (
-                          <ul
-                            tabIndex={0}
-                            className="dropdown-content menu bg-zinc-900 bg-zinc-900/90 backdrop-blur-2xl border border-zinc-700 rounded-xl shadow-xl min-w-[340px] z-[10000] p-1 duration-70 delay-0"
-                          >
-                            <div className="max-h-[280px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
-                              {phrases.map((phrase: string, pIdx: number) => (
-                                <li key={pIdx}>
-                                  <button
-      data-path-group={gIdx}
-      data-path-sub={sIdx}
-      data-path-phrase={pIdx}
-      onClick={() => insertPhrase(phrase)}
-      className={`w-full text-left justify-start hover:bg-zinc-800 text-white text-xs py-3 px-5 rounded-lg transition-colors ${
-        isThisPhraseOpen && pathNav?.phraseIdx === pIdx
-          ? 'bg-zinc-800'
-          : ''
-      }`}
-    >
-      {phrase}
-    </button>
-                                </li>
-                              ))}
-                            </div>
-                          </ul>
-                        )}
-                      </div>
+                        {phrase}
+                      </button>
                     </li>
-                  );
-                })}
+                  ))}
+                </div>
               </ul>
             )}
           </div>
@@ -2189,16 +2251,52 @@ for (const f of visibleFields) {
                 >
                   <ChevronsDownUp size={22} />
                 </button>
-            <button onClick={copyToClipboard} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Скопировать" ><Copy size={22} /></button>
-            <button onClick={resetToDefault} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Сбросить протокол" ><RotateCcw size={22} /></button>
+            <button onClick={copyToClipboard} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Скопировать (Ctrl+Shift+C)" ><Copy size={22} /></button>
+            <button onClick={resetToDefault} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Сбросить протокол (Ctrl+Shift+R)" ><RotateCcw size={22} /></button>
             <button onClick={downloadTxt} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Сохранить" ><Download size={22}/></button>
-            <button onClick={goToTemplateList} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="К списку шаблонов" ><Home size={22} /></button>
+            <button onClick={goToTemplateList} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="К списку шаблонов (Ctrl+Shift+H)" ><Home size={22} /></button>
             <button onClick={() => setShowAbbrModal(true)} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Автокоррекции" ><Settings size={22} /></button>    
           </div>
         </div>
       </div>
 
       {/* МОДАЛКИ (полностью без изменений) */}
+
+                        {showNotesModal && (
+        <dialog
+          className="modal modal-open"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setShowNotesModal(false);
+          }}
+        >
+          <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4">
+            <div className="px-6 pt-5 pb-3 border-b border-white/10">
+              <h2 className="text-xl font-semibold text-white">Заметки</h2>
+            </div>
+
+            <div className="px-6 py-4 max-h-[60vh] overflow-y-auto space-y-1">
+              {notesLinks.map((link, i) => (
+                <a
+                  key={i}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-sm text-white hover:text-amber-400 underline underline-offset-2 transition-all"
+                >
+                  {link.text}
+                </a>
+              ))}
+            </div>
+          </div>
+
+          <form method="dialog" className="modal-backdrop">
+            <button onClick={() => setShowNotesModal(false)}>close</button>
+          </form>
+        </dialog>
+      )}
+
+
+
             {showComparisonModal && (
         <dialog 
           className="modal modal-open"
@@ -2326,7 +2424,30 @@ for (const f of visibleFields) {
       )}
 
                   {showStateAfterModal && (
-        <dialog className="modal modal-open">
+        <dialog
+    className="modal modal-open"
+    onKeyDown={(e) => {
+      if (e.key === 'Escape') {
+        setShowStateAfterModal(false);
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        // не перехватываем Enter внутри textarea без модификатора — см. onKeyDown у textarea
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === 'TEXTAREA') return;
+
+        e.preventDefault();
+        let text = stateAfterText.trim();
+        if (!text) return;
+        if (!text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
+          text += '.';
+        }
+        setStateAfterText(text);
+        setIsStateAfterActive(true);
+        setShowStateAfterModal(false);
+      }
+    }}
+  >
           <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-lg mx-4 max-h-[90vh]">
             <div className="px-6 pt-5 pb-3 border-b border-white/10">
               <h2 className="text-xl font-semibold text-white">Состояние после</h2>
@@ -2337,12 +2458,25 @@ for (const f of visibleFields) {
               <div>
                 
                 <textarea
-                  value={stateAfterText}
-                  onChange={e => setStateAfterText(e.target.value)}
-                  placeholder="Введите значение или выберите фразу"
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all resize-none ]"
-                  rows={3}
-                />
+  value={stateAfterText}
+  onChange={e => setStateAfterText(e.target.value)}
+  onKeyDown={(e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      let text = stateAfterText.trim();
+      if (!text) return;
+      if (!text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
+        text += '.';
+      }
+      setStateAfterText(text);
+      setIsStateAfterActive(true);
+      setShowStateAfterModal(false);
+    }
+  }}
+  placeholder="Введите значение или выберите фразу"
+  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all resize-none"
+  rows={3}
+/>
               </div>
 
               {/* Отдельный поиск */}
@@ -2436,38 +2570,37 @@ for (const f of visibleFields) {
       )}
 
       {showAbbrModal && (
-                    <dialog className="modal modal-open">
+                    <dialog
+    className="modal modal-open"
+    onKeyDown={(e) => {
+      if (e.key === 'Escape') setShowAbbrModal(false);
+    }}
+  >
           <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl w-full max-w-5xl h-[620px] flex flex-col overflow-hidden">
           
 
       {/* Шапка модалки — кнопки в правом верхнем углу */}
       <div className="px-6 pt-5 pb-3 border-b border-white/10 relative">
-        <h2 className="text-xl font-semibold text-white">Автокоррекции</h2>
+  <h2 className="text-xl font-semibold text-white">Автокоррекции</h2>
 
-        
-        {/* Кнопки в правом верхнем углу (как в карточках) */}
-        <div className="absolute top-5 right-6 flex items-center gap-1">
-          <button 
-            onClick={exportAbbreviations} 
-            className="btn btn-ghost btn-square w-9 h-9 text-white hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip tooltip-bottom"
-          data-tip="Экспортировать">
-            <ArrowDownOnSquareIcon className="size-5" />
-          </button>
-          
-          <label className="btn btn-ghost btn-square w-9 h-9 text-white hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip tooltip-bottom"
-            data-tip="Импортировать">
-            <ArrowUpOnSquareIcon className="size-5" />
-            <input type="file" accept=".json" onChange={importAbbreviations} className="hidden" />
-          </label>
-          
-          <button 
-            onClick={() => setShowAbbrModal(false)} 
-            className="btn btn-ghost btn-square w-9 h-9 text-white hover:border-transparent hover:bg-transparent hover:text-red-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip tooltip-bottom"
-          data-tip="Закрыть">
-            <XCircle size={20} />
-          </button>
-        </div>
-      </div>
+  <div className="absolute top-5 right-4 flex items-center gap-1">
+    <button
+      onClick={exportAbbreviations}
+      className="btn btn-ghost btn-square w-9 h-9 text-white hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 shadow-none transition-all tooltip tooltip-bottom"
+      data-tip="Экспортировать"
+    >
+      <ArrowDownOnSquareIcon className="size-5" />
+    </button>
+
+    <label
+      className="btn btn-ghost btn-square w-9 h-9 text-white hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 shadow-none transition-all tooltip tooltip-bottom"
+      data-tip="Импортировать"
+    >
+      <ArrowUpOnSquareIcon className="size-5" />
+      <input type="file" accept=".json" onChange={importAbbreviations} className="hidden" />
+    </label>
+  </div>
+</div>
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
         

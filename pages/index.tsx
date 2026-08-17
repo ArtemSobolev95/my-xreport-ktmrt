@@ -182,14 +182,14 @@ function HomePage() {
   }, [selectedIndex]);
 
     if (loading) return (
-    <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
-      <div className="text-2xl">Проверка доступа...</div>
-    </div>
-  );
+  <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+    <div className="w-10 h-10 rounded-full border-2 border-white/15 border-t-amber-400 animate-spin" />
+  </div>
+);
 
 
                 return (
-      <div className="min-h-screen bg-zinc-950 text-white">
+      <div className="min-h-screen bg-zinc-950 text-white select-none selection:bg-amber-400/30 selection:text-white">
 
         
         <div className="sticky top-0 z-50 bg-zinc-900/90 backdrop-blur-xl border-b border-white/10">
@@ -200,24 +200,25 @@ function HomePage() {
         <div className="max-w-6xl mx-auto pt-8 px-4 pb-32">
 
           
-          <div className="flex items-center gap-4 mb-8">
-            <div className="relative w-96">
-              <input
-                type="text"
-                placeholder="Поиск"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-14 bg-zinc-900/75 border border-white/10 focus:border-amber-400 rounded-3xl px-6 text-white placeholder:text-zinc-400 outline-none transition-all"
-              />
-            </div>
+          <div className="relative flex items-center justify-center mb-8 min-h-10">
+  {/* Текст поиска по центру */}
+  {searchTerm ? (
+    <div className="text-white text-base font-medium tracking-tight text-center select-text">
+      {searchTerm}
+      <span className="inline-block w-[2px] h-4 bg-amber-400 ml-1 animate-pulse align-middle" />
+    </div>
+  ) : (
+    <div className="h-4" />
+  )}
 
-            <Link
-              href="/builder"
-              className="flex items-center gap-2 h-4 px-0 bg-transparent hover:text-amber-400 text-white rounded-3xl font-medium transition-all group tooltip tooltip-top" data-tip="Добавить шаблон"
-            >
-              <PlusIcon className="w-5 h-5 text-white group-hover:text-amber-400 transition-colors" />
-            </Link>
-          </div>
+  {/* Кнопка справа */}
+  <Link
+    href="/builder"
+    className="absolute right-0 top-1/2 -translate-y-1/2 text-sm text-white hover:text-amber-400 transition-colors"
+  >
+    Добавить новый шаблон
+  </Link>
+</div>
 
           {/* === ВСЁ ОСТАЛЬНОЕ ОСТАЁТСЯ БЕЗ ИЗМЕНЕНИЙ === */}
           {filteredTemplates.length === 0 ? (

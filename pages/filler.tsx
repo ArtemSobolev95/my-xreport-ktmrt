@@ -1767,10 +1767,10 @@ useEffect(() => {
 ]);
 
         if (loading) return (
-    <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
-      <div className="text-2xl">Проверка доступа...</div>
-    </div>
-  );
+  <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+    <div className="w-10 h-10 rounded-full border-2 border-white/15 border-t-amber-400 animate-spin" />
+  </div>
+);
 
   if (!template) return (
     <div className="min-h-screen bg-zinc-950 text-white p-8 flex items-center justify-center">
@@ -1843,7 +1843,7 @@ for (const f of visibleFields) {
               ))}
             </div>
           )}
-        <h1 className="text-3xl font-bold mb-6 text-center mx-auto max-w-3xl tracking-tight">{template.title}</h1>
+        <h1 className="text-3xl font-bold mb-6 text-center mx-auto max-w-3xl tracking-tight select-none">{template.title}</h1>
                         <div className="space-y-4">
   {visibleFields.map((f: BuilderField) => {
     const parentHeaderId = f.type !== 'header' ? sectionHeaderMap.get(f.id) : null;
@@ -1938,10 +1938,10 @@ for (const f of visibleFields) {
       {/* === HEADER — Большой заголовок раздела (с кнопкой сворачивания) === */}
 {f.type === 'header' && (
   <div 
-    className="py-0.5 flex items-center justify-between cursor-pointer group"
+    className="py-0.5 flex items-center justify-between cursor-pointer group select-none"
     onClick={() => openOnlySection(f.id)}
   >
-    <h2 className="text-2xl font-bold text-white tracking-tight flex-1 text-center group-hover:text-amber-400 transition-colors">
+    <h2 className="text-2xl font-bold text-white tracking-tight flex-1 text-center group-hover:text-amber-400 transition-colors select-none">
       {f.label}
     </h2>
     <button

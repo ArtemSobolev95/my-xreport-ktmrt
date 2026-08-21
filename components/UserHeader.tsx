@@ -43,12 +43,13 @@ export default function UserHeader({ children }: UserHeaderProps) {
 
         {/* Кнопка выхода */}
         <button
-          onClick={handleLogout}
-          className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white hover:text-red-400 rounded-3xl transition-all active:scale-95 cursor-pointer"
-        >
-          <LogOut size={18} />
-          <span className="hidden sm:inline">Выйти</span>
-        </button>
+  onClick={handleLogout}
+  tabIndex={-1}
+  className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white hover:text-red-400 rounded-3xl transition-all active:scale-95 cursor-pointer focus:outline-none"
+>
+  <LogOut size={18} />
+  <span className="hidden sm:inline">Выйти</span>
+</button>
       </div>
     </div>
   );

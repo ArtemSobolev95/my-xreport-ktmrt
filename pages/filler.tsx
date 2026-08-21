@@ -19,12 +19,14 @@ const RatingField = ({
   field, 
   value, 
   onChange, 
-  onFocus 
+  onFocus,
+  disabled = false,
 }: {
   field: BuilderField;
   value: number;
   onChange: (value: number) => void;
   onFocus: (fieldId: string, el: HTMLElement | null) => void;
+  disabled?: boolean;  
 }) => {
   const handleClick = (score: number) => {
     // Если уже выбрана эта оценка — сбрасываем в 0 (деактивируем)
@@ -46,7 +48,7 @@ const RatingField = ({
           <button
               key={score}
               onClick={() => handleClick(score)}
-              tabIndex={0}
+              tabIndex={disabled ? -1 : 0}
               className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-xl transition-all border cursor-pointer
                 focus:outline-none focus-visible:border-amber-400 focus-visible:ring-2 focus-visible:ring-amber-400/40
                 ${isActive
@@ -299,21 +301,68 @@ const toggleSection = (headerId: string) => {
 
 const toggleAllSections = () => {
   if (!template) return;
+
   const allHeaderIds = (template.fields || [])
     .filter((f: BuilderField) => f.type === 'header' && !deletedFieldIds.includes(f.id))
     .map((f: BuilderField) => f.id);
 
   if (allHeaderIds.length === 0) return;
 
-  const currentlyAllCollapsed = allHeaderIds.every((id: string) => collapsedHeaders.has(id));
-
-  if (currentlyAllCollapsed) {
-    setCollapsedHeaders(new Set());
-  } else {
-    setCollapsedHeaders(new Set(allHeaderIds));
+  // 1) заголовок в фокусе
+  let targetHeaderId: string | null = null;
+  const focused = document.activeElement as HTMLElement | null;
+  const focusedHeaderId = focused?.getAttribute?.('data-header-id');
+  if (focusedHeaderId && allHeaderIds.includes(focusedHeaderId)) {
+    targetHeaderId = focusedHeaderId;
   }
+
+  // 2) иначе — раздел активного поля
+  if (!targetHeaderId && activeFieldRef.current) {
+    let currentHeader: string | null = null;
+    for (const f of template.fields) {
+      if (deletedFieldIds.includes(f.id)) continue;
+      if (f.type === 'header') currentHeader = f.id;
+      else if (f.id === activeFieldRef.current && currentHeader) {
+        targetHeaderId = currentHeader;
+        break;
+      }
+    }
+  }
+
+  // 3) иначе — первый открытый, потом первый в списке
+  if (!targetHeaderId) {
+    targetHeaderId =
+      allHeaderIds.find((id: string) => !collapsedHeaders.has(id)) || allHeaderIds[0];
+  }
+
+  if (!targetHeaderId) return;
+  openOnlySection(targetHeaderId);
 };
 
+
+const focusFieldElement = (fieldId: string) => {
+  // обычные поля
+  let el = inputRefs.current[fieldId] as HTMLElement | undefined;
+
+  // formula — первая переменная
+  if (!el) {
+    el = inputRefs.current[`${fieldId}_var_0`] as HTMLElement | undefined;
+  }
+
+  // rating / fallback — любой focusable внутри карточки
+  if (!el) {
+    el = document.querySelector(
+      `[data-field-id="${fieldId}"] button, [data-field-id="${fieldId}"] input, [data-field-id="${fieldId}"] select, [data-field-id="${fieldId}"] textarea`
+    ) as HTMLElement | null || undefined;
+  }
+
+  if (el) {
+    el.focus();
+  } else {
+    setActiveFieldId(fieldId);
+    activeFieldRef.current = fieldId;
+  }
+};
 
 const openOnlySection = (headerId: string) => {
   if (!template) return;
@@ -324,9 +373,20 @@ const openOnlySection = (headerId: string) => {
 
   const isCurrentlyOpen = !collapsedHeaders.has(headerId);
 
-  // Если раздел уже открыт — просто закрываем
-  if (isCurrentlyOpen) {
+  // Если раздел уже открыт — закрываем и оставляем фокус на заголовке
+    if (isCurrentlyOpen) {
     setCollapsedHeaders(prev => new Set([...prev, headerId]));
+    setActiveFieldId(null);
+    activeFieldRef.current = null;
+    activeInputRef.current = null;
+
+    // чуть позже, чем click/blur поля
+    setTimeout(() => {
+      const el = document.querySelector(
+        `[data-header-id="${headerId}"]`
+      ) as HTMLElement | null;
+      el?.focus();
+    }, 10);
     return;
   }
 
@@ -347,7 +407,7 @@ const openOnlySection = (headerId: string) => {
     }
 
     if (foundHeader) {
-      if (f.type === 'header') break; // следующий раздел
+      if (f.type === 'header') break;
       if (f.type !== 'notes') {
         firstFieldId = f.id;
         break;
@@ -355,15 +415,69 @@ const openOnlySection = (headerId: string) => {
     }
   }
 
-  // Фокус на первое поле → сработает onFocus → автоскролл
-  if (firstFieldId) {
+  // Фокус на первое поле
+    if (firstFieldId) {
     requestAnimationFrame(() => {
-      const el = inputRefs.current[firstFieldId!];
-      if (el) {
-        el.focus();
+      focusFieldElement(firstFieldId!);
+    });
+  }
+};
+
+const handleFieldTabNavigation = (
+  e: React.KeyboardEvent,
+  fieldId: string
+) => {
+  if (e.key !== 'Tab' || !template) return;
+
+  const sections: { headerId: string; fieldIds: string[] }[] = [];
+  let current: { headerId: string; fieldIds: string[] } | null = null;
+
+  for (const f of template.fields) {
+    if (deletedFieldIds.includes(f.id)) continue;
+    if (f.type === 'header') {
+      current = { headerId: f.id, fieldIds: [] };
+      sections.push(current);
+    } else if (current && f.type !== 'notes') {
+      current.fieldIds.push(f.id);
+    }
+  }
+
+  const sectionIndex = sections.findIndex(s => s.fieldIds.includes(fieldId));
+  if (sectionIndex === -1) return;
+
+  const section = sections[sectionIndex];
+  const pos = section.fieldIds.indexOf(fieldId);
+
+  // Tab с последнего поля → следующий раздел
+  if (!e.shiftKey && pos === section.fieldIds.length - 1) {
+    e.preventDefault();
+    const next = sections[sectionIndex + 1];
+    if (!next) return;
+    openOnlySection(next.headerId);
+    return;
+  }
+
+  // Shift+Tab с первого поля → предыдущий раздел, последнее поле
+  if (e.shiftKey && pos === 0) {
+    e.preventDefault();
+    const prev = sections[sectionIndex - 1];
+    if (!prev) return;
+
+    const allHeaderIds = sections.map(s => s.headerId);
+    setSkipSectionTransition(true);
+    setCollapsedHeaders(new Set(allHeaderIds.filter(id => id !== prev.headerId)));
+
+        const lastId = prev.fieldIds[prev.fieldIds.length - 1];
+    requestAnimationFrame(() => {
+      // для formula — последняя переменная, если есть
+      const lastVarKey = Object.keys(inputRefs.current)
+        .filter(k => k.startsWith(`${lastId}_var_`))
+        .sort()
+        .pop();
+      if (lastVarKey && inputRefs.current[lastVarKey]) {
+        inputRefs.current[lastVarKey].focus();
       } else {
-        setActiveFieldId(firstFieldId);
-        activeFieldRef.current = firstFieldId;
+        focusFieldElement(lastId);
       }
     });
   }
@@ -1768,7 +1882,7 @@ useEffect(() => {
 
         if (loading) return (
   <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-    <div className="w-10 h-10 rounded-full border-2 border-white/15 border-t-amber-400 animate-spin" />
+    <div className="w-10 h-10 rounded-full border-4 border-white/15 border-t-amber-400 animate-spin" />
   </div>
 );
 
@@ -1937,11 +2051,49 @@ for (const f of visibleFields) {
 
       {/* === HEADER — Большой заголовок раздела (с кнопкой сворачивания) === */}
 {f.type === 'header' && (
-  <div 
-    className="py-0.5 flex items-center justify-between cursor-pointer group select-none"
+  <div
+    role="button"
+    tabIndex={0}
+    data-header-id={f.id}
+    className="py-2 flex items-center justify-between cursor-pointer group select-none outline-none
+  rounded-xl px-2
+  focus:bg-white/10 focus:text-amber-400
+  focus-visible:ring-2 focus-visible:ring-amber-400/40 focus-visible:ring-inset"
     onClick={() => openOnlySection(f.id)}
+    onMouseDown={(e) => {
+  // оставляем фокус на заголовке, не уводим в body
+  e.preventDefault();
+}}
+    onKeyDown={(e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openOnlySection(f.id);
+        return;
+      }
+
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        if (!template) return;
+
+        const headerIds = template.fields
+          .filter((x: BuilderField) => x.type === 'header' && !deletedFieldIds.includes(x.id))
+          .map((x: BuilderField) => x.id);
+
+        const idx = headerIds.indexOf(f.id);
+        if (idx === -1) return;
+
+        const nextIdx = e.shiftKey ? idx - 1 : idx + 1;
+        if (nextIdx < 0 || nextIdx >= headerIds.length) return;
+
+        const nextEl = document.querySelector(
+          `[data-header-id="${headerIds[nextIdx]}"]`
+        ) as HTMLElement | null;
+        nextEl?.focus();
+      }
+    }}
   >
-    <h2 className="text-2xl font-bold text-white tracking-tight flex-1 text-center group-hover:text-amber-400 transition-colors select-none">
+    <h2 className="text-2xl font-bold text-white tracking-tight flex-1 text-center
+  group-hover:text-amber-400 group-focus:text-amber-400 transition-colors select-none">
       {f.label}
     </h2>
     <button
@@ -1950,9 +2102,7 @@ for (const f of visibleFields) {
         openOnlySection(f.id);
       }}
       tabIndex={-1}
-      className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all"
-      
-      
+      className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 shadow-none transition-all"
       title={collapsedHeaders.has(f.id) ? 'Развернуть раздел' : 'Свернуть раздел'}
     >
       {collapsedHeaders.has(f.id) ? <ChevronRight size={22} /> : <ChevronDown size={22} />}
@@ -1962,18 +2112,22 @@ for (const f of visibleFields) {
         
         {/* Все поля остаются без изменений */}
         {f.type === 'text' && (
-          <textarea
-  ref={el => { if (el) inputRefs.current[f.id] = el; }}
-  value={fieldsData[f.id] || ''}
-  onChange={e => { handleInputChange(f.id, e.target.value); autoResize(e.target); }}
-  onKeyDown={e => handleKeyDown(e, f.id)}
-  onFocus={(e) => handleFocus(f.id, e.target)}
-  onBlur={handleBlur}
-  rows={1}
-  className="w-full bg-transparent border-0 border-b-2 border-zinc-600 px-1 py-0.5 leading-tight text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
-  placeholder={f.placeholder || 'Введите значение'}
-/>
-        )}
+  <textarea
+    ref={el => { if (el) inputRefs.current[f.id] = el; }}
+    value={fieldsData[f.id] || ''}
+    onChange={e => { handleInputChange(f.id, e.target.value); autoResize(e.target); }}
+    onKeyDown={e => {
+      handleFieldTabNavigation(e, f.id);
+      if (!e.defaultPrevented) handleKeyDown(e, f.id);
+    }}
+    onFocus={(e) => handleFocus(f.id, e.target)}
+    onBlur={handleBlur}
+    tabIndex={isSectionCollapsed ? -1 : 0}
+    rows={1}
+    className="w-full bg-transparent border-0 border-b-2 border-zinc-600 px-1 py-0.5 leading-tight text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
+    placeholder={f.placeholder || 'Введите значение'}
+  />
+)}
 
         {f.type === 'number' && (
           <input
@@ -1982,6 +2136,8 @@ for (const f of visibleFields) {
             value={fieldsData[f.id] || ''}
             onChange={e => handleInputChange(f.id, e.target.value)}
             onFocus={(e) => handleFocus(f.id, e.target)}
+            tabIndex={isSectionCollapsed ? -1 : 0}
+            onKeyDown={e => handleFieldTabNavigation(e, f.id)}
             onBlur={handleBlur}
             className="w-20 text-center bg-transparent border-0 border-b-2 border-zinc-600 px-1 py-0.5 mb-1 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
             placeholder={f.placeholder || '0.00'}
@@ -2001,6 +2157,8 @@ for (const f of visibleFields) {
         onChange={e => updateField(f.id, e.target.checked)}
         onFocus={() => handleFocus(f.id, null)}
         onBlur={handleBlur}
+        tabIndex={isSectionCollapsed ? -1 : 0}
+        onKeyDown={e => handleFieldTabNavigation(e, f.id)}  
         className="w-5 h-5 accent-amber-400 border-2 border-white/40 bg-transparent rounded focus:ring-2 focus:ring-amber-400/30 focus:outline-none transition-all cursor-pointer"
       />
       <span className={`transition-colors ${fieldsData[f.id] ? 'text-amber-400' : 'text-white group-hover:text-amber-400'}`}>
@@ -2039,6 +2197,8 @@ for (const f of visibleFields) {
                     onChange={e => updateField(f.id, e.target.value)}
                     onFocus={() => handleFocus(f.id, null)}
                     onBlur={handleBlur}
+                    tabIndex={isSectionCollapsed ? -1 : 0}
+                    onKeyDown={e => handleFieldTabNavigation(e, f.id)}
                     className="w-full bg-zinc-800 border border-zinc-600 rounded-none px-5 py-1.5 mb-1 outline-none text-sm cursor-pointer"
                   >
                     <option value="">Выберите вариант...</option>
@@ -2046,7 +2206,7 @@ for (const f of visibleFields) {
                   </select>
                 )}
 
-                {f.type === 'rating' && <RatingField field={f} value={fieldsData[f.id] || 0} onChange={(val) => updateField(f.id, val)} onFocus={handleFocus}/>} 
+                {f.type === 'rating' && <RatingField field={f} value={fieldsData[f.id] || 0} onChange={(val) => updateField(f.id, val)} onFocus={handleFocus} disabled={isSectionCollapsed}/>} 
               </div>
                 
 
@@ -2066,6 +2226,8 @@ for (const f of visibleFields) {
             onChange={e => updateField(`${f.id}_var_${i}`, e.target.value)}
             onFocus={() => handleFocus(f.id, null)}
             onBlur={handleBlur}
+            tabIndex={isSectionCollapsed ? -1 : 0}
+            onKeyDown={e => handleFieldTabNavigation(e, f.id)}
             className="w-20 text-center bg-transparent border-0 border-b-2 border-zinc-600 px-0 py-0.5 leading-tight text-white text-sm placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
             placeholder="0.00"
           />
@@ -2111,6 +2273,7 @@ for (const f of visibleFields) {
     <div className="absolute top-4 left-4 z-10">
       <button
         onClick={() => setShowNotesModal(true)}
+        tabIndex={-1}
         className="btn btn-ghost btn-square btn-sm text-white hover:text-amber-400 hover:bg-transparent border border-transparent focus:outline-none focus:ring-0 shadow-none transition-all tooltip tooltip-right"
         data-tip="Заметки"
       >
@@ -2123,6 +2286,7 @@ for (const f of visibleFields) {
   {/* Кнопки Сравнение и Состояние в правом верхнем углу */}
   <div className="absolute top-4 right-4 flex gap-2 z-10">
     <button
+      tabIndex={-1}
       onClick={() => {
         if (isComparisonActive) {
   setIsComparisonActive(false);
@@ -2143,6 +2307,7 @@ for (const f of visibleFields) {
     </button>
 
     <button
+      tabIndex={-1}
       onClick={() => {
         if (isStateAfterActive) {
   setIsStateAfterActive(false);
@@ -2192,7 +2357,7 @@ for (const f of visibleFields) {
           >
             {/* Кнопка группы */}
             <div
-              tabIndex={0}
+              tabIndex={-1}
               role="button"
               className={`btn btn-ghost btn-sm px-6 py-2.5 text-sm text-white border border-transparent hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all ${
                 isNavOpen ? 'text-amber-400 border-amber-400/40' : ''
@@ -2213,7 +2378,7 @@ for (const f of visibleFields) {
             {/* Список фраз (2-й уровень) */}
             {!isSinglePhrase && (
               <ul
-                tabIndex={0}
+                tabIndex={-1}
                 className="dropdown-content menu bg-zinc-900/90 backdrop-blur-md border border-zinc-700 rounded-box z-[10000] min-w-[340px] p-1"
               >
                 <div className="max-h-[280px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
@@ -2247,7 +2412,7 @@ for (const f of visibleFields) {
                   onClick={toggleAllSections} 
                   tabIndex={-1} 
                   className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" 
-                  data-tip="Свернуть/Развернуть все разделы (Ctrl+E/Cmd+E)"
+                  data-tip="Свернуть/Развернуть текущий раздел (Ctrl+E/Cmd+E)"
                 >
                   <ChevronsDownUp size={22} />
                 </button>

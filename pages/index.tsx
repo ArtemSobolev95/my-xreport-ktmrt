@@ -183,7 +183,7 @@ function HomePage() {
 
     if (loading) return (
   <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
-    <div className="w-10 h-10 rounded-full border-2 border-white/15 border-t-amber-400 animate-spin" />
+    <div className="w-10 h-10 rounded-full border-4 border-white/15 border-t-amber-400 animate-spin" />
   </div>
 );
 
@@ -214,9 +214,10 @@ function HomePage() {
   {/* Кнопка справа */}
   <Link
     href="/builder"
-    className="absolute right-0 top-1/2 -translate-y-1/2 text-sm text-white hover:text-amber-400 transition-colors"
+    tabIndex={-1}
+    className="absolute right-0 top-1/2 -translate-y-1/2 text-sm font-bold text-white hover:text-amber-400 transition-colors"
   >
-    Добавить новый шаблон
+    Новый шаблон
   </Link>
 </div>
 
@@ -256,6 +257,7 @@ function HomePage() {
           {/* Звёздочка */}
           <motion.button
                 onClick={() => toggleFavorite(t.id, !!t.is_favorite)}
+                tabIndex={-1}
                 whileHover={{ scale: 1.15 }}
                 whileTap={{ scale: 1.4, rotate: 25 }}
                 transition={{ type: "spring", stiffness: 400, damping: 17 }}
@@ -280,6 +282,7 @@ function HomePage() {
           <div className="flex items-center gap-1 shrink-0">
             <Link
               href={`/builder?edit=${t.id}`}
+              tabIndex={-1}
               className="p-3 text-white hover:text-amber-400 transition-all cursor-pointer tooltip tooltip-top"
               data-tip="Редактировать"
             >
@@ -290,6 +293,7 @@ function HomePage() {
 
             <Link
               href={`/filler?id=${t.id}`}
+              tabIndex={-1}
               className="p-3 text-white hover:text-amber-400 transition-all cursor-pointer tooltip tooltip-top"
               data-tip="Заполнить"
             >
@@ -300,6 +304,7 @@ function HomePage() {
 
             <button
               onClick={() => deleteTemplate(t.id, t.title)}
+              tabIndex={-1}
               className="p-3 text-white hover:text-red-400 transition-all cursor-pointer tooltip tooltip-top"
               data-tip="Удалить"
             >

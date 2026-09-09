@@ -8,11 +8,13 @@ import {
   ArrowDownOnSquareIcon, 
   ArrowUpOnSquareIcon        
 } from '@heroicons/react/24/outline';
-import type { BuilderField, QuickButtonGroup } from '../types/builder';
+import type { BuilderField, QuickButtonGroup, Template } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
 import { migrateQuickButtons } from '../lib/migrateQuickButtons';
 import { evaluateFormula } from '../lib/evaluateFormula';
+import { generateReport } from '../lib/generateReport';
+import { useAbbreviations } from '../hooks/useAbbreviations';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
 
@@ -67,19 +69,6 @@ const RatingField = ({
 };
 // ===========================================================================
 
-// Экранирование перед вставкой в HTML, который рендерится через
-// dangerouslySetInnerHTML: label/placeholder/фразы приходят из шаблона,
-// а шаблон может редактировать не только его владелец (публичные шаблоны).
-const HTML_ESCAPE_MAP: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
-};
-const escapeHtml = (value: unknown): string =>
-  String(value ?? '').replace(/[&<>"']/g, (ch) => HTML_ESCAPE_MAP[ch]);
-
 // Ссылки в заметках тоже приходят из шаблона — не даём вставить javascript:/data: URL.
 const isSafeUrl = (url: string): boolean => {
   try {
@@ -96,16 +85,29 @@ function FillerPage() {
   const router = useRouter();
   const { id } = router.query;
   const user = pb.authStore.record; // openButtonId и newGroupName больше не используются —
-  const [template, setTemplate] = useState<any>(null); // временно оставляем any (тип сложный)
-  const [originalTemplate, setOriginalTemplate] = useState<any>(null);
+  const [template, setTemplate] = useState<Template | null>(null);
+  const [originalTemplate, setOriginalTemplate] = useState<Template | null>(null);
+  // Значения полей разнотипны по природе (текст/число/bool/массив вариантов
+  // формулы) в зависимости от BuilderField.type — единый строгий тип здесь
+  // потребовал бы дискриминированного маппинга по каждому типу поля.
   const [fieldsData, setFieldsData] = useState<Record<string, any>>({});
   const [activeFieldId, setActiveFieldId] = useState<string | null>(null);
   const activeFieldRef = useRef<string | null>(null);
   const activeInputRef = useRef<HTMLElement | null>(null);
   const [loading, setLoading] = useState(true);
   const [deletedFieldIds, setDeletedFieldIds] = useState<string[]>([]);
-  const [abbreviations, setAbbreviations] = useState<Record<string, { full: string; category: string; usage: number }>>({});
-  const [categories, setCategories] = useState<string[]>([]);
+  const {
+    abbreviations,
+    categories,
+    saveData,
+    addNewGroup: addNewGroupData,
+    addNewAbbreviation: addNewAbbreviationData,
+    deleteCategory: deleteCategoryData,
+    deleteAbbreviation,
+    recordUsage,
+    exportAbbreviations,
+    importAbbreviations: importAbbreviationsFile,
+  } = useAbbreviations();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Все');
   const [newAbbrText, setNewAbbrText] = useState('');
@@ -305,10 +307,10 @@ const [showDraftNotification, setShowDraftNotification] = useState(false);
   };
 
   // === Логика сворачивания разделов ===
-const initializeCollapsedState = (fields: any[]) => {
+const initializeCollapsedState = (fields: BuilderField[]) => {
   const headerIds = fields
-    .filter((f: any) => f.type === 'header')
-    .map((f: any) => f.id);
+    .filter((f) => f.type === 'header')
+    .map((f) => f.id);
   setCollapsedHeaders(new Set(headerIds));
 };
 
@@ -536,6 +538,7 @@ useEffect(() => {
   };
 
   const addTextFieldAfter = (currentId: string) => {
+  if (!template) return;
   saveToHistory();
 
   const newId = 'text-' + Date.now().toString();
@@ -566,11 +569,11 @@ useEffect(() => {
 
       const updateFieldLabel = (fieldId: string, newLabel: string) => {
     saveToHistory();
-    setTemplate((prev: any) => {
+    setTemplate((prev) => {
       if (!prev) return prev;
       return {
         ...prev,
-        fields: prev.fields.map((f: BuilderField) =>
+        fields: prev.fields.map((f) =>
           f.id === fieldId ? { ...f, label: newLabel } : f
         )
       };
@@ -632,7 +635,7 @@ useEffect(() => {
 
   // === Очистка черновика + сброс к дефолтным значениям ===
 const handleClearDraft = () => {
-  if (!id || !template) return;
+  if (!id || !template || !originalTemplate) return;
 
   if (!confirm('Очистить черновик? Все введённые данные будут удалены.')) {
     return;
@@ -813,68 +816,6 @@ const handleClearDraft = () => {
   }, [variantSelector?.fieldId]);
 
 
-            // ====================== ЗАГРУЗКА АББРЕВИАТУР ======================
-  useEffect(() => {
-    const loadAbbr = async () => {
-      if (!pb.authStore.record?.id) return;
-
-      const userId = pb.authStore.record.id;
-
-      try {
-        const records = await pb.collection('abbreviations').getList(1, 1, {
-          filter: `user = "${userId}"`,
-          $autoCancel: false
-        });
-
-        if (records.items.length > 0) {
-          const record = records.items[0];
-          setAbbreviations(record.abbreviations || {});
-          setCategories(record.categories || ['Общие']);
-          console.log('✅ Аббревиатуры загружены');
-        } else {
-          throw { status: 404 };
-        }
-      } catch (err: unknown) {
-        const error = err as any;
-        if (error?.status === 404) {
-          try {
-            const defaultData = {
-              user: userId,
-              abbreviations: {},
-              categories: []
-            };
-            const newRecord = await pb.collection('abbreviations').create(defaultData);
-            setAbbreviations(newRecord.abbreviations);
-            setCategories(newRecord.categories);
-            console.log('✅ Создана новая запись аббревиатур');
-          } catch {
-            // Параллельный запрос (другая вкладка/повторный рендер) уже успел
-            // создать запись первым — уникальный индекс на user не даёт создать
-            // вторую, вместо гонки просто читаем ту, что уже есть.
-            try {
-              const records = await pb.collection('abbreviations').getList(1, 1, {
-                filter: `user = "${userId}"`,
-                $autoCancel: false
-              });
-              const record = records.items[0];
-              setAbbreviations(record?.abbreviations || {});
-              setCategories(record?.categories || ['Общие']);
-            } catch (retryErr) {
-              console.error("Ошибка загрузки аббревиатур после гонки:", retryErr);
-              setAbbreviations({});
-              setCategories(['Общие']);
-            }
-          }
-        } else {
-          console.error("Ошибка загрузки:", err);
-          setAbbreviations({});
-          setCategories(['Общие']);
-        }
-      }
-    };
-    loadAbbr();
-  }, []);
-
     // ====================== ЗАГРУЗКА ФРАЗ "СОСТОЯНИЕ ПОСЛЕ" С СЕРВЕРА ======================
   useEffect(() => {
     const loadStateAfterPhrases = async () => {
@@ -918,52 +859,6 @@ const handleClearDraft = () => {
     };
     loadStateAfterPhrases();
   }, []);
-
-              // ====================== СОХРАНЕНИЕ АББРЕВИАТУР ======================
-  const saveData = async (newAbbr: Record<string, any>, newCats: string[]) => {
-    setAbbreviations(newAbbr);
-    setCategories(newCats);
-
-    if (!pb.authStore.record?.id) return;
-
-    const userId = pb.authStore.record.id;
-    const payload = {
-      abbreviations: newAbbr,
-      categories: newCats,
-      user: userId
-    };
-
-    try {
-      const records = await pb.collection('abbreviations').getList(1, 1, {
-        filter: `user = "${userId}"`,
-        $autoCancel: false
-      });
-
-      if (records.items.length > 0) {
-        await pb.collection('abbreviations').update(records.items[0].id, payload);
-        console.log('✅ Аббревиатуры обновлены');
-      } else {
-        try {
-          await pb.collection('abbreviations').create(payload);
-          console.log('✅ Аббревиатуры созданы');
-        } catch (createErr) {
-          // Гонка: запись уже создана параллельным запросом — обновляем её.
-          const retry = await pb.collection('abbreviations').getList(1, 1, {
-            filter: `user = "${userId}"`,
-            $autoCancel: false
-          });
-          if (retry.items[0]) {
-            await pb.collection('abbreviations').update(retry.items[0].id, payload);
-          } else {
-            throw createErr;
-          }
-        }
-      }
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error("❌ Ошибка сохранения:", errorMessage);
-    }
-  };
 
     // ====================== СОХРАНЕНИЕ ФРАЗ "СОСТОЯНИЕ ПОСЛЕ" ======================
   const saveStateAfterPhrasesToServer = async (newPhrases: string[]) => {
@@ -1097,14 +992,15 @@ const handleClearDraft = () => {
       
       // Миграция quickButtons: старый формат (subgroups) → новый (phrases)
 if (Array.isArray(record.fields)) {
-  record.fields = record.fields.map((f: any) => ({
+  record.fields = record.fields.map((f: BuilderField) => ({
     ...f,
     quickButtons: migrateQuickButtons(f.quickButtons),
   }));
 }
 
-      setOriginalTemplate(JSON.parse(JSON.stringify(record)));
-      setTemplate(record);
+      const typedRecord = record as unknown as Template;
+      setOriginalTemplate(JSON.parse(JSON.stringify(typedRecord)));
+      setTemplate(typedRecord);
 
     
 
@@ -1128,7 +1024,7 @@ initializeCollapsedState(record.fields);
         });
 
         // Удаляем данные удалённых полей
-        const currentIds = new Set(record.fields.map((f: any) => f.id));
+        const currentIds = new Set(record.fields.map((f: BuilderField) => f.id));
         Object.keys(newData).forEach(key => {
           if (!currentIds.has(key)) delete newData[key];
         });
@@ -1258,141 +1154,27 @@ initializeCollapsedState(record.fields);
   if (changed) setFieldsData(newData);
 }, [fieldsData, template]);
 
-  const isFieldEmpty = (field: BuilderField, value: any): boolean => {
-  if (value === undefined || value === null) return true;
-  if (typeof value === 'string' && value.trim() === '') return true;
-  if (field.type === 'rating') return value == 0 || value === null || value === undefined;
-  return false;
-};
-
       // ====================== ГЕНЕРАЦИЯ ОТЧЁТА (useMemo) ======================
-  const { finalText, finalPlainText } = useMemo(() => {
-    if (!template) return { finalText: '', finalPlainText: '' };
-
-    let htmlText = '';
-    let plainText = '';
-
-        if (isComparisonActive && comparisonDates.length > 0) {
-      const datesStr = comparisonDates.join(', ');
-      const label = comparisonDates.length === 1
-        ? 'с предыдущим от'
-        : 'с предыдущими от';
-
-      htmlText += `<span class="text-amber-400">Описание исследования в сравнении ${escapeHtml(label)} ${escapeHtml(datesStr)}:</span>\n\n`;
-      plainText += `Описание исследования в сравнении ${label} ${datesStr}:\n\n`;
-    }
-    if (isStateAfterActive && stateAfterText) {
-      htmlText += `<span class="text-amber-400">Состояние после ${escapeHtml(stateAfterText)}</span>\n\n`;
-      plainText += `Состояние после ${stateAfterText}\n\n`;
-    }
-
-    template.fields.forEach((f: BuilderField) => {
-        if (deletedFieldIds.includes(f.id)) return;
-
-        if (f.type === 'header') return;
-
-        const val = fieldsData[f.id];
-        // Значения полей вводит текущий пользователь, но label/placeholder/фразы —
-        // часть шаблона, который может редактировать не только его владелец
-        // (публичные шаблоны). Всё, что попадает в htmlText, экранируем —
-        // он рендерится через dangerouslySetInnerHTML.
-        const label = escapeHtml(f.label);
-
-        if (f.type === 'text' && isFieldEmpty(f, val) && !f.placeholder) {
-          return;
-        }
-
-        let displayHtml = val ? escapeHtml(val) : '';
-        let displayPlain = val || '';
-
-        if (!val && f.placeholder) {
-          displayHtml = `<span style="color: #9ca3af;">${escapeHtml(f.placeholder)}</span>`;
-          displayPlain = f.placeholder;
-        }
-
-        let coloredHtml = displayHtml;
-        if (val && ['text', 'number', 'select', 'checkbox', 'formula'].includes(f.type)) {
-          coloredHtml = `<span class="text-amber-400">${escapeHtml(val)}</span>`;
-        }
-
-        if (f.type === 'text') {
-  // Берём реальное значение пользователя (или placeholder)
-  let textValue = (val || displayPlain || '').trim();
-
-  // Автоматически ставим точку, если её (или ! ?) ещё нет
-  if (textValue && !/[.!?…]$/.test(textValue)) {
-    textValue += '.';
-  }
-
-  // HTML-версия (с подсветкой, если есть значение)
-  let finalHtml: string;
-  if (val) {
-    finalHtml = `<span class="text-amber-400">${escapeHtml(textValue)}</span>`;
-  } else {
-    // placeholder — тоже с точкой (если она была добавлена)
-    finalHtml = textValue
-      ? `<span style="color: #9ca3af;">${escapeHtml(textValue)}</span>`
-      : displayHtml;
-  }
-
-  htmlText += `${label}: ${finalHtml}\n\n`;
-  plainText += `${f.label}: ${textValue}\n\n`;
-}
-
-
-      else if (f.type === 'checkbox') {
-        const isChecked = fieldsData[f.id] === true;
-        const checkboxText = isChecked ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет');
-        htmlText += `${label}: <span class="text-amber-400">${escapeHtml(checkboxText)}</span>\n\n`;
-        plainText += `${f.label}: ${checkboxText}\n\n`;
-      }
-      else if (f.type === 'number') {
-        if (!val) return;
-        const unitHtml = f.unit ? ` <span class="text-amber-400">${escapeHtml(f.unit)}</span>.` : '.';
-        const unitPlain = f.unit ? ` ${f.unit}.` : '.';
-        htmlText += `${label}: <span class="text-amber-400">${escapeHtml(val)}</span>${unitHtml}\n\n`;
-        plainText += `${f.label}: ${val}${unitPlain}\n\n`;
-      }
-      else if (f.type === 'select') {
-        if (!val) return;
-        htmlText += `${label}: ${coloredHtml}\n\n`;
-        plainText += `${f.label}: ${val}\n\n`;
-      }
-      else if (f.type === 'rating') {
-        if (!val || val === 0) return;
-        const expl = f.showExplanations && f.explanations ? ` — ${f.explanations[val - 1] || ''}` : '';
-        htmlText += `${label}: <span class="text-amber-400">${escapeHtml(val)}${escapeHtml(expl)}</span>\n\n`;
-        plainText += `${f.label}: ${val}${expl}\n\n`;
-      }
-            else if (f.type === 'formula') {
-        const hasAnyValue = (f.variables || []).some((v: any, i: number) =>
-          fieldsData[`${f.id}_var_${i}`] && String(fieldsData[`${f.id}_var_${i}`]).trim() !== ''
-        );
-        if (!hasAnyValue) return;
-
-        const result = val || '';
-        if (!result || result === 'NaN') return;
-
-        const unitHtml = f.unit ? ` <span class="text-amber-400">${escapeHtml(f.unit)}</span>.` : '.';
-        const unitPlain = f.unit ? ` ${f.unit}.` : '.';
-        htmlText += `${label}: <span class="text-amber-400">${escapeHtml(result)}</span>${unitHtml}\n\n`;
-        plainText += `${f.label}: ${result}${unitPlain}\n\n`;
-      }
-    });   // ← эта строка обязательна — закрывает forEach
-
-    return {
-      finalText: htmlText.trim(),
-      finalPlainText: plainText.trim()
-    };
-  }, [
-    fieldsData,
-    template,
-    deletedFieldIds,
-    isComparisonActive,
-    comparisonDates,
-    isStateAfterActive,
-    stateAfterText
-  ]);
+  const { finalText, finalPlainText } = useMemo(
+    () => generateReport({
+      template,
+      fieldsData,
+      deletedFieldIds,
+      isComparisonActive,
+      comparisonDates,
+      isStateAfterActive,
+      stateAfterText,
+    }),
+    [
+      fieldsData,
+      template,
+      deletedFieldIds,
+      isComparisonActive,
+      comparisonDates,
+      isStateAfterActive,
+      stateAfterText
+    ]
+  );
 
   const updateField = (
   fieldId: string,
@@ -1632,10 +1414,8 @@ const newText = prefix + finalChosen + trigger + currentValue.substring(variantS
   
   updateField(fieldId, newText);
 
-  if (abbrKey && abbreviations[abbrKey]) {
-    const updated = JSON.parse(JSON.stringify(abbreviations));
-    updated[abbrKey].usage = (updated[abbrKey].usage || 0) + 1;
-    saveData(updated, categories);
+  if (abbrKey) {
+    recordUsage(abbrKey);
   }
 
   const newCursorPos = prefix.length + chosen.length + 1;
@@ -1716,9 +1496,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   
   updateField(fieldId, newText);
 
-  const updated = JSON.parse(JSON.stringify(abbreviations));
-  updated[wordLower].usage = (updated[wordLower].usage || 0) + 1;
-  saveData(updated, categories);
+  recordUsage(wordLower);
 
   requestAnimationFrame(() => {
     const el = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
@@ -1753,67 +1531,28 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   router.push('/');
 };
 
-  const exportAbbreviations = () => {
-    const dataStr = JSON.stringify({ abbreviations, categories }, null, 2);
-    const link = document.createElement('a');
-    link.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
-    link.download = 'xreport-abbreviations.json';
-    link.click();
-  };
-
-    const importAbbreviations = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const importAbbreviations = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const imported = JSON.parse(event.target?.result as string);
-        saveData(imported.abbreviations || {}, imported.categories || ['Общие']);
-        alert('Импорт выполнен!');
-      } catch { 
-        alert('Ошибка импорта'); 
-      }
-    };
-    reader.readAsText(file);
+    importAbbreviationsFile(file)
+      .then(() => alert('Импорт выполнен!'))
+      .catch(() => alert('Ошибка импорта'));
   };
 
   const addNewGroup = () => {
-    let newName = 'Новая группа';
-    let counter = 1;
-
-    // Делаем уникальное имя, если уже есть "Новая группа"
-    while (categories.includes(newName)) {
-      counter++;
-      newName = `Новая группа ${counter}`;
-    }
-
-    saveData(abbreviations, [...categories, newName]);
+    const newName = addNewGroupData();
     setSelectedCategory(newName); // сразу выбираем новую группу
   };
 
   const addNewAbbreviation = () => {
     if (!newAbbrText || !newFullText) return;
-    const cat = selectedCategory !== 'Все' ? selectedCategory : 'Общие';
-    saveData({ ...abbreviations, [newAbbrText]: { full: newFullText, category: cat, usage: 0 } }, categories);
+    addNewAbbreviationData(newAbbrText, newFullText, selectedCategory);
     setNewAbbrText('');
     setNewFullText('');
   };
 
-
   const deleteCategory = (cat: string) => {
-  // Удаляем все аббревиатуры из этой группы
-    const newAbbr = { ...abbreviations };
-    Object.keys(newAbbr).forEach(key => {
-      if (newAbbr[key].category === cat) {
-        delete newAbbr[key];
-      }
-    });
-
-    // Удаляем саму группу
-    const newCats = categories.filter(c => c !== cat);
-    saveData(newAbbr, newCats);
-
+    deleteCategoryData(cat);
     if (selectedCategory === cat) setSelectedCategory('Все');
   };
 
@@ -2299,7 +2038,7 @@ for (const f of visibleFields) {
   <div className="px-3 pt-0 pb-1 space-y-2">
     {/* Переменные */}
     <div className="space-y-1">
-      {(f.variables || []).map((v: any, i: number) => (
+      {(f.variables || []).map((v, i: number) => (
         <div key={i} className="flex items-center gap-3">
           <span className="w-8 text-zinc-400 text-sm flex-shrink-0">{v.name}</span>
           <span className="text-zinc-400">=</span>
@@ -3094,9 +2833,7 @@ for (const f of visibleFields) {
             if (deleteConfirm.type === 'category') {
               deleteCategory(deleteConfirm.id);
             } else {
-              const newAbbrs = { ...abbreviations };
-              delete newAbbrs[deleteConfirm.id];
-              saveData(newAbbrs, categories);
+              deleteAbbreviation(deleteConfirm.id);
             }
             setDeleteConfirm(null);
           }}

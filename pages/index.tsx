@@ -9,11 +9,12 @@ import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
 import { PlusIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import type { TemplateListItem } from '../types/builder';
 
 function HomePage() {
   const router = useRouter();
   const user = pb.authStore.record;
-  const [templates, setTemplates] = useState<any[]>([]);
+  const [templates, setTemplates] = useState<TemplateListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -33,7 +34,7 @@ function HomePage() {
       
 
       // Фильтруем на клиенте — только свои + публичные
-      const myTemplates = records.filter((t: any) => {
+      const myTemplates = (records as unknown as TemplateListItem[]).filter((t) => {
         const isMyTemplate = t.user === pb.authStore.record?.id;
         const isPublicTemplate = t.isPublic === true;
         return isMyTemplate || isPublicTemplate;
@@ -47,8 +48,7 @@ function HomePage() {
     return new Date(b.created).getTime() - new Date(a.created).getTime();
   })
 );
-    } catch (err: any) {
-      
+    } catch {
       setTemplates([]);
     } finally {
       setLoading(false);
@@ -92,8 +92,9 @@ function HomePage() {
   try {
     await pb.collection('templates').delete(id);
     loadTemplates();
-  } catch (err: any) {
-    alert('Ошибка при удалении: ' + (err?.message || err));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    alert('Ошибка при удалении: ' + message);
   }
 };
 

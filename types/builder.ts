@@ -35,3 +35,19 @@ export interface BuilderField {
   quickButtons?: QuickButtonGroup[];   // ← теперь строго типизировано
   isQuickText?: boolean;
 }
+
+export interface Template {
+  id: string;
+  title: string;
+  fields: BuilderField[];
+  user: string;
+  isPublic: boolean;
+  is_favorite?: boolean;
+  created: string;
+  updated?: string;
+}
+
+// Форма записи, которую реально возвращает список шаблонов (index.tsx) —
+// запрос там намеренно не включает тяжёлое поле fields (см. getFullList
+// с параметром fields в pages/index.tsx).
+export type TemplateListItem = Pick<Template, 'id' | 'title' | 'user' | 'isPublic' | 'is_favorite' | 'created'>;

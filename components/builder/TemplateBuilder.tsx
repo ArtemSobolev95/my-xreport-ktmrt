@@ -682,7 +682,7 @@ function TemplateBuilder() {
 
 setTemplateTitle(record.title || "Новый шаблон");
 
-const migratedFields = (record.fields || []).map((f: any) => ({
+const migratedFields = (record.fields || []).map((f: BuilderField) => ({
   ...f,
   quickButtons: migrateQuickButtons(f.quickButtons),
 }));

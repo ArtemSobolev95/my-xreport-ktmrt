@@ -35,4 +35,9 @@ COPY pb_hooks /pb/pb_hooks/
 
 EXPOSE 8090
 
-CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/data"]
+# --migrationsDir/--hooksDir заданы явно: без них PocketBase ищет
+# pb_migrations/pb_hooks рядом с --dir (/data), а не рядом с бинарником
+# (/pb) — из-за этого миграции (в т.ч. блокировка правил доступа) молча
+# не выполнялись ни разу, без единой ошибки в логах. Проверено локально:
+# с --dir, отличным от каталога бинарника, JS-миграции просто не находятся.
+CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/data", "--migrationsDir=/pb/pb_migrations", "--hooksDir=/pb/pb_hooks"]

@@ -23,7 +23,12 @@ function HomePage() {
     try {
       
 
-      const records = await pb.collection('templates').getFullList({});
+      // Список показывает только title/is_favorite/created/user/isPublic —
+      // тяжёлое поле fields (вся структура шаблона) здесь не нужно и грузится
+      // только при открытии конкретного шаблона в builder/filler.
+      const records = await pb.collection('templates').getFullList({
+        fields: 'id,title,is_favorite,created,user,isPublic',
+      });
 
       
 

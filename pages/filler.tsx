@@ -837,15 +837,34 @@ const handleClearDraft = () => {
       } catch (err: unknown) {
         const error = err as any;
         if (error?.status === 404) {
-          const defaultData = {
-            user: userId,
-            abbreviations: {},
-            categories: []
-          };
-          const newRecord = await pb.collection('abbreviations').create(defaultData);
-          setAbbreviations(newRecord.abbreviations);
-          setCategories(newRecord.categories);
-          console.log('✅ Создана новая запись аббревиатур');
+          try {
+            const defaultData = {
+              user: userId,
+              abbreviations: {},
+              categories: []
+            };
+            const newRecord = await pb.collection('abbreviations').create(defaultData);
+            setAbbreviations(newRecord.abbreviations);
+            setCategories(newRecord.categories);
+            console.log('✅ Создана новая запись аббревиатур');
+          } catch {
+            // Параллельный запрос (другая вкладка/повторный рендер) уже успел
+            // создать запись первым — уникальный индекс на user не даёт создать
+            // вторую, вместо гонки просто читаем ту, что уже есть.
+            try {
+              const records = await pb.collection('abbreviations').getList(1, 1, {
+                filter: `user = "${userId}"`,
+                $autoCancel: false
+              });
+              const record = records.items[0];
+              setAbbreviations(record?.abbreviations || {});
+              setCategories(record?.categories || ['Общие']);
+            } catch (retryErr) {
+              console.error("Ошибка загрузки аббревиатур после гонки:", retryErr);
+              setAbbreviations({});
+              setCategories(['Общие']);
+            }
+          }
         } else {
           console.error("Ошибка загрузки:", err);
           setAbbreviations({});
@@ -873,13 +892,24 @@ const handleClearDraft = () => {
           setStateAfterPhrases(records.items[0].phrases || []);
           console.log('✅ Фразы "Состояние после" загружены с сервера');
         } else {
-          // Создаём запись при первом использовании
-          const newRecord = await pb.collection('state_after_phrases').create({
-            user: userId,
-            phrases: []
-          });
-          setStateAfterPhrases([]);
-          console.log('✅ Создана новая запись фраз "Состояние после"');
+          try {
+            // Создаём запись при первом использовании
+            await pb.collection('state_after_phrases').create({
+              user: userId,
+              phrases: []
+            });
+            setStateAfterPhrases([]);
+            console.log('✅ Создана новая запись фраз "Состояние после"');
+          } catch {
+            // Как и с аббревиатурами: параллельный запрос уже создал запись
+            // первым, уникальный индекс на user не даёт создать вторую —
+            // читаем то, что уже есть, вместо гонки.
+            const records2 = await pb.collection('state_after_phrases').getList(1, 1, {
+              filter: `user = "${userId}"`,
+              $autoCancel: false
+            });
+            setStateAfterPhrases(records2.items[0]?.phrases || []);
+          }
         }
       } catch (err) {
         console.error("Ошибка загрузки фраз 'Состояние после':", err);
@@ -913,8 +943,21 @@ const handleClearDraft = () => {
         await pb.collection('abbreviations').update(records.items[0].id, payload);
         console.log('✅ Аббревиатуры обновлены');
       } else {
-        await pb.collection('abbreviations').create(payload);
-        console.log('✅ Аббревиатуры созданы');
+        try {
+          await pb.collection('abbreviations').create(payload);
+          console.log('✅ Аббревиатуры созданы');
+        } catch (createErr) {
+          // Гонка: запись уже создана параллельным запросом — обновляем её.
+          const retry = await pb.collection('abbreviations').getList(1, 1, {
+            filter: `user = "${userId}"`,
+            $autoCancel: false
+          });
+          if (retry.items[0]) {
+            await pb.collection('abbreviations').update(retry.items[0].id, payload);
+          } else {
+            throw createErr;
+          }
+        }
       }
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
@@ -939,10 +982,23 @@ const handleClearDraft = () => {
           phrases: newPhrases
         });
       } else {
-        await pb.collection('state_after_phrases').create({
-          user: userId,
-          phrases: newPhrases
-        });
+        try {
+          await pb.collection('state_after_phrases').create({
+            user: userId,
+            phrases: newPhrases
+          });
+        } catch (createErr) {
+          // Гонка: запись уже создана параллельным запросом — обновляем её.
+          const retry = await pb.collection('state_after_phrases').getList(1, 1, {
+            filter: `user = "${userId}"`,
+            $autoCancel: false
+          });
+          if (retry.items[0]) {
+            await pb.collection('state_after_phrases').update(retry.items[0].id, { phrases: newPhrases });
+          } else {
+            throw createErr;
+          }
+        }
       }
     } catch (err) {
       console.error("Ошибка сохранения фраз 'Состояние после':", err);

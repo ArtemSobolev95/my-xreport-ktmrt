@@ -16,6 +16,11 @@ RUN unzip /tmp/pb.zip -d /pb/ && \
 WORKDIR /app
 COPY . .
 
+# NEXT_PUBLIC_* переменные "запекаются" в статическую сборку на этом шаге —
+# раньше адрес прод-бэкенда был зашит прямо в lib/pocketbase.ts как fallback,
+# теперь он должен быть явно задан здесь.
+ENV NEXT_PUBLIC_POCKETBASE_URL=https://smartreporting.ru
+
 # Устанавливаем зависимости и собираем фронтенд
 RUN npm ci --include=dev
 RUN npm run build

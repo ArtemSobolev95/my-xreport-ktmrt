@@ -12,6 +12,7 @@ import type { BuilderField, QuickButtonGroup } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
 import { migrateQuickButtons } from '../lib/migrateQuickButtons';
+import { evaluateFormula } from '../lib/evaluateFormula';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
 
@@ -66,6 +67,30 @@ const RatingField = ({
 };
 // ===========================================================================
 
+// Экранирование перед вставкой в HTML, который рендерится через
+// dangerouslySetInnerHTML: label/placeholder/фразы приходят из шаблона,
+// а шаблон может редактировать не только его владелец (публичные шаблоны).
+const HTML_ESCAPE_MAP: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+};
+const escapeHtml = (value: unknown): string =>
+  String(value ?? '').replace(/[&<>"']/g, (ch) => HTML_ESCAPE_MAP[ch]);
+
+// Ссылки в заметках тоже приходят из шаблона — не даём вставить javascript:/data: URL.
+const isSafeUrl = (url: string): boolean => {
+  try {
+    // Базовый URL нужен только для разбора относительных ссылок — на
+    // проверку схемы (http/https/mailto) он не влияет.
+    const parsed = new URL(url, 'http://localhost');
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'mailto:';
+  } catch {
+    return false;
+  }
+};
 
 function FillerPage() {
   const router = useRouter();
@@ -1150,15 +1175,14 @@ initializeCollapsedState(record.fields);
           return;
         }
 
-        const varMap = Object.fromEntries(
+        const varMap: Record<string, number> = Object.fromEntries(
           f.variables.map((v, i: number) => {
             const raw = fieldsData[`${f.id}_var_${i}`] || v.value || '';
             return [v.name, parseFloat(raw) || 0];
           })
         );
 
-        const func = new Function(...Object.keys(varMap), `return ${f.formula};`);
-        const result = func(...Object.values(varMap));
+        const result = evaluateFormula(f.formula, varMap);
 
         const finalResult = Number.isNaN(result) ? '' : Number(result).toFixed(2);
 
@@ -1194,15 +1218,15 @@ initializeCollapsedState(record.fields);
 
         if (isComparisonActive && comparisonDates.length > 0) {
       const datesStr = comparisonDates.join(', ');
-      const label = comparisonDates.length === 1 
-        ? 'с предыдущим от' 
+      const label = comparisonDates.length === 1
+        ? 'с предыдущим от'
         : 'с предыдущими от';
-      
-      htmlText += `<span class="text-amber-400">Описание исследования в сравнении ${label} ${datesStr}:</span>\n\n`;
+
+      htmlText += `<span class="text-amber-400">Описание исследования в сравнении ${escapeHtml(label)} ${escapeHtml(datesStr)}:</span>\n\n`;
       plainText += `Описание исследования в сравнении ${label} ${datesStr}:\n\n`;
     }
     if (isStateAfterActive && stateAfterText) {
-      htmlText += `<span class="text-amber-400">Состояние после ${stateAfterText}</span>\n\n`;
+      htmlText += `<span class="text-amber-400">Состояние после ${escapeHtml(stateAfterText)}</span>\n\n`;
       plainText += `Состояние после ${stateAfterText}\n\n`;
     }
 
@@ -1212,23 +1236,27 @@ initializeCollapsedState(record.fields);
         if (f.type === 'header') return;
 
         const val = fieldsData[f.id];
+        // Значения полей вводит текущий пользователь, но label/placeholder/фразы —
+        // часть шаблона, который может редактировать не только его владелец
+        // (публичные шаблоны). Всё, что попадает в htmlText, экранируем —
+        // он рендерится через dangerouslySetInnerHTML.
+        const label = escapeHtml(f.label);
 
-        
         if (f.type === 'text' && isFieldEmpty(f, val) && !f.placeholder) {
           return;
         }
 
-        let displayHtml = val || '';
+        let displayHtml = val ? escapeHtml(val) : '';
         let displayPlain = val || '';
 
         if (!val && f.placeholder) {
-          displayHtml = `<span style="color: #9ca3af;">${f.placeholder}</span>`;
+          displayHtml = `<span style="color: #9ca3af;">${escapeHtml(f.placeholder)}</span>`;
           displayPlain = f.placeholder;
         }
 
         let coloredHtml = displayHtml;
         if (val && ['text', 'number', 'select', 'checkbox', 'formula'].includes(f.type)) {
-          coloredHtml = `<span class="text-amber-400">${val}</span>`;
+          coloredHtml = `<span class="text-amber-400">${escapeHtml(val)}</span>`;
         }
 
         if (f.type === 'text') {
@@ -1243,45 +1271,45 @@ initializeCollapsedState(record.fields);
   // HTML-версия (с подсветкой, если есть значение)
   let finalHtml: string;
   if (val) {
-    finalHtml = `<span class="text-amber-400">${textValue}</span>`;
+    finalHtml = `<span class="text-amber-400">${escapeHtml(textValue)}</span>`;
   } else {
     // placeholder — тоже с точкой (если она была добавлена)
     finalHtml = textValue
-      ? `<span style="color: #9ca3af;">${textValue}</span>`
+      ? `<span style="color: #9ca3af;">${escapeHtml(textValue)}</span>`
       : displayHtml;
   }
 
-  htmlText += `${f.label}: ${finalHtml}\n\n`;
+  htmlText += `${label}: ${finalHtml}\n\n`;
   plainText += `${f.label}: ${textValue}\n\n`;
-} 
+}
 
 
       else if (f.type === 'checkbox') {
         const isChecked = fieldsData[f.id] === true;
         const checkboxText = isChecked ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет');
-        htmlText += `${f.label}: <span class="text-amber-400">${checkboxText}</span>\n\n`;
+        htmlText += `${label}: <span class="text-amber-400">${escapeHtml(checkboxText)}</span>\n\n`;
         plainText += `${f.label}: ${checkboxText}\n\n`;
       }
       else if (f.type === 'number') {
         if (!val) return;
-        const unitHtml = f.unit ? ` <span class="text-amber-400">${f.unit}</span>.` : '.';
+        const unitHtml = f.unit ? ` <span class="text-amber-400">${escapeHtml(f.unit)}</span>.` : '.';
         const unitPlain = f.unit ? ` ${f.unit}.` : '.';
-        htmlText += `${f.label}: <span class="text-amber-400">${val}</span>${unitHtml}\n\n`;
+        htmlText += `${label}: <span class="text-amber-400">${escapeHtml(val)}</span>${unitHtml}\n\n`;
         plainText += `${f.label}: ${val}${unitPlain}\n\n`;
       }
       else if (f.type === 'select') {
         if (!val) return;
-        htmlText += `${f.label}: ${coloredHtml}\n\n`;
+        htmlText += `${label}: ${coloredHtml}\n\n`;
         plainText += `${f.label}: ${val}\n\n`;
-      } 
+      }
       else if (f.type === 'rating') {
         if (!val || val === 0) return;
         const expl = f.showExplanations && f.explanations ? ` — ${f.explanations[val - 1] || ''}` : '';
-        htmlText += `${f.label}: <span class="text-amber-400">${val}${expl}</span>\n\n`;
+        htmlText += `${label}: <span class="text-amber-400">${escapeHtml(val)}${escapeHtml(expl)}</span>\n\n`;
         plainText += `${f.label}: ${val}${expl}\n\n`;
-      } 
+      }
             else if (f.type === 'formula') {
-        const hasAnyValue = (f.variables || []).some((v: any, i: number) => 
+        const hasAnyValue = (f.variables || []).some((v: any, i: number) =>
           fieldsData[`${f.id}_var_${i}`] && String(fieldsData[`${f.id}_var_${i}`]).trim() !== ''
         );
         if (!hasAnyValue) return;
@@ -1289,9 +1317,9 @@ initializeCollapsedState(record.fields);
         const result = val || '';
         if (!result || result === 'NaN') return;
 
-        const unitHtml = f.unit ? ` <span class="text-amber-400">${f.unit}</span>.` : '.';
+        const unitHtml = f.unit ? ` <span class="text-amber-400">${escapeHtml(f.unit)}</span>.` : '.';
         const unitPlain = f.unit ? ` ${f.unit}.` : '.';
-        htmlText += `${f.label}: <span class="text-amber-400">${result}</span>${unitHtml}\n\n`;
+        htmlText += `${label}: <span class="text-amber-400">${escapeHtml(result)}</span>${unitHtml}\n\n`;
         plainText += `${f.label}: ${result}${unitPlain}\n\n`;
       }
     });   // ← эта строка обязательна — закрывает forEach
@@ -2440,7 +2468,7 @@ for (const f of visibleFields) {
             </div>
 
             <div className="px-6 py-4 max-h-[60vh] overflow-y-auto space-y-1">
-              {notesLinks.map((link, i) => (
+              {notesLinks.filter(link => isSafeUrl(link.url)).map((link, i) => (
                 <a
                   key={i}
                   href={link.url}

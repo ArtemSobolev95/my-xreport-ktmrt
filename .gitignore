@@ -36,6 +36,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# локальный PocketBase для разработки (бинарник + база данных + бэкапы) —
+# не должен попадать в git: это одноразовые dev-данные, а не исходный код
+/pocketbase_0/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

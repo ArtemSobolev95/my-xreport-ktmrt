@@ -1,17 +1,33 @@
+/// <reference path="../pb_data/types.d.ts" />
 // pb_hooks/main.pb.js
-routerUse((req, res, next) => {
-    // Разрешаем запросы с твоего текущего домена Amvera
-    res.setHeader("Access-Control-Allow-Origin", "*") // на время можно *, потом заменишь на конкретные домены
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
-    res.setHeader("Access-Control-Allow-Credentials", "true")
+//
+// Раньше здесь стоял CORS-хук в старом (Express-подобном) синтаксисе
+// routerUse((req, res, next) => {...}), который не соответствует API
+// текущей версии PocketBase (0.37) — routerUse отдаёт один объект события
+// `e`, а не (req, res, next). Из-за этого хук фактически не выполнял свою
+// работу так, как задумано. Плюс "*" вместе с Allow-Credentials: true —
+// комбинация, которую браузеры всё равно отклоняют, и просто лишний риск.
+routerUse((e) => {
+    const allowedOrigins = [
+        "https://smartreporting.ru",
+        "https://my-project-artemsobolev.amvera.io",
+        "http://localhost:3000",
+    ];
 
-    // Для preflight запросов (OPTIONS)
-    if (req.method === "OPTIONS") {
-        res.writeHead(204)
-        res.end()
-        return
+    const origin = e.request?.header.get("Origin");
+
+    if (origin && allowedOrigins.includes(origin)) {
+        e.response.header().set("Access-Control-Allow-Origin", origin);
+        e.response.header().set("Access-Control-Allow-Credentials", "true");
     }
 
-    next()
+    e.response.header().set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
+    e.response.header().set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
+
+    if (e.request?.method === "OPTIONS") {
+        e.response.writeHeader(204);
+        return;
+    }
+
+    return e.next();
 })

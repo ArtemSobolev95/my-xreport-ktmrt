@@ -52,6 +52,7 @@ import withAuth from '../../components/withAuth';
 import UserHeader from '../../components/UserHeader';
 import dynamic from 'next/dynamic';
 import { migrateQuickButtons } from '../../lib/migrateQuickButtons';
+import { evaluateFormula } from '../../lib/evaluateFormula';
 
 
 
@@ -123,13 +124,10 @@ function SortableField({
     return values;
   }, [field.variables]);
 
-  const evaluateFormula = (expr: string) => {
+  const evaluateFormulaPreview = (expr: string) => {
     if (!expr) return '—';
     try {
-      const vars = Object.keys(formulaValues);
-      const values = Object.values(formulaValues);
-      const func = new Function(...vars, `return ${expr};`);
-      const result = func(...values);
+      const result = evaluateFormula(expr, formulaValues);
       return isNaN(result) ? 'Ошибка' : Number(result).toFixed(2);
     } catch {
       return 'Ошибка';
@@ -175,6 +173,7 @@ function SortableField({
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('user', pb.authStore.record?.id || '');
 
     try {
       const record = await pb.collection('notes_images').create(formData);
@@ -603,7 +602,7 @@ function SortableField({
             </div>  
             <div className="flex items-center gap-3 mt-1">
               <span className="text-white text-sm mt-1">Результат:</span>
-              <span className="text-white text-sm mt-1">{field.formula ? evaluateFormula(field.formula) : '—'}</span>
+              <span className="text-white text-sm mt-1">{field.formula ? evaluateFormulaPreview(field.formula) : '—'}</span>
               <input type="text" value={field.unit || ''} onChange={e => onUpdate(field.id, { unit: e.target.value })} className="w-9 text-center mt-1 bg-transparent border-0 border-b-2 border-white/20 px-0 py-0.5 text-white text-sm hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all" />
             </div>
           </div>

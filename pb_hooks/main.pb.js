@@ -31,3 +31,33 @@ routerUse((e) => {
 
     return e.next();
 })
+
+// Проверка hCaptcha при регистрации — без этого форма /register была
+// полностью открыта для автоматического создания аккаунтов ботами.
+// HCAPTCHA_SECRET задаётся только как переменная окружения на сервере
+// (никогда не коммитить в git) — если её нет, регистрация отклоняется,
+// а не тихо пропускается, чтобы не оставить защиту случайно выключенной.
+onRecordCreateRequest((e) => {
+    const secret = $os.getenv("HCAPTCHA_SECRET");
+    if (!secret) {
+        throw new BadRequestError("Регистрация временно недоступна (не настроена проверка капчи)");
+    }
+
+    const token = e.requestInfo().body["h-captcha-response"];
+    if (!token) {
+        throw new BadRequestError("Пройдите проверку капчи");
+    }
+
+    const res = $http.send({
+        method: "POST",
+        url: "https://hcaptcha.com/siteverify",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "secret=" + encodeURIComponent(secret) + "&response=" + encodeURIComponent(token),
+    });
+
+    if (!res.json || res.json.success !== true) {
+        throw new BadRequestError("Проверка капчи не пройдена, попробуйте ещё раз");
+    }
+
+    return e.next();
+}, "users")

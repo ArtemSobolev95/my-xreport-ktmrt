@@ -21,6 +21,12 @@ COPY . .
 # теперь он должен быть явно задан здесь.
 ENV NEXT_PUBLIC_POCKETBASE_URL=https://smartreporting.ru
 
+# Site key hCaptcha — публичный по дизайну (в отличие от secret key), поэтому
+# безопасно хранить прямо в Dockerfile. Secret key задаётся ТОЛЬКО как
+# переменная окружения на сервере (Amvera → Settings → Environment),
+# в код/git его добавлять нельзя — его читает pb_hooks/main.pb.js.
+ENV NEXT_PUBLIC_HCAPTCHA_SITE_KEY=e972cf20-0e1e-4a12-81d8-bcf6350a8494
+
 # Устанавливаем зависимости и собираем фронтенд
 RUN npm ci --include=dev
 RUN npm run build

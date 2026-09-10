@@ -83,6 +83,11 @@ const isSafeUrl = (url: string): boolean => {
   }
 };
 
+// Должно совпадать с duration-200 на карточках полей (см. className ниже,
+// где рендерятся карточки) — используется, чтобы не скроллить/фокусировать
+// элемент, пока его ещё двигает CSS-анимация сворачивания/разворачивания.
+const SECTION_TRANSITION_MS = 200;
+
 function FillerPage() {
   const router = useRouter();
   const dialog = useDialog();
@@ -274,8 +279,16 @@ const clearDraft = (templateId: string) => {
   localStorage.removeItem(getDraftKey(templateId));
 };
 
-// Состояние для уведомления о восстановлении черновика
-const [showDraftNotification, setShowDraftNotification] = useState(false);
+// Небольшое исчезающее уведомление в шапке (восстановление черновика,
+// копирование в буфер и т.п.) — один общий тост вместо отдельного
+// состояния на каждый случай.
+const [toastMessage, setToastMessage] = useState<string | null>(null);
+const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+const showToast = (message: string, duration: number) => {
+  if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  setToastMessage(message);
+  toastTimerRef.current = setTimeout(() => setToastMessage(null), duration);
+};
 
     const saveToHistory = () => {
     const snapshot = {
@@ -420,8 +433,10 @@ const openOnlySection = (headerId: string) => {
     return;
   }
 
-  // Открываем этот раздел, остальные закрываем
-  setSkipSectionTransition(true);
+  // Открываем этот раздел, остальные закрываем — анимированно, так же,
+  // как и закрытие (раньше здесь стоял setSkipSectionTransition(true),
+  // из-за чего открытие происходило мгновенно, без анимации, а закрытие —
+  // с анимацией; теперь оба случая ведут себя одинаково).
   setCollapsedHeaders(new Set(allHeaderIds.filter((id: string) => id !== headerId)));
 
   // Ищем первое поле после этого заголовка
@@ -445,17 +460,45 @@ const openOnlySection = (headerId: string) => {
     }
   }
 
-  // Фокус на первое поле
-    if (firstFieldId) {
-    requestAnimationFrame(() => {
+  // Фокус на первое поле — ждём завершения CSS-анимации разворота
+  // (см. SECTION_TRANSITION_MS), иначе scrollIntoView внутри
+  // focusFieldElement целится в ещё двигающийся элемент и дёргается.
+  if (firstFieldId) {
+    setTimeout(() => {
       focusFieldElement(firstFieldId!);
-    });
+    }, SECTION_TRANSITION_MS + 10);
   }
+};
+
+// Заголовок раздела в фокусе при Tab-навигации (см. onKeyDown у заголовка
+// ниже) — открываем его и закрываем остальные, но, в отличие от
+// openOnlySection, фокус остаётся на самом заголовке, а не ныряет в
+// первое поле: так Tab можно продолжать листать заголовки один за другим.
+const focusHeaderForNav = (headerId: string) => {
+  if (!template) return;
+
+  const allHeaderIds = (template.fields || [])
+    .filter((f: BuilderField) => f.type === 'header' && !deletedFieldIds.includes(f.id))
+    .map((f: BuilderField) => f.id);
+
+  setCollapsedHeaders(new Set(allHeaderIds.filter((id: string) => id !== headerId)));
+
+  const el = document.querySelector(`[data-header-id="${headerId}"]`) as HTMLElement | null;
+  el?.focus();
+  setTimeout(() => {
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, SECTION_TRANSITION_MS + 10);
 };
 
 const handleFieldTabNavigation = (
   e: React.KeyboardEvent,
-  fieldId: string
+  fieldId: string,
+  // Для formula-полей с несколькими переменными: индекс текущей переменной
+  // и их общее количество. Без этого Tab с ЛЮБОЙ переменной формулы (не
+  // только последней) считался переходом с "последнего поля раздела" и
+  // сразу прыгал в следующий раздел, даже если у формулы ещё остались
+  // незаполненные переменные.
+  varInfo?: { index: number; total: number }
 ) => {
   if (e.key !== 'Tab' || !template) return;
 
@@ -477,9 +520,11 @@ const handleFieldTabNavigation = (
 
   const section = sections[sectionIndex];
   const pos = section.fieldIds.indexOf(fieldId);
+  const isLastVar = !varInfo || varInfo.index === varInfo.total - 1;
+  const isFirstVar = !varInfo || varInfo.index === 0;
 
   // Tab с последнего поля → следующий раздел
-  if (!e.shiftKey && pos === section.fieldIds.length - 1) {
+  if (!e.shiftKey && pos === section.fieldIds.length - 1 && isLastVar) {
     e.preventDefault();
     const next = sections[sectionIndex + 1];
     if (!next) return;
@@ -488,7 +533,7 @@ const handleFieldTabNavigation = (
   }
 
   // Shift+Tab с первого поля → предыдущий раздел, последнее поле
-  if (e.shiftKey && pos === 0) {
+  if (e.shiftKey && pos === 0 && isFirstVar) {
     e.preventDefault();
     const prev = sections[sectionIndex - 1];
     if (!prev) return;
@@ -634,7 +679,7 @@ useEffect(() => {
   setIsMultipleComparison(false);
   setIsStateAfterActive(false);
   setStateAfterText('');
-  setShowDraftNotification(false);
+  setToastMessage(null);
 };
 
   // === Очистка черновика + сброс к дефолтным значениям ===
@@ -672,7 +717,7 @@ const handleClearDraft = async () => {
   setIsMultipleComparison(false);
   setIsStateAfterActive(false);
   setStateAfterText('');
-  setShowDraftNotification(false);
+  setToastMessage(null);
   initializeCollapsedState(originalTemplate.fields);
 };
  
@@ -979,7 +1024,7 @@ const handleClearDraft = async () => {
         useEffect(() => {
   if (!id) return;
   setLoading(true);
-  setShowDraftNotification(false)
+  setToastMessage(null);
 
 
 
@@ -1064,8 +1109,7 @@ initializeCollapsedState(record.fields);
           setStateAfterText(draft.stateAfterText);
         }
 
-        setShowDraftNotification(true);
-        setTimeout(() => setShowDraftNotification(false), 3800);
+        showToast('Шаблон восстановлен', 3800);
       }
 
     } catch (err) {
@@ -1516,7 +1560,12 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   });
 };
 
-  const copyToClipboard = () => navigator.clipboard.writeText(finalPlainText);
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(finalPlainText).then(
+      () => showToast('Скопировано', 1300),
+      () => showToast('Не удалось скопировать', 1300)
+    );
+  };
 
   const downloadTxt = () => setShowSaveModal(true);
 
@@ -1749,16 +1798,16 @@ for (const f of visibleFields) {
             
         <div className="sticky top-0 z-50 bg-zinc-950 border-b border-white/10">
         <UserHeader>
-          {/* Плавно исчезающее уведомление о черновике */}
+          {/* Плавно исчезающее уведомление (черновик, копирование и т.п.) */}
           <div
-            className={`flex items-center gap-2 px-3 py-1.5 bg-none border border-none 
+            className={`flex items-center gap-2 px-3 py-1.5 bg-none border border-none
                         text-zinc-400 text-sm whitespace-nowrap overflow-hidden transition-all duration-300
-                        ${showDraftNotification 
-                          ? 'opacity-100 max-w-[200px] scale-100 mr-2' 
+                        ${toastMessage
+                          ? 'opacity-100 max-w-[200px] scale-100 mr-2'
                           : 'opacity-0 max-w-0 scale-95 pointer-events-none'
                         }`}
           >
-            Шаблон восстановлен
+            {toastMessage}
           </div>
         </UserHeader>
       </div>               
@@ -1889,7 +1938,7 @@ for (const f of visibleFields) {
     className="py-2 flex items-center justify-between cursor-pointer group select-none outline-none
   rounded-xl px-2
   focus:bg-white/10 focus:text-amber-400
-  focus-visible:ring-2 focus-visible:ring-amber-400/40 focus-visible:ring-inset"
+  focus:ring-2 focus:ring-amber-400/40 focus:ring-inset"
     onClick={() => openOnlySection(f.id)}
     onMouseDown={(e) => {
   // оставляем фокус на заголовке, не уводим в body
@@ -1916,10 +1965,7 @@ for (const f of visibleFields) {
         const nextIdx = e.shiftKey ? idx - 1 : idx + 1;
         if (nextIdx < 0 || nextIdx >= headerIds.length) return;
 
-        const nextEl = document.querySelector(
-          `[data-header-id="${headerIds[nextIdx]}"]`
-        ) as HTMLElement | null;
-        nextEl?.focus();
+        focusHeaderForNav(headerIds[nextIdx]);
       }
     }}
   >
@@ -2076,7 +2122,7 @@ for (const f of visibleFields) {
             onFocus={() => handleFocus(f.id, null)}
             onBlur={handleBlur}
             tabIndex={isSectionCollapsed ? -1 : 0}
-            onKeyDown={e => handleFieldTabNavigation(e, f.id)}
+            onKeyDown={e => handleFieldTabNavigation(e, f.id, { index: i, total: (f.variables || []).length })}
             className="w-20 text-center bg-transparent border-0 px-0 py-0.5 leading-tight text-white text-sm placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all"
             placeholder="0.00"
           />
@@ -2344,7 +2390,7 @@ for (const f of visibleFields) {
                     onChange={(e) => handleComparisonDateChange(e, 0)}
                     placeholder="ДД-ММ-ГГГГ" 
                     maxLength={10}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all text-center"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all text-center"
                   />
                 </div>
               </div>
@@ -2382,7 +2428,7 @@ for (const f of visibleFields) {
                           onChange={(e) => handleComparisonDateChange(e, realIndex)}
                           placeholder="ДД-ММ-ГГГГ" 
                           maxLength={10}
-                          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all text-center"
+                          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all text-center"
                         />
                         <button 
                           onClick={() => {
@@ -2488,7 +2534,7 @@ for (const f of visibleFields) {
     }
   }}
   placeholder="Введите значение или выберите фразу"
-  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all resize-none"
+  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all resize-none"
   rows={3}
 />
               </div>
@@ -2501,7 +2547,7 @@ for (const f of visibleFields) {
                   value={stateAfterSearch}
                   onChange={e => setStateAfterSearch(e.target.value)}
                   placeholder="Поиск по фразам"
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
                 />
               </div>
 
@@ -2712,7 +2758,7 @@ for (const f of visibleFields) {
         placeholder="Поиск..." 
         value={searchTerm} 
         onChange={e => setSearchTerm(e.target.value)} 
-        className="w-full bg-white/5 border border-white/10 rounded-2xl pl-11 pr-6 py-3 text-sm text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none"
+        className="w-full bg-white/5 border border-white/10 rounded-2xl pl-11 pr-6 py-3 text-sm text-white placeholder:text-zinc-400 focus:outline-none"
       />
     </div>
   </div>
@@ -2807,14 +2853,14 @@ for (const f of visibleFields) {
       value={newAbbrText} 
       onChange={e => setNewAbbrText(e.target.value)} 
       placeholder="Аббревиатура" 
-      className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none"
+      className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none"
     />
     <input 
       type="text" 
       value={newFullText} 
       onChange={e => setNewFullText(e.target.value)} 
       placeholder="Фраза" 
-      className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none"
+      className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none"
     />
     <button 
       onClick={addNewAbbreviation} 
@@ -2894,7 +2940,7 @@ for (const f of visibleFields) {
                       value={fullName} 
                       onChange={(e) => setFullName(e.target.value)} 
                       placeholder="Введите имя" 
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all"
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
                     />
                   </div>
 
@@ -2905,7 +2951,7 @@ for (const f of visibleFields) {
                       value={birthDate} 
                       onChange={(e) => setBirthDate(e.target.value)} 
                       placeholder="Введите дату" 
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all"
+                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
                     />
                   </div>
                 </div>

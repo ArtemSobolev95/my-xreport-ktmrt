@@ -475,7 +475,7 @@ function SortableField({
         onChange={e => onUpdate(field.id, { max: parseInt(e.target.value) || 5 })} 
         min={2} 
         max={10} 
-        className="w-20 px-4 py-1 bg-white/5 border border-white/10 rounded-2xl text-white text-center focus:border-amber-400 focus:outline-none transition-all" 
+        className="w-20 px-4 py-1 bg-white/5 border border-white/10 rounded-2xl text-white text-center focus:outline-none transition-all" 
       />
     </div>
 
@@ -1174,7 +1174,7 @@ setFields(migratedFields);
                   type="text" 
                   value={tempLinkText} 
                   onChange={e => setTempLinkText(e.target.value)} 
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
                   placeholder="Введите значение"
                 />
               </div>
@@ -1185,7 +1185,7 @@ setFields(migratedFields);
                   type="text" 
                   value={tempLinkUrl} 
                   onChange={e => setTempLinkUrl(e.target.value)} 
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:border-amber-400 focus:outline-none transition-all"
+                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
                   placeholder="Введите значение "
                 />
               </div>

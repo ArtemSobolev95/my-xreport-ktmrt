@@ -15,6 +15,7 @@ import { migrateQuickButtons } from '../lib/migrateQuickButtons';
 import { evaluateFormula } from '../lib/evaluateFormula';
 import { generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
+import { useDialog } from '../components/DialogProvider';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
 
@@ -83,6 +84,7 @@ const isSafeUrl = (url: string): boolean => {
 
 function FillerPage() {
   const router = useRouter();
+  const dialog = useDialog();
   const { id } = router.query;
   const user = pb.authStore.record; // openButtonId и newGroupName больше не используются —
   const [template, setTemplate] = useState<Template | null>(null);
@@ -594,12 +596,13 @@ useEffect(() => {
     }, 200);
   };
 
-  const resetToDefault = () => {
+  const resetToDefault = async () => {
   if (!originalTemplate || !id) return;
 
   // Подтверждение перед сбросом
-  const confirmed = confirm(
-    'Сбросить протокол к исходному состоянию?\n\nВсе введённые данные будут удалены.'
+  const confirmed = await dialog.confirm(
+    'Сбросить протокол к исходному состоянию?\n\nВсе введённые данные будут удалены.',
+    { danger: true, confirmText: 'Сбросить' }
   );
   if (!confirmed) return;
 
@@ -634,10 +637,14 @@ useEffect(() => {
 };
 
   // === Очистка черновика + сброс к дефолтным значениям ===
-const handleClearDraft = () => {
+const handleClearDraft = async () => {
   if (!id || !template || !originalTemplate) return;
 
-  if (!confirm('Очистить черновик? Все введённые данные будут удалены.')) {
+  const confirmed = await dialog.confirm('Очистить черновик? Все введённые данные будут удалены.', {
+    danger: true,
+    confirmText: 'Очистить',
+  });
+  if (!confirmed) {
     return;
   }
 
@@ -985,7 +992,7 @@ const handleClearDraft = () => {
       // Проверка доступа
       const ownerId = typeof record.user === 'string' ? record.user : record.user?.id || '';
       if (ownerId !== pb.authStore.record?.id && !record.isPublic) {
-        alert('У вас нет доступа к этому шаблону');
+        await dialog.alert('У вас нет доступа к этому шаблону');
         router.push('/');
         return;
       }
@@ -1062,7 +1069,7 @@ initializeCollapsedState(record.fields);
 
     } catch (err) {
       console.error("Ошибка загрузки шаблона:", err);
-      alert("Шаблон не найден или у вас нет доступа");
+      await dialog.alert("Шаблон не найден или у вас нет доступа");
       router.push('/');
     } finally {
       setLoading(false);
@@ -1310,7 +1317,7 @@ useEffect(() => {
 const insertPhrase = (phrase: string) => {
   const fieldId = activeFieldRef.current;
   if (!fieldId) {
-    alert('Поставьте курсор в нужное текстовое поле слева');
+    dialog.alert('Поставьте курсор в нужное текстовое поле слева');
     return;
   }
 
@@ -1535,8 +1542,8 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
     const file = e.target.files?.[0];
     if (!file) return;
     importAbbreviationsFile(file)
-      .then(() => alert('Импорт выполнен!'))
-      .catch(() => alert('Ошибка импорта'));
+      .then(() => dialog.alert('Импорт выполнен!'))
+      .catch(() => dialog.alert('Ошибка импорта'));
   };
 
   const addNewGroup = () => {
@@ -1973,17 +1980,35 @@ for (const f of visibleFields) {
       className="flex flex-1 items-center gap-3 cursor-pointer text-sm group min-w-0"
       onClick={() => handleFocus(f.id, null)}
     >
-      <input
-        ref={el => { if (el) inputRefs.current[f.id] = el; }}
-        type="checkbox"
-        checked={!!fieldsData[f.id]}
-        onChange={e => updateField(f.id, e.target.checked)}
-        onFocus={() => handleFocus(f.id, null)}
-        onBlur={handleBlur}
-        tabIndex={isSectionCollapsed ? -1 : 0}
-        onKeyDown={e => handleFieldTabNavigation(e, f.id)}  
-        className="w-5 h-5 accent-amber-400 border-2 border-white/40 bg-transparent rounded focus:ring-2 focus:ring-amber-400/30 focus:outline-none transition-all cursor-pointer"
-      />
+      <span className="relative inline-flex shrink-0">
+        <input
+          ref={el => { if (el) inputRefs.current[f.id] = el; }}
+          type="checkbox"
+          checked={!!fieldsData[f.id]}
+          onChange={e => updateField(f.id, e.target.checked)}
+          onFocus={() => handleFocus(f.id, null)}
+          onBlur={handleBlur}
+          tabIndex={isSectionCollapsed ? -1 : 0}
+          onKeyDown={e => handleFieldTabNavigation(e, f.id)}
+          className="peer sr-only"
+        />
+        <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-all flex items-center justify-center">
+          {!!fieldsData[f.id] && (
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={3}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-3.5 h-3.5 text-black"
+            >
+              <path d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </span>
+      </span>
       <span className={`transition-colors ${fieldsData[f.id] ? 'text-amber-400' : 'text-white group-hover:text-amber-400'}`}>
         {f.label}
       </span>
@@ -2241,9 +2266,9 @@ for (const f of visibleFields) {
                 </button>
             <button onClick={copyToClipboard} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Скопировать (Ctrl+Shift+C)" ><Copy size={22} /></button>
             <button onClick={resetToDefault} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Сбросить протокол (Ctrl+Shift+R)" ><RotateCcw size={22} /></button>
-            <button onClick={downloadTxt} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Сохранить" ><Download size={22}/></button>
+            <button onClick={downloadTxt} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 shadow-none active:shadow-none transition-all tooltip" data-tip="Сохранить" ><Download size={22}/></button>
             <button onClick={goToTemplateList} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="К списку шаблонов (Ctrl+Shift+H)" ><Home size={22} /></button>
-            <button onClick={() => setShowAbbrModal(true)} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Автокоррекции" ><Settings size={22} /></button>    
+            <button onClick={() => setShowAbbrModal(true)} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 shadow-none active:shadow-none transition-all tooltip" data-tip="Автокоррекции" ><Settings size={22} /></button>
           </div>
         </div>
       </div>

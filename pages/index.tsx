@@ -10,9 +10,11 @@ import UserHeader from '../components/UserHeader';
 import { PlusIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { TemplateListItem } from '../types/builder';
+import { useDialog } from '../components/DialogProvider';
 
 function HomePage() {
   const router = useRouter();
+  const dialog = useDialog();
   const user = pb.authStore.record;
   const [templates, setTemplates] = useState<TemplateListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -87,14 +89,15 @@ function HomePage() {
 };
 
   const deleteTemplate = async (id: string, title: string) => {
-  if (!confirm(`Удалить шаблон "${title}"?`)) return;
+  const confirmed = await dialog.confirm(`Удалить шаблон "${title}"?`, { danger: true, confirmText: 'Удалить' });
+  if (!confirmed) return;
 
   try {
     await pb.collection('templates').delete(id);
     loadTemplates();
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    alert('Ошибка при удалении: ' + message);
+    await dialog.alert('Ошибка при удалении: ' + message);
   }
 };
 
@@ -220,7 +223,6 @@ function HomePage() {
   {/* Кнопка справа */}
   <Link
     href="/builder"
-    tabIndex={-1}
     className="absolute right-0 top-1/2 -translate-y-1/2 text-sm font-bold text-white hover:text-amber-400 transition-colors"
   >
     Новый шаблон

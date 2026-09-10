@@ -2,9 +2,11 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
+import { useDialog } from '../components/DialogProvider';
 
 export default function Login() {
   const router = useRouter();
+  const dialog = useDialog();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -33,15 +35,15 @@ export default function Login() {
         console.log('🚀 Выполняем confirmVerification...');
         await pb.collection('users').confirmVerification(token);
         console.log('Email успешно подтверждён');
-        alert('Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
+        await dialog.alert('Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
       } catch (err: any) {
         console.error('Ошибка confirmVerification:', err);
-        alert('Не удалось подтвердить email. Попробуйте войти вручную.');
+        await dialog.alert('Не удалось подтвердить email. Попробуйте войти вручную.');
       }
     };
 
     confirmEmail();
-  }, [router.isReady, queryToken]);
+  }, [router.isReady, queryToken, dialog]);
 
   
 
@@ -101,7 +103,7 @@ export default function Login() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-1 border-none hover:text-amber-400 font-semibold rounded-2xl transition-all disabled:opacity-50 cursor-pointer"
+            className="w-full py-4 bg-amber-400 hover:bg-amber-500 text-black font-semibold rounded-2xl transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {loading ? 'Вход...' : 'Войти'}
           </button>

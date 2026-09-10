@@ -3,6 +3,7 @@ import { useState, useRef } from 'react';
 import { useRouter } from 'next/router';
 import HCaptcha from '@hcaptcha/react-hcaptcha';
 import pb from '../lib/pocketbase';
+import { useDialog } from '../components/DialogProvider';
 
 // Тестовый sitekey hCaptcha (всегда проходит без реального решения) —
 // используется, если явно не задан свой через переменную окружения, чтобы
@@ -12,6 +13,7 @@ const HCAPTCHA_SITE_KEY =
 
 export default function Register() {
   const router = useRouter();
+  const dialog = useDialog();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
@@ -49,7 +51,7 @@ export default function Register() {
       // 2. Отправляем письмо для подтверждения
       await pb.collection('users').requestVerification(email);
 
-      alert('Регистрация прошла успешно!\n\nНа вашу почту отправлено письмо с ссылкой для подтверждения.\n\nПосле подтверждения вы сможете войти.');
+      await dialog.alert('Регистрация прошла успешно!\n\nНа вашу почту отправлено письмо с ссылкой для подтверждения.\n\nПосле подтверждения вы сможете войти.');
 
       router.push('/login'); // сразу отправляем на страницу входа
 
@@ -117,7 +119,7 @@ export default function Register() {
           <button
             type="submit"
             disabled={loading || !captchaToken}
-            className="w-full py-4 bg-none hover:text-amber-400 font-semibold rounded-2xl transition-all disabled:opacity-50 cursor-pointer"
+            className="w-full py-4 bg-amber-400 hover:bg-amber-500 text-black font-semibold rounded-2xl transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {loading ? 'Регистрация...' : 'Зарегистрироваться'}
           </button>

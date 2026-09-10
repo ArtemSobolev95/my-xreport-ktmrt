@@ -53,6 +53,7 @@ import UserHeader from '../../components/UserHeader';
 import dynamic from 'next/dynamic';
 import { migrateQuickButtons } from '../../lib/migrateQuickButtons';
 import { evaluateFormula } from '../../lib/evaluateFormula';
+import { useDialog } from '../DialogProvider';
 
 
 
@@ -111,6 +112,7 @@ function SortableField({
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
+  const dialog = useDialog();
 
   const [checked, setChecked] = useState(false);
   const [selectedRating, setSelectedRating] = useState<number | null>(null);
@@ -186,7 +188,7 @@ function SortableField({
       setShowAddLinkModal(true);
     } catch (err: unknown) {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        alert('Ошибка загрузки изображения: ' + errorMessage);
+        dialog.alert('Ошибка загрузки изображения: ' + errorMessage);
     }
   };
   input.click();
@@ -335,11 +337,22 @@ function SortableField({
           <div>
             <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="block w-full text-sm font-medium text-zinc-400 mb-2 bg-transparent outline-none" placeholder="Название" />
             <div className="flex items-center gap-3">
-              <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="w-5 h-5 accent-zinc-400" />
+              <label className="relative inline-flex shrink-0 cursor-pointer">
+                <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="peer sr-only" />
+                <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-all flex items-center justify-center">
+                  {checked && (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-black">
+                      <path d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </span>
+              </label>
               <input type="text" value={field.checkedPhrase || ''} onChange={e => onUpdate(field.id, { checkedPhrase: e.target.value })} className="flex-1 bg-transparent outline-none text-white text-sm" placeholder="Введите значение при галочке" />
             </div>
             <div className="flex items-center gap-3 mt-2">
-              <input type="checkbox" checked={false} disabled className="w-5 h-5 accent-zinc-400" />
+              <span className="relative inline-flex shrink-0 opacity-40">
+                <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent flex items-center justify-center" />
+              </span>
               <input type="text" value={field.uncheckedPhrase || ''} onChange={e => onUpdate(field.id, { uncheckedPhrase: e.target.value })} className="flex-1 bg-transparent outline-none text-white text-sm" placeholder="Введите значение при пустом чекбоксе" />
             </div>
           </div>
@@ -618,6 +631,7 @@ function SortableField({
 
 function TemplateBuilder() {
   const router = useRouter();
+  const dialog = useDialog();
   const user = pb.authStore.record;
   const { edit } = router.query;
   const [templateTitle, setTemplateTitle] = useState("Новый шаблон");
@@ -816,7 +830,7 @@ setFields(migratedFields);
       } catch (err: unknown) {
      console.error("Ошибка сохранения шаблона:", err);
      const errorMessage = err instanceof Error ? err.message : String(err);
-     alert("Ошибка при сохранении шаблона: " + errorMessage);
+     await dialog.alert("Ошибка при сохранении шаблона: " + errorMessage);
    } finally {
         setIsSaving(false);
         setShowSaveModal(false);
@@ -829,7 +843,7 @@ setFields(migratedFields);
 
   const goToFiller = () => {
     if (editingId) router.push(`/filler?id=${editingId}`);
-    else alert('Сначала сохраните шаблон');
+    else dialog.alert('Сначала сохраните шаблон');
   };
 
   const goToList = () => router.push('/');
@@ -879,7 +893,7 @@ setFields(migratedFields);
         >
           <SortableContext items={fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
             <div className="space-y-2 max-w-3xl mx-auto">
-              {fields.length === 0 && <div className="text-center py-24 text-zinc-500 border-2 border-none border-zinc-700 rounded-none">Выберите инсутрумент из левой панели</div>}
+              {fields.length === 0 && <div className="text-center py-24 text-zinc-500 border-2 border-none border-zinc-700 rounded-none">Выберите инструмент из левой панели</div>}
               {fields.map(field => (
                 <SortableField 
   key={field.id} 

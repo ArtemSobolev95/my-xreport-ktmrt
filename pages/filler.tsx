@@ -1895,6 +1895,7 @@ for (const f of visibleFields) {
       <input
         type="text"
         tabIndex={-1}
+        data-custom-focus
         value={f.label || ''}
         onChange={(e) => updateFieldLabel(f.id, e.target.value)}
         onFocus={() => handleFocus(f.id, null)}
@@ -1999,6 +2000,7 @@ for (const f of visibleFields) {
         {f.type === 'text' && (
   <textarea
     ref={el => { if (el) inputRefs.current[f.id] = el; }}
+    data-custom-focus
     value={fieldsData[f.id] || ''}
     onChange={e => { handleInputChange(f.id, e.target.value); autoResize(e.target); }}
     onKeyDown={e => {
@@ -2018,6 +2020,7 @@ for (const f of visibleFields) {
           <input
             ref={el => { if (el) inputRefs.current[f.id] = el; }}
             type="text"
+            data-custom-focus
             value={fieldsData[f.id] || ''}
             onChange={e => handleInputChange(f.id, e.target.value)}
             onFocus={(e) => handleFocus(f.id, e.target)}
@@ -2096,6 +2099,7 @@ for (const f of visibleFields) {
                 {f.type === 'select' && (
                   <select
                     ref={el => { if (el) inputRefs.current[f.id] = el; }}
+                    data-custom-focus
                     value={fieldsData[f.id] || ''}
                     onChange={e => updateField(f.id, e.target.value)}
                     onFocus={() => handleFocus(f.id, null)}
@@ -2125,6 +2129,7 @@ for (const f of visibleFields) {
           <input
             ref={el => { if (el) inputRefs.current[`${f.id}_var_${i}`] = el; }}
             type="text"
+            data-custom-focus
             value={fieldsData[`${f.id}_var_${i}`] || ''}
             onChange={e => updateField(`${f.id}_var_${i}`, e.target.value)}
             onFocus={() => handleFocus(f.id, null)}

@@ -6,29 +6,26 @@
    при переходе по Tab невозможно было увидеть, где сейчас фокус.
    :focus-visible показывает индикатор только при навигации с клавиатуры,
    не мешая обычным кликам мышью.
+
+   Вместо стандартного outline с отступом (визуально — «браузерная»
+   рамка, оторванная от контура элемента) — тонкое кольцо внутрь
+   (inset box-shadow): оно повторяет собственный border-radius элемента
+   и выглядит как часть дизайна, а не как системная обводка.
    !important нужен: у Tailwind-утилит вроде focus:outline-none/
    focus-visible:ring-0 специфичность выше обычного селектора по тегу,
    а таких мест в компонентах ещё много — без !important это правило
-   молча перекрывалось бы ими. */
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-[tabindex]:focus-visible {
-  outline: 2px solid rgba(251, 191, 36, 0.6) !important;
-  outline-offset: 2px !important;
-  border-radius: 4px;
-}
+   молча перекрывалось бы ими.
 
-/* Несколько элементов уже несут собственное кольцо фокуса (Tailwind
-   focus-visible:ring), нарисованное как box-shadow, — секция-заголовки
-   в filler.tsx, кнопки модалок, кнопки шкалы оценки. Поверх него
-   правило выше рисовало ещё и свой outline: получались двойные рамки,
-   а у заголовков (ring-inset вплотную к соседним карточкам) outline
-   визуально обрезался сверху/снизу соседями. Отключаем outline именно
-   для этих элементов — их собственное кольцо остаётся единственным. */
-[data-custom-focus]:focus-visible,
-[data-header-id]:focus-visible {
+   [data-custom-focus] и [data-header-id] исключены из селектора:
+   у этих элементов уже есть собственное, осознанно другое кольцо
+   (например, красное у опасных кнопок в модалках) — им это правило
+   мешать не должно. */
+button:focus-visible:not([data-custom-focus]),
+a:focus-visible:not([data-custom-focus]),
+input:focus-visible:not([data-custom-focus]),
+select:focus-visible:not([data-custom-focus]),
+textarea:focus-visible:not([data-custom-focus]),
+[tabindex]:focus-visible:not([data-custom-focus]):not([data-header-id]) {
   outline: none !important;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.55) inset !important;
 }

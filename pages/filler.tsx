@@ -1858,7 +1858,7 @@ for (const f of visibleFields) {
               <button
                 onClick={() => addTextFieldAfter(f.id)}
                 tabIndex={-1}
-                className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-amber-400 hover:bg-transparent border-0 shadow-none p-0"
+                className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
                 title="Добавить поле"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
@@ -1868,7 +1868,7 @@ for (const f of visibleFields) {
               <button
                 onClick={() => removeField(f.id)}
                 tabIndex={-1}
-                className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-red-400 hover:bg-transparent border-0 shadow-none p-0"
+                className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
                 title="Удалить"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
@@ -2017,7 +2017,7 @@ for (const f of visibleFields) {
       <button
         onClick={() => addTextFieldAfter(f.id)}
         tabIndex={-1}
-        className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-amber-400 hover:bg-transparent border-0 shadow-none p-0"
+        className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
         title="Добавить поле"
       >
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
@@ -2027,7 +2027,7 @@ for (const f of visibleFields) {
       <button
         onClick={() => removeField(f.id)}
         tabIndex={-1}
-        className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-red-400 hover:bg-transparent border-0 shadow-none p-0"
+        className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
         title="Удалить"
       >
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
@@ -2792,7 +2792,7 @@ for (const f of visibleFields) {
             onClick={() => setDeleteConfirm({ type: 'abbreviation', id: abbr, name: abbr })}
             className="text-white hover:text-red-400 transition-colors cursor-pointer"
           >
-            <Trash2 size={17} />
+            <Trash2 size={16} />
           </button>
         </div>
       ))
@@ -2849,7 +2849,7 @@ for (const f of visibleFields) {
       <div className="px-6 py-5 flex gap-3">
         <button
           onClick={() => setDeleteConfirm(null)}
-          className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer"
+          className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer"
         >
           Отмена
         </button>
@@ -2862,7 +2862,7 @@ for (const f of visibleFields) {
             }
             setDeleteConfirm(null);
           }}
-          className="flex-1 py-3 bg-white/5 hover:bg-red-500/10 border border-white/10 hover:border-red-400 rounded-2xl text-white hover:text-red-400 text-sm font-medium transition-all cursor-pointer"
+          className="flex-1 py-3.5 bg-white/5 hover:bg-red-500/10 border border-white/10 hover:border-red-400 rounded-2xl text-white hover:text-red-400 text-sm font-medium transition-all cursor-pointer"
         >
           Удалить
         </button>

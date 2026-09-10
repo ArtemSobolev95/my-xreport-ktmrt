@@ -78,7 +78,7 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
               {!pending.isAlert && (
                 <button
                   onClick={() => close(false)}
-                  className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/40"
+                  className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/40"
                 >
                   {pending.cancelText}
                 </button>
@@ -86,10 +86,10 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
               <button
                 onClick={() => close(true)}
                 autoFocus
-                className={`flex-1 py-3 rounded-2xl text-sm font-medium transition-all cursor-pointer border focus:outline-none focus-visible:ring-2 ${
+                className={`flex-1 py-3.5 bg-white/5 border rounded-2xl text-sm font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 ${
                   pending.danger
-                    ? 'bg-white/5 hover:bg-red-500/10 border-white/10 hover:border-red-400 text-white hover:text-red-400 focus-visible:ring-red-400/40'
-                    : 'bg-amber-400 hover:bg-amber-500 border-transparent text-black focus-visible:ring-amber-400/40'
+                    ? 'hover:bg-red-500/10 border-white/10 hover:border-red-400 text-white hover:text-red-400 focus-visible:ring-red-400/40'
+                    : 'hover:bg-amber-400/10 border-white/10 hover:border-amber-400 text-white hover:text-amber-300 focus-visible:ring-amber-400/40'
                 }`}
               >
                 {pending.confirmText}

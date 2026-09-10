@@ -369,7 +369,7 @@ function SortableField({
             <div className="space-y-0.5">
               {(field.options || []).map((option, index) => (
                 <div key={index} className="flex items-center gap-2">
-                  
+
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -398,45 +398,47 @@ function SortableField({
                     placeholder="Введите значение"
                   />
 
-                  {/* Стрелки перемещения — СПРАВА (как в заметках) */}
-                  <div className="flex flex-col">
+                  {/* Стрелки перемещения и удаление */}
+                  <div className="flex items-center">
+                    <div className="flex flex-col">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (index === 0) return;
+                          const newOptions = [...(field.options || [])];
+                          [newOptions[index], newOptions[index - 1]] = [newOptions[index - 1], newOptions[index]];
+                          onUpdate(field.id, { options: newOptions });
+                        }}
+                        className="text-zinc-400 hover:text-white px-1 cursor-pointer"
+                      >
+                        <ChevronUp size={16} />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const newOptions = [...(field.options || [])];
+                          if (index === newOptions.length - 1) return;
+                          [newOptions[index], newOptions[index + 1]] = [newOptions[index + 1], newOptions[index]];
+                          onUpdate(field.id, { options: newOptions });
+                        }}
+                        className="text-zinc-400 hover:text-white px-1 transition-all cursor-pointer"
+                      >
+                        <ChevronDown size={16} />
+                      </button>
+                    </div>
+
+                    {/* Кнопка удаления */}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (index === 0) return;
-                        const newOptions = [...(field.options || [])];
-                        [newOptions[index], newOptions[index - 1]] = [newOptions[index - 1], newOptions[index]];
+                        const newOptions = field.options?.filter((_, i) => i !== index) || [];
                         onUpdate(field.id, { options: newOptions });
                       }}
-                      className="text-zinc-400 hover:text-white px-1 cursor-pointer"
+                      className="text-zinc-400 hover:text-red-400 transition-all cursor-pointer ml-1"
                     >
-                      <ChevronUp size={16} />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const newOptions = [...(field.options || [])];
-                        if (index === newOptions.length - 1) return;
-                        [newOptions[index], newOptions[index + 1]] = [newOptions[index + 1], newOptions[index]];
-                        onUpdate(field.id, { options: newOptions });
-                      }}
-                      className="text-zinc-400 hover:text-white px-1 transition-all cursor-pointer"
-                    >
-                      <ChevronDown size={16} />
+                      <MinusIcon className="w-4 h-4" />
                     </button>
                   </div>
-
-          {/* Кнопка удаления */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              const newOptions = field.options?.filter((_, i) => i !== index) || [];
-              onUpdate(field.id, { options: newOptions });
-            }}
-            className="text-zinc-400 hover:text-red-400 transition-all cursor-pointer"
-          >
-            <MinusIcon className="w-4 h-4" />
-          </button>
         </div>
       ))}
 
@@ -446,7 +448,7 @@ function SortableField({
           const newOptions = [...(field.options || []), ''];
           onUpdate(field.id, { options: newOptions });
         }}
-        className="w-full flex items-center justify-center py-0.5 text-blue-400 hover:text-blue-300"
+        className="w-full flex items-center justify-center py-0.5"
       >
         <PlusIcon className="w-5 h-5 text-white hover:text-amber-400 transition-all cursor-pointer" />
       </button>
@@ -1009,7 +1011,7 @@ setFields(migratedFields);
           }}
           className="text-white hover:text-red-400 transition-all cursor-pointer"
         >
-          <Trash2 size={17} />
+          <Trash2 size={16} />
         </button>
       </div>
 
@@ -1190,15 +1192,15 @@ setFields(migratedFields);
             </div>
 
             <div className="px-6 pb-6 flex gap-3">
-              <button 
-                onClick={() => setShowAddLinkModal(false)} 
-                className="flex-1 py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-white font-medium transition-all cursor-pointer"
+              <button
+                onClick={() => setShowAddLinkModal(false)}
+                className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm text-white font-medium transition-all cursor-pointer"
               >
                 Отмена
               </button>
-              <button 
-                onClick={() => handleAddLink(selectedFieldId!)} 
-                className="flex-1 py-4 bg-white/5 hover:bg-amber-400/10 hover:text-amber-400 border border-white/10 hover:border-amber-400 rounded-2xl text-white font-medium transition-all cursor-pointer"
+              <button
+                onClick={() => handleAddLink(selectedFieldId!)}
+                className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 hover:text-amber-300 border border-white/10 hover:border-amber-400 rounded-2xl text-sm text-white font-medium transition-all cursor-pointer"
               >
                 Добавить
               </button>

@@ -23,7 +23,7 @@ export default function UserHeader({ children }: UserHeaderProps) {
       {/* Левая часть */}
       <div className="flex items-center gap-3">
         <div className="w-8 h-8 bg-amber-400/10 rounded-2xl flex items-center justify-center text-amber-400">
-          <User size={25} />
+          <User size={24} />
         </div>
         <span className="font-semibold text-white tracking-tight text-sm hidden sm:block">
           Smart Reporting

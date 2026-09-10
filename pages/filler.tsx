@@ -470,24 +470,19 @@ const openOnlySection = (headerId: string) => {
   }
 };
 
-// Заголовок раздела в фокусе при Tab-навигации (см. onKeyDown у заголовка
-// ниже) — открываем его и закрываем остальные, но, в отличие от
-// openOnlySection, фокус остаётся на самом заголовке, а не ныряет в
-// первое поле: так Tab можно продолжать листать заголовки один за другим.
+// Переход фокуса между заголовками при Tab-навигации (см. onKeyDown у
+// заголовка ниже). Раскрытие/закрытие раздела сюда НЕ входит — это
+// отдельное действие по Enter/Space или Ctrl+E. Функция только переводит
+// фокус на соседний заголовок и прокручивает его в область видимости —
+// используется лишь когда текущий раздел свёрнут (внутри него нет
+// табируемых полей, поэтому естественный порядок Tab через него
+// "перепрыгнуть" не может); если раздел уже раскрыт, обработчик ниже
+// вообще не вызывает эту функцию и отдаёт Tab браузеру, чтобы фокус ушёл
+// в содержимое раздела.
 const focusHeaderForNav = (headerId: string) => {
-  if (!template) return;
-
-  const allHeaderIds = (template.fields || [])
-    .filter((f: BuilderField) => f.type === 'header' && !deletedFieldIds.includes(f.id))
-    .map((f: BuilderField) => f.id);
-
-  setCollapsedHeaders(new Set(allHeaderIds.filter((id: string) => id !== headerId)));
-
   const el = document.querySelector(`[data-header-id="${headerId}"]`) as HTMLElement | null;
   el?.focus();
-  setTimeout(() => {
-    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, SECTION_TRANSITION_MS + 10);
+  el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
 
 const handleFieldTabNavigation = (
@@ -536,7 +531,14 @@ const handleFieldTabNavigation = (
   if (e.shiftKey && pos === 0 && isFirstVar) {
     e.preventDefault();
     const prev = sections[sectionIndex - 1];
-    if (!prev) return;
+    if (!prev) {
+      // Это самый первый раздел — предыдущего нет, возвращаем фокус
+      // на заголовок текущего раздела (иначе Shift+Tab тут молча
+      // ничего не делал бы, что выглядит как залипание фокуса).
+      const el = document.querySelector(`[data-header-id="${section.headerId}"]`) as HTMLElement | null;
+      el?.focus();
+      return;
+    }
 
     const allHeaderIds = sections.map(s => s.headerId);
     setSkipSectionTransition(true);
@@ -1952,6 +1954,12 @@ for (const f of visibleFields) {
       }
 
       if (e.key === 'Tab') {
+        // Раздел уже раскрыт — не мешаем: естественный порядок Tab сам
+        // уведёт фокус в первое (или последнее — при Shift+Tab это была
+        // бы предыдущая табируемая точка) поле раздела, у полей уже
+        // выставлен корректный tabIndex в зависимости от collapsedHeaders.
+        if (!collapsedHeaders.has(f.id)) return;
+
         e.preventDefault();
         if (!template) return;
 

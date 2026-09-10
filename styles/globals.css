@@ -20,3 +20,15 @@ textarea:focus-visible,
   outline-offset: 2px !important;
   border-radius: 4px;
 }
+
+/* Несколько элементов уже несут собственное кольцо фокуса (Tailwind
+   focus-visible:ring), нарисованное как box-shadow, — секция-заголовки
+   в filler.tsx, кнопки модалок, кнопки шкалы оценки. Поверх него
+   правило выше рисовало ещё и свой outline: получались двойные рамки,
+   а у заголовков (ring-inset вплотную к соседним карточкам) outline
+   визуально обрезался сверху/снизу соседями. Отключаем outline именно
+   для этих элементов — их собственное кольцо остаётся единственным. */
+[data-custom-focus]:focus-visible,
+[data-header-id]:focus-visible {
+  outline: none !important;
+}

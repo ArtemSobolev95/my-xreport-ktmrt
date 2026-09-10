@@ -53,6 +53,7 @@ const RatingField = ({
               key={score}
               onClick={() => handleClick(score)}
               tabIndex={disabled ? -1 : 0}
+              data-custom-focus
               className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-xl transition-all border cursor-pointer
                 focus:outline-none focus-visible:border-amber-400 focus-visible:ring-2 focus-visible:ring-amber-400/40
                 ${isActive
@@ -1954,7 +1955,7 @@ for (const f of visibleFields) {
     onBlur={handleBlur}
     tabIndex={isSectionCollapsed ? -1 : 0}
     rows={1}
-    className="w-full bg-transparent border-0 border-b-2 border-zinc-600 px-1 py-0.5 leading-tight text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
+    className="w-full bg-transparent border-0 px-1 py-0.5 leading-tight text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
     placeholder={f.placeholder || 'Введите значение'}
   />
 )}
@@ -1969,7 +1970,7 @@ for (const f of visibleFields) {
             tabIndex={isSectionCollapsed ? -1 : 0}
             onKeyDown={e => handleFieldTabNavigation(e, f.id)}
             onBlur={handleBlur}
-            className="w-20 text-center bg-transparent border-0 border-b-2 border-zinc-600 px-1 py-0.5 mb-1 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
+            className="w-20 text-center bg-transparent border-0 px-1 py-0.5 mb-1 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
             placeholder={f.placeholder || '0.00'}
           />
         )}
@@ -2076,7 +2077,7 @@ for (const f of visibleFields) {
             onBlur={handleBlur}
             tabIndex={isSectionCollapsed ? -1 : 0}
             onKeyDown={e => handleFieldTabNavigation(e, f.id)}
-            className="w-20 text-center bg-transparent border-0 border-b-2 border-zinc-600 px-0 py-0.5 leading-tight text-white text-sm placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all"
+            className="w-20 text-center bg-transparent border-0 px-0 py-0.5 leading-tight text-white text-sm placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all"
             placeholder="0.00"
           />
         </div>

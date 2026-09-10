@@ -78,6 +78,7 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
               {!pending.isAlert && (
                 <button
                   onClick={() => close(false)}
+                  data-custom-focus
                   className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/40"
                 >
                   {pending.cancelText}
@@ -86,6 +87,7 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
               <button
                 onClick={() => close(true)}
                 autoFocus
+                data-custom-focus
                 className={`flex-1 py-3.5 bg-white/5 border rounded-2xl text-sm font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 ${
                   pending.danger
                     ? 'hover:bg-red-500/10 border-white/10 hover:border-red-400 text-white hover:text-red-400 focus-visible:ring-red-400/40'

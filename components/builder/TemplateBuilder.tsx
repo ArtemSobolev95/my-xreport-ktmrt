@@ -286,7 +286,7 @@ function SortableField({
                 type="text" 
                 value={field.placeholder || ''} 
                 onChange={e => onUpdate(field.id, { placeholder: e.target.value })} 
-                className="w-full bg-transparent border-0 border-b-2 border-white/20 px-0 py-0.5 leading-tight text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm" 
+                className="w-full bg-transparent border-0 px-0 py-0.5 leading-tight text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm" 
                 placeholder="Введите значение" 
               />
             </div>
@@ -314,7 +314,7 @@ function SortableField({
           step="any" 
           value={field.defaultValue || ''} 
           onChange={e => onUpdate(field.id, { defaultValue: e.target.value })} 
-          className="w-10 text-center text-sm bg-transparent border-0 border-b-2 border-white/20 px-0 py-0.5 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all" 
+          className="w-10 text-center text-sm bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all" 
           placeholder="0" 
         />
       </div>
@@ -325,7 +325,7 @@ function SortableField({
           type="text" 
           value={field.unit || ''} 
           onChange={e => onUpdate(field.id, { unit: e.target.value })} 
-          className="w-10 text-sm bg-transparent border-0 border-b-2 border-white/20 px-1 py-0.5 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-center" 
+          className="w-10 text-sm bg-transparent border-0 px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-center" 
           placeholder="ед" 
         />
       </div>
@@ -394,7 +394,7 @@ function SortableField({
   newOptions[index] = e.target.value;
   onUpdate(field.id, { options: newOptions });
                     }}
-                    className="w-full bg-transparent border-0 border-b-2 border-white/20 px-0 py-0.5 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
+                    className="w-full bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
                     placeholder="Введите значение"
                   />
 
@@ -504,7 +504,7 @@ function SortableField({
   newExps[i] = e.target.value;
   onUpdate(field.id, { explanations: newExps });
               }} 
-              className="flex-1 bg-transparent border-0 border-b-2 border-white/20 px-0 py-0.5 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm" 
+              className="flex-1 bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm" 
               placeholder={`Введите значение`} 
             />
           </div>
@@ -595,17 +595,17 @@ function SortableField({
         ) : field.type === 'formula' ? (
           <div className="space-y-3">
             <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="block w-full text-sm font-medium text-zinc-400 mb-1 bg-transparent outline-none" placeholder="Название" />
-            <input type="text" value={field.formula || ''} onChange={e => onUpdate(field.id, { formula: e.target.value })} className="w-full bg-transparent border-0 border-b-2 border-white/20 px-0 py-0.5 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm" />
+            <input type="text" value={field.formula || ''} onChange={e => onUpdate(field.id, { formula: e.target.value })} className="w-full bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm" />
             <div className="flex items-center justify-between text-sm text-white">
               <span>Переменные</span>
               
             </div>
             <div className="space-y-0">
               {(field.variables || []).map((v, i) => (
-              <div key={i} className="w-full bg-transparent px-0 py-0 text-white placeholder:text-zinc-400 hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all text-sm">
-                  <input type="text" value={v.name} onChange={e => updateVariableName(i, e.target.value)} className="w-9 text-center bg-transparent border-0 border-b-2 border-white/20 px-0 py-0.5 text-white text-sm hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all" />
+              <div key={i} className="w-full bg-transparent px-0 py-0 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm">
+                  <input type="text" value={v.name} onChange={e => updateVariableName(i, e.target.value)} className="w-9 text-center bg-transparent border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-all" />
                   <span className="text-zinc-400 font-medium mx-4">=</span>
-                  <input type="text" value={v.value || ''} onChange={e => updateVariableValue(i, e.target.value)} className="w-9 text-center bg-transparent border-0 border-b-2 border-white/20 px-0 py-0.5 text-white text-sm hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all" />
+                  <input type="text" value={v.value || ''} onChange={e => updateVariableValue(i, e.target.value)} className="w-9 text-center bg-transparent border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-all" />
                   <button onClick={() => removeVariable(i)} className="text-white hover:text-red-400 transition-all cursor-pointer">Удалить</button>
                 </div>
               ))}
@@ -618,7 +618,7 @@ function SortableField({
             <div className="flex items-center gap-3 mt-1">
               <span className="text-white text-sm mt-1">Результат:</span>
               <span className="text-white text-sm mt-1">{field.formula ? evaluateFormulaPreview(field.formula) : '—'}</span>
-              <input type="text" value={field.unit || ''} onChange={e => onUpdate(field.id, { unit: e.target.value })} className="w-9 text-center mt-1 bg-transparent border-0 border-b-2 border-white/20 px-0 py-0.5 text-white text-sm hover:border-zinc-400 focus:border-amber-400 focus:outline-none focus:bg-white/5 transition-all" />
+              <input type="text" value={field.unit || ''} onChange={e => onUpdate(field.id, { unit: e.target.value })} className="w-9 text-center mt-1 bg-transparent border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-all" />
             </div>
           </div>
         
@@ -881,7 +881,7 @@ setFields(migratedFields);
             type="text" 
             value={templateTitle} 
             onChange={(e) => setTemplateTitle(e.target.value)} 
-            className="w-full text-2xl font-semibold bg-transparent border-b border-zinc-700 hover:border-zinc-400 focus:border-amber-400 outline-none pb-4 mb-8 tracking-tight transition-colors" 
+            className="w-full text-2xl font-semibold bg-transparent border-b border-zinc-700 outline-none pb-4 mb-8 tracking-tight transition-colors" 
             placeholder="Название шаблона" 
           />
         </div>

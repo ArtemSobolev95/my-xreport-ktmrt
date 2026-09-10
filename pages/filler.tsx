@@ -400,7 +400,7 @@ const focusFieldElement = (fieldId: string) => {
   }
 
   if (el) {
-    el.focus();
+    el.focus({ preventScroll: true });
   } else {
     setActiveFieldId(fieldId);
     activeFieldRef.current = fieldId;
@@ -481,7 +481,7 @@ const openOnlySection = (headerId: string) => {
 // в содержимое раздела.
 const focusHeaderForNav = (headerId: string) => {
   const el = document.querySelector(`[data-header-id="${headerId}"]`) as HTMLElement | null;
-  el?.focus();
+  el?.focus({ preventScroll: true });
   el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
 
@@ -535,8 +535,7 @@ const handleFieldTabNavigation = (
       // Это самый первый раздел — предыдущего нет, возвращаем фокус
       // на заголовок текущего раздела (иначе Shift+Tab тут молча
       // ничего не делал бы, что выглядит как залипание фокуса).
-      const el = document.querySelector(`[data-header-id="${section.headerId}"]`) as HTMLElement | null;
-      el?.focus();
+      focusHeaderForNav(section.headerId);
       return;
     }
 
@@ -552,7 +551,7 @@ const handleFieldTabNavigation = (
         .sort()
         .pop();
       if (lastVarKey && inputRefs.current[lastVarKey]) {
-        inputRefs.current[lastVarKey].focus();
+        inputRefs.current[lastVarKey].focus({ preventScroll: true });
       } else {
         focusFieldElement(lastId);
       }

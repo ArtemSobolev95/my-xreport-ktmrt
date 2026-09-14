@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, ChevronsDownUp, Paperclip } from 'lucide-react';
+import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, ChevronsDownUp, Paperclip, Plus } from 'lucide-react';
 import { 
   ArrowDownOnSquareIcon, 
   ArrowUpOnSquareIcon        
@@ -16,6 +16,7 @@ import { evaluateFormula } from '../lib/evaluateFormula';
 import { generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
 import { useDialog } from '../components/DialogProvider';
+import AnimatedModal from '../components/AnimatedModal';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
 
@@ -127,6 +128,17 @@ function FillerPage() {
     id: string;
     name: string;
   } | null>(null);
+  // AnimatedModal держит диалог смонтированным на время анимации закрытия,
+  // а deleteConfirm в этот момент уже null — без кеша текст успевал бы
+  // мигнуть пустотой прямо во время затухания. Официальный React-паттерн
+  // "adjusting state during rendering" — не useEffect, чтобы не ловить
+  // лишний цикл рендера (см. react-hooks/set-state-in-effect).
+  const [prevDeleteConfirm, setPrevDeleteConfirm] = useState(deleteConfirm);
+  const [displayedDeleteConfirm, setDisplayedDeleteConfirm] = useState(deleteConfirm);
+  if (deleteConfirm !== prevDeleteConfirm) {
+    setPrevDeleteConfirm(deleteConfirm);
+    if (deleteConfirm) setDisplayedDeleteConfirm(deleteConfirm);
+  }
   const [variantSelector, setVariantSelector] = useState<{
   fieldId: string;
   variants: string[];
@@ -149,7 +161,16 @@ function FillerPage() {
   const [isMultipleComparison, setIsMultipleComparison] = useState(false);
   const [isStateAfterActive, setIsStateAfterActive] = useState(false);
   const [stateAfterPhrases, setStateAfterPhrases] = useState<string[]>([]);
-  const [stateAfterSearch, setStateAfterSearch] = useState('');
+  const stateAfterTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Флаг "после вставки фразы нужно поставить курсор в конец" — сама
+  // установка курсора идёт в useEffect по stateAfterText, а не сразу в
+  // обработчике клика, чтобы не спорить с React о том, когда именно DOM
+  // textarea получит новое значение (requestAnimationFrame может сработать
+  // раньше коммита React, и курсор уедет не в то место).
+  const stateAfterCaretToEndRef = useRef(false);
+  // Индекс подсвеченной подсказки в dropdown'е "Примечание" — сбрасывается
+  // на 0 при каждом новом запросе (см. useEffect ниже).
+  const [stateAfterHighlightedIndex, setStateAfterHighlightedIndex] = useState(0);
   const [pathNav, setPathNav] = useState<{
   groupIdx: number;
   phraseIdx: number;
@@ -197,6 +218,8 @@ const handleComparisonDateChange = (e: React.ChangeEvent<HTMLInputElement>, inde
 };
   const [showNotesModal, setShowNotesModal] = useState(false);
   const [showStateAfterModal, setShowStateAfterModal] = useState(false);
+  const [showAddNotePhraseModal, setShowAddNotePhraseModal] = useState(false);
+  const [newNotePhraseText, setNewNotePhraseText] = useState('');
   const [showAbbrModal, setShowAbbrModal] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [fullName, setFullName] = useState('');
@@ -590,7 +613,10 @@ useEffect(() => {
   if (!template) return;
   saveToHistory();
 
-  const newId = 'text-' + Date.now().toString();
+  // crypto.randomUUID(), не Date.now() — при быстрых повторных кликах
+  // Date.now() легко возвращает одно и то же значение для двух полей
+  // подряд (разрешение — 1мс), и React путает их как один элемент по ключу.
+  const newId = 'text-' + crypto.randomUUID();
   const newField: BuilderField = { 
     id: newId, 
     type: 'text',
@@ -727,6 +753,7 @@ const handleClearDraft = async () => {
     const anyModalOpen =
       showComparisonModal ||
       showStateAfterModal ||
+      showAddNotePhraseModal ||
       showAbbrModal ||
       showNotesModal ||
       showSaveModal ||
@@ -739,6 +766,7 @@ const handleClearDraft = async () => {
       e.preventDefault();
 
       if (showComparisonModal) setShowComparisonModal(false);
+      if (showAddNotePhraseModal) setShowAddNotePhraseModal(false);
       if (showStateAfterModal) setShowStateAfterModal(false);
       if (showAbbrModal) setShowAbbrModal(false);
       if (showNotesModal) setShowNotesModal(false);
@@ -751,6 +779,7 @@ const handleClearDraft = async () => {
   }, [
     showComparisonModal,
     showStateAfterModal,
+    showAddNotePhraseModal,
     showAbbrModal,
     showNotesModal,
     showSaveModal,
@@ -956,15 +985,29 @@ const handleClearDraft = async () => {
 
     // ====================== РАБОТА С ФРАЗАМИ "СОСТОЯНИЕ ПОСЛЕ" ======================
 
-    // Добавить новую фразу в список сохранённых
-  const addStateAfterPhrase = async () => {
-    const text = stateAfterText.trim();
+  // Позиция начала "текущего слова" — сразу после последнего пробельного
+  // символа в тексте (0, если пробелов ещё нет). Всё, что после неё,
+  // считается запросом для подбора подсказок и целиком заменяется при
+  // вставке фразы; то, что было до неё (включая сам пробел), не трогаем.
+  // Полностью без состояния — пересчитывается из самого текста, поэтому
+  // не может "протухнуть" независимо от того, что и как было напечатано раньше.
+  const stateAfterQueryStart = (() => {
+    const match = stateAfterText.match(/\s(?![\s\S]*\s)/);
+    return match && typeof match.index === 'number' ? match.index + 1 : 0;
+  })();
+  // Запрос для подбора подсказок — текущее набираемое слово/фраза.
+  const stateAfterQuery = stateAfterText.slice(stateAfterQueryStart).trim();
+
+    // Добавить фразу из popup'а "Новая фраза" в список сохранённых.
+  const confirmAddNotePhrase = async () => {
+    const text = newNotePhraseText.trim();
     if (!text || stateAfterPhrases.includes(text)) return;
 
     const newPhrases = [...stateAfterPhrases, text];
     setStateAfterPhrases(newPhrases);
     await saveStateAfterPhrasesToServer(newPhrases);
-    setStateAfterSearch('');
+    setShowAddNotePhraseModal(false);
+    setNewNotePhraseText('');
   };
 
   // Удалить фразу из списка
@@ -974,26 +1017,43 @@ const handleClearDraft = async () => {
     await saveStateAfterPhrasesToServer(newPhrases);
   };
 
-    // Добавить выбранную фразу через запятую (накопление)
+    // Заменить набранное текущее слово выбранной фразой-подсказкой: без
+    // знаков препинания вокруг неё (пользователь ставит их сам). Часть
+    // текста до последнего пробела (включая сам пробел, если он есть) не
+    // трогаем — он и служит единственным разделителем, лишний пробел
+    // поэтому никогда не добавляется и не дублируется.
   const selectStateAfterPhrase = (phrase: string) => {
-    let current = stateAfterText.trim();
-
-    // Убираем trailing запятую и пробелы в конце (если есть)
-    current = current.replace(/,\s*$/, '').trim();
-
-    let newText;
-    if (current) {
-      newText = `${current}, ${phrase}`;
-    } else {
-      newText = phrase;
-    }
-
+    const before = stateAfterText.slice(0, stateAfterQueryStart);
+    const newText = `${before}${phrase}`;
     setStateAfterText(newText);
+    // Курсор поставим в конец после того, как DOM textarea реально получит
+    // это значение — см. useEffect ниже.
+    stateAfterCaretToEndRef.current = true;
   };
 
-  // Фильтрация фраз по отдельному поиску
+  // Ставит курсор в конец textarea после вставки фразы. Вынесено в эффект
+  // (а не сделано сразу в onClick через requestAnimationFrame), потому что
+  // должно выполняться строго после того, как React обновит DOM новым
+  // значением — иначе курсор мог остаться в середине старого текста, и
+  // следующий введённый символ попадал бы не в конец, а куда-то в середину.
+  useEffect(() => {
+    if (!stateAfterCaretToEndRef.current) return;
+    stateAfterCaretToEndRef.current = false;
+    const el = stateAfterTextareaRef.current;
+    if (el) {
+      el.focus();
+      el.setSelectionRange(stateAfterText.length, stateAfterText.length);
+    }
+  }, [stateAfterText]);
+
+  // При каждом новом запросе подсветка в dropdown'е начинается заново сверху.
+  useEffect(() => {
+    setStateAfterHighlightedIndex(0);
+  }, [stateAfterQuery]);
+
+  // Подсказки — фразы, совпадающие с текущим запросом.
   const filteredStateAfterPhrases = stateAfterPhrases.filter(phrase =>
-    phrase.toLowerCase().includes(stateAfterSearch.toLowerCase())
+    phrase.toLowerCase().includes(stateAfterQuery.toLowerCase())
   );
 
     const notesLinks = useMemo(() => {
@@ -1910,20 +1970,20 @@ for (const f of visibleFields) {
               <button
                 onClick={() => addTextFieldAfter(f.id)}
                 tabIndex={-1}
-                className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
+                className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
                 title="Добавить поле"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                 </svg>
               </button>
               <button
                 onClick={() => removeField(f.id)}
                 tabIndex={-1}
-                className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
+                className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
                 title="Удалить"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                 </svg>
               </button>
@@ -2074,20 +2134,20 @@ for (const f of visibleFields) {
       <button
         onClick={() => addTextFieldAfter(f.id)}
         tabIndex={-1}
-        className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
+        className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
         title="Добавить поле"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
         </svg>
       </button>
       <button
         onClick={() => removeField(f.id)}
         tabIndex={-1}
-        className="btn btn-ghost btn-square w-5 h-5 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
+        className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
         title="Удалить"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-4">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
           <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
         </svg>
       </button>
@@ -2220,7 +2280,6 @@ for (const f of visibleFields) {
   setIsStateAfterActive(false);
   // текст не очищаем
 } else {
-  setStateAfterSearch('');
   setShowStateAfterModal(true);
 }
       }}
@@ -2230,7 +2289,7 @@ for (const f of visibleFields) {
           : 'bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-white/20'
         }`}
     >
-      Состояние
+      Примечание
     </button>
   </div>
 
@@ -2334,58 +2393,52 @@ for (const f of visibleFields) {
 
       {/* МОДАЛКИ (полностью без изменений) */}
 
-                        {showNotesModal && (
-        <dialog
-          className="modal modal-open"
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setShowNotesModal(false);
-          }}
-        >
-          <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4">
-            <div className="px-6 pt-5 pb-3 border-b border-white/10">
-              <h2 className="text-xl font-semibold text-white">Заметки</h2>
-            </div>
+      <AnimatedModal
+        open={showNotesModal}
+        onClose={() => setShowNotesModal(false)}
+        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') setShowNotesModal(false);
+        }}
+      >
+        <div className="px-6 pt-5 pb-3 border-b border-white/10">
+          <h2 className="text-xl font-semibold text-white">Заметки</h2>
+        </div>
 
-            <div className="px-6 py-4 max-h-[60vh] overflow-y-auto space-y-1">
-              {notesLinks.filter(link => isSafeUrl(link.url)).map((link, i) => (
-                <a
-                  key={i}
-                  href={link.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block text-sm text-white hover:text-amber-400 underline underline-offset-2 transition-all"
-                >
-                  {link.text}
-                </a>
-              ))}
-            </div>
-          </div>
-
-          <form method="dialog" className="modal-backdrop">
-            <button onClick={() => setShowNotesModal(false)}>close</button>
-          </form>
-        </dialog>
-      )}
+        <div className="px-6 py-4 max-h-[60vh] overflow-y-auto space-y-1">
+          {notesLinks.filter(link => isSafeUrl(link.url)).map((link, i) => (
+            <a
+              key={i}
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block text-sm text-white hover:text-amber-400 underline underline-offset-2 transition-all"
+            >
+              {link.text}
+            </a>
+          ))}
+        </div>
+      </AnimatedModal>
 
 
 
-            {showComparisonModal && (
-        <dialog 
-          className="modal modal-open"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              const hasValidDate = comparisonDates.some(d => isValidDateDDMMYYYY(d));
-              if (hasValidDate) {
-                setIsComparisonActive(true);
-                setShowComparisonModal(false);
-              }
-            }
-            if (e.key === 'Escape') {
+      <AnimatedModal
+        open={showComparisonModal}
+        onClose={() => setShowComparisonModal(false)}
+        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            const hasValidDate = comparisonDates.some(d => isValidDateDDMMYYYY(d));
+            if (hasValidDate) {
+              setIsComparisonActive(true);
               setShowComparisonModal(false);
             }
-          }}
-        >
-          <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4">
+          }
+          if (e.key === 'Escape') {
+            setShowComparisonModal(false);
+          }
+        }}
+      >
             <div className="px-6 pt-5 pb-3 border-b border-white/10 flex items-center justify-between">
               <h2 className="text-xl font-semibold text-white">Сравнение с предыдущим</h2>
             </div>
@@ -2487,54 +2540,78 @@ for (const f of visibleFields) {
                 Применить
               </button>
             </div>
-          </div>
+      </AnimatedModal>
 
-          <form method="dialog" className="modal-backdrop">
-            <button onClick={() => setShowComparisonModal(false)}>close</button>
-          </form>
-        </dialog>
-      )}
+      <AnimatedModal
+        open={showStateAfterModal}
+        onClose={() => setShowStateAfterModal(false)}
+        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-lg mx-4 max-h-[90vh]"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            setShowStateAfterModal(false);
+            return;
+          }
+          if (e.key === 'Enter' && !e.shiftKey) {
+            // не перехватываем Enter внутри textarea без модификатора — см. onKeyDown у textarea
+            const tag = (e.target as HTMLElement)?.tagName;
+            if (tag === 'TEXTAREA') return;
 
-                  {showStateAfterModal && (
-        <dialog
-    className="modal modal-open"
-    onKeyDown={(e) => {
-      if (e.key === 'Escape') {
-        setShowStateAfterModal(false);
-        return;
-      }
-      if (e.key === 'Enter' && !e.shiftKey) {
-        // не перехватываем Enter внутри textarea без модификатора — см. onKeyDown у textarea
-        const tag = (e.target as HTMLElement)?.tagName;
-        if (tag === 'TEXTAREA') return;
-
-        e.preventDefault();
-        let text = stateAfterText.trim();
-        if (!text) return;
-        if (!text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
-          text += '.';
-        }
-        setStateAfterText(text);
-        setIsStateAfterActive(true);
-        setShowStateAfterModal(false);
-      }
-    }}
-  >
-          <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-lg mx-4 max-h-[90vh]">
-            <div className="px-6 pt-5 pb-3 border-b border-white/10">
-              <h2 className="text-xl font-semibold text-white">Состояние после</h2>
+            e.preventDefault();
+            let text = stateAfterText.trim();
+            if (!text) return;
+            if (!text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
+              text += '.';
+            }
+            setStateAfterText(text);
+            setIsStateAfterActive(true);
+            setShowStateAfterModal(false);
+          }
+        }}
+      >
+            <div className="px-6 pt-5 pb-3 border-b border-white/10 relative">
+              <h2 className="text-xl font-semibold text-white">Примечание</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewNotePhraseText(stateAfterQuery);
+                  setShowAddNotePhraseModal(true);
+                }}
+                className="absolute top-2 right-4 btn btn-ghost btn-square hover:border-transparent hover:bg-transparent hover:text-amber-400 shadow-none active:shadow-none transition-all tooltip"
+                data-tip="Добавить фразу"
+              >
+                <Plus size={20} />
+              </button>
             </div>
 
             <div className="p-6 space-y-4">
-              {/* Основное поле (textarea) */}
-              <div>
-                
+              {/* Основное поле (textarea) + всплывающие подсказки под ним */}
+              <div className="relative">
                 <textarea
+  ref={stateAfterTextareaRef}
   value={stateAfterText}
   onChange={e => setStateAfterText(e.target.value)}
   onKeyDown={(e) => {
+    const dropdownOpen = Boolean(stateAfterQuery) && filteredStateAfterPhrases.length > 0;
+
+    if (dropdownOpen && e.key === 'ArrowDown') {
+      e.preventDefault();
+      setStateAfterHighlightedIndex(i => Math.min(filteredStateAfterPhrases.length - 1, i + 1));
+      return;
+    }
+    if (dropdownOpen && e.key === 'ArrowUp') {
+      e.preventDefault();
+      setStateAfterHighlightedIndex(i => Math.max(0, i - 1));
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      // Пока открыт dropdown с подсказками, Enter выбирает подсвеченную
+      // фразу вместо отправки формы — иначе не выбрать вариант с клавиатуры.
+      if (dropdownOpen) {
+        const index = Math.min(stateAfterHighlightedIndex, filteredStateAfterPhrases.length - 1);
+        selectStateAfterPhrase(filteredStateAfterPhrases[index]);
+        return;
+      }
       let text = stateAfterText.trim();
       if (!text) return;
       if (!text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
@@ -2545,39 +2622,27 @@ for (const f of visibleFields) {
       setShowStateAfterModal(false);
     }
   }}
-  placeholder="Введите значение или выберите фразу"
+  placeholder="Введите текст — совпадающие фразы предложатся ниже"
   className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all resize-none"
   rows={3}
 />
-              </div>
-
-              {/* Отдельный поиск */}
-              <div>
-                
-                <input
-                  type="text"
-                  value={stateAfterSearch}
-                  onChange={e => setStateAfterSearch(e.target.value)}
-                  placeholder="Поиск по фразам"
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
-                />
-              </div>
-
-              {/* Список фраз */}
-              {stateAfterPhrases.length > 0 && (
-                <div>
-                  
-                  <div className="bg-white/5 border border-white/10 rounded-2xl p-2 max-h-[240px] overflow-y-auto">
+                {stateAfterQuery && stateAfterPhrases.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-2 z-20 bg-zinc-900/90 backdrop-blur-md rounded-xl shadow-xl py-1 max-h-[240px] overflow-y-auto">
                     {filteredStateAfterPhrases.length > 0 ? (
                       filteredStateAfterPhrases.map((phrase, index) => {
                         const originalIndex = stateAfterPhrases.indexOf(phrase);
+                        const isHighlighted = index === stateAfterHighlightedIndex;
                         return (
                           <div
                             key={originalIndex}
+                            onMouseDown={(e) => e.preventDefault()}
                             onClick={() => selectStateAfterPhrase(phrase)}
-                            className="flex items-center justify-between px-4 py-2.5 hover:bg-white/10 rounded-xl cursor-pointer group transition-colors"
+                            onMouseEnter={() => setStateAfterHighlightedIndex(index)}
+                            className={`flex items-center justify-between px-4 py-[6px] rounded-xl cursor-pointer group transition-colors ${
+                              isHighlighted ? 'bg-white/10' : 'hover:bg-white/10'
+                            }`}
                           >
-                            <span className="text-sm text-white pr-4">{phrase}</span>
+                            <span className={`text-sm pr-4 ${isHighlighted ? 'text-white font-medium' : 'text-white'}`}>{phrase}</span>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -2594,18 +2659,8 @@ for (const f of visibleFields) {
                       <div className="px-4 py-3 text-sm text-zinc-500 text-center">Ничего не найдено</div>
                     )}
                   </div>
-                </div>
-              )}
-
-              {/* Кнопка добавления новой фразы в список */}
-              {stateAfterText.trim() && !stateAfterPhrases.includes(stateAfterText.trim()) && (
-                <button
-                  onClick={addStateAfterPhrase}
-                  className="w-full py-3 bg-transparent border border-none rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all cursor-pointer"
-                >
-                  Добавить фразу
-                </button>
-              )}
+                )}
+              </div>
             </div>
 
             <div className="px-6 pb-6 pt-2 flex gap-3">
@@ -2633,24 +2688,60 @@ for (const f of visibleFields) {
                 Применить
               </button>
             </div>
-          </div>
+      </AnimatedModal>
 
-          <form method="dialog" className="modal-backdrop">
-            <button onClick={() => setShowStateAfterModal(false)}>close</button>
-          </form>
-        </dialog>
-      )}
+      {/* Popup добавления новой фразы в список "Примечание" */}
+      <AnimatedModal
+        open={showAddNotePhraseModal}
+        onClose={() => setShowAddNotePhraseModal(false)}
+        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            confirmAddNotePhrase();
+          }
+        }}
+      >
+        <div className="px-6 pt-5 pb-3 border-b border-white/10">
+          <h2 className="text-xl font-semibold text-white">Новая фраза</h2>
+        </div>
 
-      {showAbbrModal && (
-                    <dialog
-    className="modal modal-open"
-    onKeyDown={(e) => {
-      if (e.key === 'Escape') setShowAbbrModal(false);
-    }}
-  >
-          <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl w-full max-w-5xl h-[620px] flex flex-col overflow-hidden">
-          
+        <div className="p-6">
+          <input
+            autoFocus
+            type="text"
+            value={newNotePhraseText}
+            onChange={e => setNewNotePhraseText(e.target.value)}
+            placeholder="Текст фразы"
+            className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
+          />
+        </div>
 
+        <div className="px-6 pb-6 pt-2 flex gap-3">
+          <button
+            onClick={() => setShowAddNotePhraseModal(false)}
+            className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all cursor-pointer"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={confirmAddNotePhrase}
+            disabled={!newNotePhraseText.trim() || stateAfterPhrases.includes(newNotePhraseText.trim())}
+            className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Добавить
+          </button>
+        </div>
+      </AnimatedModal>
+
+      <AnimatedModal
+        open={showAbbrModal}
+        onClose={() => setShowAbbrModal(false)}
+        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl w-full max-w-5xl h-[620px] flex flex-col overflow-hidden"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') setShowAbbrModal(false);
+        }}
+      >
       {/* Шапка модалки — кнопки в правом верхнем углу */}
       <div className="px-6 pt-5 pb-3 border-b border-white/10 relative">
   <h2 className="text-xl font-semibold text-white">Автокоррекции</h2>
@@ -2882,26 +2973,24 @@ for (const f of visibleFields) {
   </div>
 </div>
       </div>
-    </div>
-
-    <form method="dialog" className="modal-backdrop">
-      <button onClick={() => setShowAbbrModal(false)}>close</button>
-    </form>
-  </dialog>
-)}
+      </AnimatedModal>
 
 {/* МОДАЛКА ПОДТВЕРЖДЕНИЯ УДАЛЕНИЯ — компактная */}
-{deleteConfirm && (
-  <dialog className="modal modal-open">
-    <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md">
+<AnimatedModal
+  open={!!deleteConfirm}
+  onClose={() => setDeleteConfirm(null)}
+  boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md"
+>
+  {displayedDeleteConfirm && (
+    <>
       <div className="px-6 pt-5 pb-1">
         <h3 className="text-lg font-semibold text-white">
-          Удалить {deleteConfirm.type === 'category' ? 'группу' : 'аббревиатуру'}?
+          Удалить {displayedDeleteConfirm.type === 'category' ? 'группу' : 'аббревиатуру'}?
         </h3>
         <p className="text-zinc-400 text-sm mt-1">
-          {deleteConfirm.type === 'category' 
-            ? `"${deleteConfirm.name}" и все аббревиатуры внутри неё будут удалены навсегда.`
-            : `"${deleteConfirm.name}" будет удалена навсегда.`}
+          {displayedDeleteConfirm.type === 'category'
+            ? `"${displayedDeleteConfirm.name}" и все аббревиатуры внутри неё будут удалены навсегда.`
+            : `"${displayedDeleteConfirm.name}" будет удалена навсегда.`}
         </p>
       </div>
 
@@ -2914,10 +3003,10 @@ for (const f of visibleFields) {
         </button>
         <button
           onClick={() => {
-            if (deleteConfirm.type === 'category') {
-              deleteCategory(deleteConfirm.id);
+            if (displayedDeleteConfirm.type === 'category') {
+              deleteCategory(displayedDeleteConfirm.id);
             } else {
-              deleteAbbreviation(deleteConfirm.id);
+              deleteAbbreviation(displayedDeleteConfirm.id);
             }
             setDeleteConfirm(null);
           }}
@@ -2926,70 +3015,61 @@ for (const f of visibleFields) {
           Удалить
         </button>
       </div>
-    </div>
+    </>
+  )}
+</AnimatedModal>
 
-    <form method="dialog" className="modal-backdrop">
-      <button onClick={() => setDeleteConfirm(null)}>close</button>
-    </form>
-  </dialog>
-)}
+      <AnimatedModal
+        open={showSaveModal}
+        onClose={() => setShowSaveModal(false)}
+        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') handleSaveWithInfo();
+        }}
+      >
+        <div className="px-6 pt-5 pb-1">
+          <h2 className="text-xl font-semibold text-white">Сохранить</h2>
+        </div>
 
-      {showSaveModal && (
-                  <dialog className="modal modal-open" onKeyDown={(e) => {
-              if (e.key === 'Enter') handleSaveWithInfo();
-            }}>
-              <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4">
+        <div className="px-6 py-5 space-y-5">
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1.5">ФИО</label>
+            <input
+              type="text"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Введите имя"
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
+            />
+          </div>
 
-                <div className="px-6 pt-5 pb-1">
-                  <h2 className="text-xl font-semibold text-white">Сохранить</h2>
-                </div>
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1.5">Дата рождения (ДД.ММ.ГГГГ)</label>
+            <input
+              type="text"
+              value={birthDate}
+              onChange={(e) => setBirthDate(e.target.value)}
+              placeholder="Введите дату"
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
+            />
+          </div>
+        </div>
 
-                <div className="px-6 py-5 space-y-5">
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">ФИО</label>
-                    <input 
-                      type="text" 
-                      value={fullName} 
-                      onChange={(e) => setFullName(e.target.value)} 
-                      placeholder="Введите имя" 
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1.5">Дата рождения (ДД.ММ.ГГГГ)</label>
-                    <input 
-                      type="text" 
-                      value={birthDate} 
-                      onChange={(e) => setBirthDate(e.target.value)} 
-                      placeholder="Введите дату" 
-                      className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
-                    />
-                  </div>
-                </div>
-
-                <div className="px-6 pb-6 pt-2 flex gap-3">
-                  <button 
-                    onClick={() => setShowSaveModal(false)} 
-                    className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all"
-                  >
-                    Отмена
-                  </button>
-                  <button 
-                    onClick={handleSaveWithInfo} 
-                    className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all"
-                  >
-                    Сохранить
-                  </button>
-                </div>
-              </div>
-
-              {/* backdrop */}
-              <form method="dialog" className="modal-backdrop">
-                <button onClick={() => setShowSaveModal(false)}>close</button>
-              </form>
-            </dialog>
-          )}
+        <div className="px-6 pb-6 pt-2 flex gap-3">
+          <button
+            onClick={() => setShowSaveModal(false)}
+            className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={handleSaveWithInfo}
+            className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-2xl text-sm font-medium text-white hover:text-amber-300 transition-all"
+          >
+            Сохранить
+          </button>
+        </div>
+      </AnimatedModal>
     </div>
   );
 }

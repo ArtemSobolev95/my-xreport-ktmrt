@@ -54,8 +54,23 @@ import dynamic from 'next/dynamic';
 import { migrateQuickButtons } from '../../lib/migrateQuickButtons';
 import { evaluateFormula } from '../../lib/evaluateFormula';
 import { useDialog } from '../DialogProvider';
+import AnimatedModal from '../AnimatedModal';
 
 
+
+// Должен создаваться один раз на уровне модуля, а не внутри тела
+// компонента: dynamic() возвращает НОВЫЙ компонент при каждом вызове, и
+// вызов его на каждом рендере (как было раньше) заставлял React считать
+// хедер каждый раз другим типом компонента — он размонтировался и
+// монтировался заново при любом изменении fields (добавление/удаление/
+// дублирование поля), на мгновение схлопываясь в высоту 0 и тут же
+// раскрываясь обратно. Из-за этого сдвигалось всё, что ниже хедера —
+// и левая панель инструментов, и центральная колонка с полями (сама по
+// себе никак не связанная с высотой списка полей) — то самое "моргание
+// всей страницы". Подтверждено через PerformanceObserver({type:
+// 'layout-shift'}): source-элементом сдвига оказывался именно
+// .flex.flex-1.overflow-hidden — контейнер, оборачивающий обе панели.
+const DynamicUserHeader = dynamic(() => import('../../components/UserHeader'), { ssr: false });
 
 const availableFields = [
   { type: 'header' as FieldType, label: 'Заголовок', icon: <ClipboardDocumentListIcon className="w-7 h-7" /> },
@@ -72,11 +87,80 @@ const availableFields = [
   { type: 'formula' as FieldType, label: 'Формула', icon: <CalculatorIcon className="w-7 h-7" /> },
 ];
 
-function SortableField({ 
-  field, 
-  isSelected, 
-  onSelect, 
-  onRemove, 
+// Одна перетаскиваемая строка варианта в инструменте "Список" — своя ручка
+// (GripVertical) слева вместо кнопок вверх/вниз: перетаскивание мышью проще
+// и выглядит аккуратнее, чем стрелки, упирающиеся в правый край карточки.
+function SortableOption({
+  id,
+  option,
+  isDefault,
+  onToggleDefault,
+  onChange,
+  onRemove,
+}: {
+  id: string;
+  option: string;
+  isDefault: boolean;
+  onToggleDefault: () => void;
+  onChange: (value: string) => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="flex items-center gap-2">
+      <div {...attributes} {...listeners} className="shrink-0 cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white transition-colors">
+        <GripVertical size={14} />
+      </div>
+
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleDefault();
+        }}
+        className="flex-shrink-0 text-white hover:text-amber-400 transition-colors cursor-pointer tooltip" data-tip="По умолчанию"
+      >
+        {isDefault ? (
+          <ArrowRightCircleSolidIcon className="w-6 h-6 text-amber-400" />
+        ) : (
+          <ArrowRightCircleIcon className="w-6 h-6" />
+        )}
+      </button>
+
+      {/* Ширина по содержимому, а не w-full — иначе кнопка удаления
+          утыкается в правый край карточки, далеко от текста. */}
+      <input
+        type="text"
+        value={option}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: `${Math.max((option || 'Введите значение').length + 2, 12)}ch` }}
+        className="max-w-full bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
+        placeholder="Введите значение"
+      />
+
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className="text-zinc-400 hover:text-red-400 transition-all cursor-pointer ml-1"
+      >
+        <MinusIcon className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
+function SortableField({
+  field,
+  isSelected,
+  onSelect,
+  onRemove,
   onUpdate,
   onDuplicate,
   // Пропсы ниже используются ТОЛЬКО в блоке notes
@@ -106,13 +190,66 @@ function SortableField({
   setTempLinkUrl: (url: string) => void;
   handleAddLink: (fieldId: string) => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: field.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: field.id,
+    // dnd-kit по умолчанию сам анимирует сдвиг соседних элементов при любом
+    // изменении items (не только при живом перетаскивании) — это дублирует
+    // и конфликтует с layout="position" (framer-motion) ниже, который уже
+    // отвечает за плавный сдвиг соседей при добавлении/удалении карточек.
+    // Отключаем — на анимацию самого drag это не влияет (она держится на
+    // transform/transition ниже).
+    animateLayoutChanges: () => false,
+  });
+  // Инлайн, не className: opacity/transition у dnd-kit приходят как
+  // инлайн-стиль (transform — для drag), а инлайн-стиль всегда побеждает
+  // className по каскаду.
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
   const dialog = useDialog();
+
+  // Стабильные id вариантов "Список" для drag-and-drop — только для
+  // useSortable, наружу (в БД/шаблон) не идут. field.options — обычный
+  // string[] (см. types/builder.ts), в нём нет id, а по индексу/значению
+  // dnd-kit различать элементы при перетаскивании нельзя (индекс меняется
+  // при каждом свапе, значение может повторяться). Генерируются один раз
+  // при монтировании поля и дальше держатся в ЛОКАЛЬНОМ state в связке с
+  // add/remove/reorder-хендлерами ниже — никакой синхронизации с
+  // field.options по длине не требуется, так как оба массива меняются
+  // ТОЛЬКО вместе, этими же хендлерами.
+  const [optionIds, setOptionIds] = useState<string[]>(() => (field.options || []).map(() => crypto.randomUUID()));
+  const optionSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleOptionChange = (index: number, value: string) => {
+    const newOptions = [...(field.options || [])];
+    newOptions[index] = value;
+    onUpdate(field.id, { options: newOptions });
+  };
+
+  const handleAddOption = () => {
+    onUpdate(field.id, { options: [...(field.options || []), ''] });
+    setOptionIds(prev => [...prev, crypto.randomUUID()]);
+  };
+
+  const handleRemoveOption = (index: number) => {
+    onUpdate(field.id, { options: (field.options || []).filter((_, i) => i !== index) });
+    setOptionIds(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleOptionDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = optionIds.indexOf(active.id as string);
+    const newIndex = optionIds.indexOf(over.id as string);
+    if (oldIndex === -1 || newIndex === -1) return;
+    onUpdate(field.id, { options: arrayMove(field.options || [], oldIndex, newIndex) });
+    setOptionIds(prev => arrayMove(prev, oldIndex, newIndex));
+  };
 
   const [checked, setChecked] = useState(false);
   const [selectedRating, setSelectedRating] = useState<number | null>(null);
@@ -215,33 +352,82 @@ function SortableField({
   };
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      onClick={() => onSelect(field.id)}
-      className={`card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl p-3 transition-all duration-200 relative group
-    ${isSelected 
-      ? 'border-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.3)]' 
+    // Раньше исчезновение карточки и сдвиг соседей были двумя отдельными
+    // React-рендерами (сначала CSS collapse через grid-template-rows,
+    // потом — через 220мс в setTimeout — реальный filter() из fields), и
+    // layout="position" пересчитывал FLIP дважды, на каждом рендере отдельно
+    // — читалось как "два этапа, две маленькие остановки", сколько ни
+    // подгоняй тайминги CSS. AnimatePresence с mode="popLayout" (см. список
+    // ниже) убирает саму причину: удаление карточки из fields происходит
+    // сразу, одним рендером.
+    //
+    // Два вложенных motion.div, а не один — намеренно: если явный
+    // animate={{opacity, scale}} и layout="position" висят на ОДНОМ и том же
+    // motion.div, framer иногда не может согласовать layout-проекцию
+    // (transform под FLIP) с ручной scale/opacity-анимацией — на практике
+    // это приводило к тому, что exit молча зависал на полпути (opacity уже
+    // 1, scale так и остаётся 0.95 — ни enter, ни exit не доигрывают до
+    // конца, карточка-призрак не убирается из DOM). Внешний motion.div
+    // отвечает только за layout="position" (сдвиг соседей, transform),
+    // внутренний — только за initial/animate/exit (fade + scale-95), у
+    // каждого своя, не пересекающаяся часть transform.
+    <motion.div layout="position" transition={{ duration: 0.22, ease: 'easeOut' }}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.22, ease: 'easeOut' }}
+      >
+      <div
+        ref={setNodeRef}
+        style={style}
+        {...attributes}
+        onClick={() => onSelect(field.id)}
+        className={`card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl transition-all duration-200 ease-out relative group mb-2
+    ${isSelected
+      ? 'border-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.3)]'
       : 'hover:border-white/20'
     }
     ${isDragging ? 'scale-105 shadow-2xl z-50' : ''}`}
-    >
-      <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-3">
-          <div {...listeners} className="cursor-grab active:cursor-grabbing">
-            <GripVertical className="text-zinc-400" size={16} />
-          </div>
+      >
+      <div className="px-5 py-4">
+      <div className="flex items-center gap-2 mb-1">
+        <div {...listeners} className="cursor-grab active:cursor-grabbing shrink-0">
+          <GripVertical className="text-zinc-400" size={16} />
+        </div>
+
+        {/* Название поля — чипом по центру, как на странице заполнения
+            (pages/filler.tsx). Кроме "Заголовок" (там label — это крупный
+            видимый текст раздела, а не метаданные-название) — у "Заметки"
+            своего label нет, но статичное название "Заметки" с иконкой
+            тоже центрируется здесь же, а не отдельной строкой в контенте. */}
+        <div className="flex-1 flex justify-center min-w-0">
+          {(field.type === 'text' || field.type === 'number' || field.type === 'checkbox' || field.type === 'select' || field.type === 'rating' || field.type === 'formula') && (
+            <input
+              type="text"
+              value={field.label || ''}
+              onChange={e => onUpdate(field.id, { label: e.target.value })}
+              placeholder="Название поля"
+              style={{ width: `${Math.max((field.label || 'Название поля').length + 2, 10)}ch` }}
+              className="max-w-full text-center bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-all"
+            />
+          )}
+          {field.type === 'notes' && (
+            <div className="flex items-center gap-2 text-white">
+              <BookmarkIcon className="w-5 h-5" />
+              <span className="font-semibold">Заметки</span>
+            </div>
+          )}
         </div>
 
         {/* Кнопки справа */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           {/* Кнопка дублирования (только для текста) */}
           {field.type === 'text' && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onDuplicate(field.id);      
+                onDuplicate(field.id);
               }}
               className="text-white hover:text-amber-400 transition-colors cursor-pointer tooltip tooltip-top"
               data-tip="Дублировать"
@@ -266,19 +452,11 @@ function SortableField({
 
       <div>
         {field.type === 'header' ? (
-          <div className="text-lg font-bold text-white py-0.5 border-b border-zinc-700">
+          <div className="text-lg font-bold text-white py-0.5">
             <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="w-full bg-transparent outline-none" placeholder="Заголовок" />
           </div>
         ) : field.type === 'text' ? (
           <div>
-            <input 
-              type="text" 
-              value={field.label || ''} 
-              onChange={e => onUpdate(field.id, { label: e.target.value })} 
-              className="block w-full text-sm font-medium text-zinc-400 mb-1 bg-transparent outline-none"
-              placeholder="Название поля" 
-            />
-
             {/* Placeholder — редактируется прямо внутри карточки */}
             <div className="mb-4">
             
@@ -295,15 +473,6 @@ function SortableField({
           </div>
         ) : field.type === 'number' ? (
   <div className="space-y-2">
-
-    {/* Название поля */}
-    <input 
-      type="text" 
-      value={field.label || ''} 
-      onChange={e => onUpdate(field.id, { label: e.target.value })} 
-      className="block w-full text-sm font-medium text-zinc-400 mb-1 bg-transparent border-none border-white/20 px-0 py-0 outline-none transition-all" 
-      placeholder="Название поля" 
-    />
 
     {/* Значение + единица измерения */}
     <div className="flex gap-4">
@@ -335,7 +504,6 @@ function SortableField({
 
         ) : field.type === 'checkbox' ? (
           <div>
-            <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="block w-full text-sm font-medium text-zinc-400 mb-2 bg-transparent outline-none" placeholder="Название" />
             <div className="flex items-center gap-3">
               <label className="relative inline-flex shrink-0 cursor-pointer">
                 <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="peer sr-only" />
@@ -358,167 +526,103 @@ function SortableField({
           </div>
         ) : field.type === 'select' ? (
           <div>
-            <input 
-              type="text" 
-              value={field.label || ''} 
-              onChange={e => onUpdate(field.id, { label: e.target.value })} 
-              className="block w-full text-sm font-medium text-zinc-400 mb-3 bg-transparent outline-none" 
-              placeholder="Название" 
-            />
+            <DndContext
+              sensors={optionSensors}
+              collisionDetection={closestCenter}
+              modifiers={[restrictToVerticalAxis]}
+              onDragEnd={handleOptionDragEnd}
+            >
+              <SortableContext items={optionIds} strategy={verticalListSortingStrategy}>
+                <motion.div layout className="space-y-2" transition={{ duration: 0.2, ease: 'easeOut' }}>
+                  {(field.options || []).map((option, index) => (
+                    <SortableOption
+                      key={optionIds[index] ?? index}
+                      id={optionIds[index] ?? String(index)}
+                      option={option}
+                      isDefault={field.defaultValue === option}
+                      onToggleDefault={() => onUpdate(field.id, { defaultValue: field.defaultValue === option ? '' : option })}
+                      onChange={value => handleOptionChange(index, value)}
+                      onRemove={() => handleRemoveOption(index)}
+                    />
+                  ))}
 
-            <div className="space-y-0.5">
-              {(field.options || []).map((option, index) => (
-                <div key={index} className="flex items-center gap-2">
-
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const isDefault = field.defaultValue === option;
-                      onUpdate(field.id, { defaultValue: isDefault ? '' : option });
-                    }}
-                    className="flex-shrink-0 text-white hover:text-amber-400 transition-colors cursor-pointer tooltip" data-tip="По умолчанию"
-                  >
-                    {field.defaultValue === option ? (
-                      <ArrowRightCircleSolidIcon className="w-6 h-6 text-amber-400" />
-                    ) : (
-                      <ArrowRightCircleIcon className="w-6 h-6" />
-                    )}
-                  </button>
-
-                  {/* Поле ввода варианта */}
-                  <input
-                    type="text"
-                    value={option}
-                    onChange={e => {
-  const newOptions = [...(field.options || [])];
-  newOptions[index] = e.target.value;
-  onUpdate(field.id, { options: newOptions });
-                    }}
-                    className="w-full bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
-                    placeholder="Введите значение"
-                  />
-
-                  {/* Стрелки перемещения и удаление */}
-                  <div className="flex items-center">
-                    <div className="flex flex-col">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (index === 0) return;
-                          const newOptions = [...(field.options || [])];
-                          [newOptions[index], newOptions[index - 1]] = [newOptions[index - 1], newOptions[index]];
-                          onUpdate(field.id, { options: newOptions });
-                        }}
-                        className="text-zinc-400 hover:text-white px-1 cursor-pointer"
-                      >
-                        <ChevronUp size={16} />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const newOptions = [...(field.options || [])];
-                          if (index === newOptions.length - 1) return;
-                          [newOptions[index], newOptions[index + 1]] = [newOptions[index + 1], newOptions[index]];
-                          onUpdate(field.id, { options: newOptions });
-                        }}
-                        className="text-zinc-400 hover:text-white px-1 transition-all cursor-pointer"
-                      >
-                        <ChevronDown size={16} />
-                      </button>
-                    </div>
-
-                    {/* Кнопка удаления */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const newOptions = field.options?.filter((_, i) => i !== index) || [];
-                        onUpdate(field.id, { options: newOptions });
-                      }}
-                      className="text-zinc-400 hover:text-red-400 transition-all cursor-pointer ml-1"
-                    >
-                      <MinusIcon className="w-4 h-4" />
+                  {/* Кнопка добавления — не на всю ширину строки: иначе
+                      клик по пустому месту рядом с "+" тоже добавляет
+                      вариант. */}
+                  <div className="flex justify-center py-0.5">
+                    <button onClick={handleAddOption} className="text-white hover:text-amber-400 transition-all cursor-pointer">
+                      <PlusIcon className="w-5 h-5" />
                     </button>
                   </div>
-        </div>
-      ))}
-
-      {/* Кнопка добавления нового варианта */}
-      <button
-        onClick={() => {
-          const newOptions = [...(field.options || []), ''];
-          onUpdate(field.id, { options: newOptions });
-        }}
-        className="w-full flex items-center justify-center py-0.5"
-      >
-        <PlusIcon className="w-5 h-5 text-white hover:text-amber-400 transition-all cursor-pointer" />
-      </button>
-    </div>
-  </div>
+                </motion.div>
+              </SortableContext>
+            </DndContext>
+          </div>
         ) : field.type === 'rating' ? (
-  <div className="space-y-2">
-
-    {/* Название поля */}
-    <input 
-      type="text" 
-      value={field.label || ''} 
-      onChange={e => onUpdate(field.id, { label: e.target.value })} 
-      className="block w-full text-sm font-medium text-zinc-400 mb-1 bg-transparent border-none px-0 py-2 outline-none transition-all" 
-      placeholder="Название шкалы" 
-    />
+  <motion.div layout className="space-y-2" transition={{ duration: 0.2, ease: 'easeOut' }}>
 
     {/* Количество баллов */}
     <div className="flex items-center justify-between">
       <label className="text-sm font-medium text-zinc-400">Количество категорий</label>
-      <input 
-        type="number" 
-        value={field.max || 5} 
-        onChange={e => onUpdate(field.id, { max: parseInt(e.target.value) || 5 })} 
-        min={2} 
-        max={10} 
-        className="w-20 px-4 py-1 bg-white/5 border border-white/10 rounded-2xl text-white text-center focus:outline-none transition-all" 
+      <input
+        type="number"
+        value={field.max || 5}
+        onChange={e => onUpdate(field.id, { max: parseInt(e.target.value) || 5 })}
+        min={2}
+        max={10}
+        className="w-20 px-4 py-1 bg-white/5 border border-white/10 rounded-2xl text-white text-center focus:outline-none transition-all"
       />
     </div>
 
-    {/* Включить пояснения */}
+    {/* Включить пояснения — тот же чекбокс, что у поля "Чекбокс" (peer
+        + sr-only + своя SVG-галочка), чтобы оба выглядели одинаково —
+        нативный checkbox с accent-amber-400 визуально отличается. */}
     <label className="flex items-center gap-3 cursor-pointer text-sm text-zinc-300">
-      <input 
-        type="checkbox" 
-        checked={field.showExplanations || false} 
-        onChange={e => onUpdate(field.id, { showExplanations: e.target.checked })} 
-        className="w-5 h-5 accent-amber-400 bg-transparent border border-white/30 rounded focus:ring-amber-400/30" 
-      />
+      <span className="relative inline-flex shrink-0">
+        <input
+          type="checkbox"
+          checked={field.showExplanations || false}
+          onChange={e => onUpdate(field.id, { showExplanations: e.target.checked })}
+          className="peer sr-only"
+        />
+        <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-all flex items-center justify-center">
+          {field.showExplanations && (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-black">
+              <path d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </span>
+      </span>
       <span className="font-medium">Текст для каждой категории</span>
     </label>
 
-    {/* Пояснения */}
+    {/* Пояснения — отступы (gap-2) и размер шрифта цифры (text-sm) как в
+        "Список", чтобы строки в обоих инструментах выглядели одинаково;
+        цифра в колонке шириной w-6 (как иконка в "Список") и text-left —
+        иначе при right-align короткие "1-9" смещались правее иконки. */}
     {field.showExplanations && (
-      <div className="space-y-2 pt-2">
+      <motion.div layout className="space-y-2 pt-2" transition={{ duration: 0.2, ease: 'easeOut' }}>
         {Array.from({ length: field.max || 5 }, (_, i) => (
-          <div key={i} className="flex items-center gap-4">
-            <div className="font-medium text-amber-400 w-8 text-right">{i + 1}</div>
-            <input 
-              type="text" 
-              value={field.explanations?.[i] || ''} 
+          <div key={i} className="flex items-center gap-2">
+            <div className="w-6 text-left text-sm text-white">{i + 1}</div>
+            <input
+              type="text"
+              value={field.explanations?.[i] || ''}
               onChange={e => {
   const newExps = [...(field.explanations || Array(field.max || 5).fill(''))];
   newExps[i] = e.target.value;
   onUpdate(field.id, { explanations: newExps });
-              }} 
-              className="flex-1 bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm" 
-              placeholder={`Введите значение`} 
+              }}
+              className="flex-1 bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
+              placeholder={`Введите значение`}
             />
           </div>
         ))}
-      </div>
+      </motion.div>
     )}
-  </div>
+  </motion.div>
         ) : field.type === 'notes' ? (
           <div>
-            <div className="flex items-center gap-2 mb-4">
-              <BookmarkIcon className="w-6 h-6" />
-              <span className="font-semibold text-lg">Заметки</span>
-            </div>
-
             <div className="flex gap-0 mb-1">
               {/* Добавить ссылку */}
               <button 
@@ -594,27 +698,32 @@ function SortableField({
           </div>
         ) : field.type === 'formula' ? (
           <div className="space-y-3">
-            <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="block w-full text-sm font-medium text-zinc-400 mb-1 bg-transparent outline-none" placeholder="Название" />
             <input type="text" value={field.formula || ''} onChange={e => onUpdate(field.id, { formula: e.target.value })} className="w-full bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm" />
             <div className="flex items-center justify-between text-sm text-white">
               <span>Переменные</span>
-              
             </div>
-            <div className="space-y-0">
+            <motion.div layout className="space-y-0" transition={{ duration: 0.2, ease: 'easeOut' }}>
               {(field.variables || []).map((v, i) => (
-              <div key={i} className="w-full bg-transparent px-0 py-0 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm">
+              <div key={i} className="flex items-center gap-2 w-full bg-transparent px-0 py-0.5 text-white text-sm">
                   <input type="text" value={v.name} onChange={e => updateVariableName(i, e.target.value)} className="w-9 text-center bg-transparent border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-all" />
-                  <span className="text-zinc-400 font-medium mx-4">=</span>
+                  <span className="text-zinc-400 font-medium">=</span>
                   <input type="text" value={v.value || ''} onChange={e => updateVariableValue(i, e.target.value)} className="w-9 text-center bg-transparent border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-all" />
-                  <button onClick={() => removeVariable(i)} className="text-white hover:text-red-400 transition-all cursor-pointer">Удалить</button>
+                  {/* Кнопка удаления — тот же MinusIcon, что в "Список" */}
+                  <button onClick={() => removeVariable(i)} className="text-zinc-400 hover:text-red-400 transition-all cursor-pointer ml-1">
+                    <MinusIcon className="w-4 h-4" />
+                  </button>
                 </div>
               ))}
-            </div>
-            <div>
-              <button onClick={addVariable} className="flex items-center gap-1 text-sm text-white hover:text-amber-400 transition-all cursor-pointer">Добавить переменную
-                
-              </button>
-            </div>  
+
+              {/* Кнопка добавления — тот же PlusIcon, что в "Список".
+                  Не на всю ширину строки: иначе клик по пустому месту
+                  рядом с "+" тоже добавляет переменную. */}
+              <div className="flex justify-center py-0.5">
+                <button onClick={addVariable} className="text-white hover:text-amber-400 transition-all cursor-pointer">
+                  <PlusIcon className="w-5 h-5" />
+                </button>
+              </div>
+            </motion.div>
             <div className="flex items-center gap-3 mt-1">
               <span className="text-white text-sm mt-1">Результат:</span>
               <span className="text-white text-sm mt-1">{field.formula ? evaluateFormulaPreview(field.formula) : '—'}</span>
@@ -623,11 +732,12 @@ function SortableField({
           </div>
         
           ) : null}
-            
-      </div>
 
-      
-    </div>
+      </div>
+      </div>
+      </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -685,9 +795,6 @@ function TemplateBuilder() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  const DynamicUserHeader = dynamic(() => import('../../components/UserHeader'), { ssr: false });
-
-
   useEffect(() => {
   if (edit) {
     setEditingId(edit as string);
@@ -715,7 +822,13 @@ setFields(migratedFields);
 
   const addField = (type: FieldType) => {
     let newField: BuilderField = {
-      id: Date.now().toString(36),
+      // crypto.randomUUID(), не Date.now() — при быстрых повторных кликах
+      // (например, двойной клик по "Добавить") Date.now() легко возвращает
+      // одно и то же значение для двух полей подряд (разрешение — 1мс), из-за
+      // чего два разных поля получали одинаковый id → React путал их как
+      // один и тот же элемент по ключу, что выглядело как "дублирование
+      // карточки со сдвигом" и ломало анимацию именно того поля.
+      id: crypto.randomUUID(),
       type,
       label: '',
       defaultValue: type === 'checkbox' ? false : type === 'rating' ? 0 : '',
@@ -760,7 +873,12 @@ setFields(migratedFields);
   };
 
   const removeField = (id: string) => {
-    setFields(fields.filter(f => f.id !== id));
+    // Убирается из fields сразу, одним рендером — AnimatePresence
+    // (mode="popLayout" у списка ниже) сам доигрывает exit-анимацию
+    // удаляемой карточки и тем же рендером сдвигает соседей через
+    // layout="position", без второго, рассинхронизированного измерения
+    // позиций (см. комментарий в SortableField).
+    setFields(prev => prev.filter(f => f.id !== id));
     if (selectedFieldId === id) setSelectedFieldId(null);
   };
 
@@ -773,7 +891,8 @@ setFields(migratedFields);
 
     const newField: BuilderField = {
       ...JSON.parse(JSON.stringify(original)),
-      id: 'text-' + Date.now().toString(36),
+      // См. комментарий в addField — тот же риск коллизии id при частых кликах.
+      id: 'text-' + crypto.randomUUID(),
     };
 
     const newFields = [
@@ -875,13 +994,13 @@ setFields(migratedFields);
         </div>
       </div>
 
-      <div className="flex-1 p-10 pb-40 overflow-auto">
+      <div className="flex-1 p-10 pb-40 overflow-auto [scrollbar-gutter:stable]">
                 <div className="max-w-3xl mx-auto">
           <input 
             type="text" 
             value={templateTitle} 
             onChange={(e) => setTemplateTitle(e.target.value)} 
-            className="w-full text-2xl font-semibold bg-transparent border-b border-zinc-700 outline-none pb-4 mb-8 tracking-tight transition-colors" 
+            className="w-full text-2xl font-semibold bg-transparent outline-none text-center pb-4 mb-8 tracking-tight transition-colors"
             placeholder="Название шаблона" 
           />
         </div>
@@ -894,26 +1013,34 @@ setFields(migratedFields);
           onDragEnd={handleDragEnd}
         >
           <SortableContext items={fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
-            <div className="space-y-2 max-w-3xl mx-auto">
+            <div className="flex flex-col max-w-3xl mx-auto">
               {fields.length === 0 && <div className="text-center py-24 text-zinc-500 border-2 border-none border-zinc-700 rounded-none">Выберите инструмент из левой панели</div>}
-              {fields.map(field => (
-                <SortableField 
-  key={field.id} 
-  field={field} 
-  isSelected={selectedFieldId === field.id} 
-  onSelect={setSelectedFieldId} 
-  onRemove={removeField} 
-  onUpdate={updateField} 
-  onDuplicate={duplicateField}
-  showAddLinkModal={showAddLinkModal}
-  setShowAddLinkModal={setShowAddLinkModal}
-  tempLinkText={tempLinkText}
-  setTempLinkText={setTempLinkText}
-  tempLinkUrl={tempLinkUrl}
-  setTempLinkUrl={setTempLinkUrl}
-  handleAddLink={handleAddLink}
-/>
-              ))}
+              {/* mode="popLayout": уходящая карточка сразу вынимается из
+                  потока (position: absolute) и доигрывает exit сама по себе
+                  вместо того, чтобы держать соседей на месте до своего
+                  исчезновения — иначе сдвиг соседей стартует отдельным,
+                  рассинхронизированным рендером. См. комментарий в
+                  SortableField. */}
+              <AnimatePresence mode="popLayout">
+                {fields.map(field => (
+                  <SortableField
+    key={field.id}
+    field={field}
+    isSelected={selectedFieldId === field.id}
+    onSelect={setSelectedFieldId}
+    onRemove={removeField}
+    onUpdate={updateField}
+    onDuplicate={duplicateField}
+    showAddLinkModal={showAddLinkModal}
+    setShowAddLinkModal={setShowAddLinkModal}
+    tempLinkText={tempLinkText}
+    setTempLinkText={setTempLinkText}
+    tempLinkUrl={tempLinkUrl}
+    setTempLinkUrl={setTempLinkUrl}
+    handleAddLink={handleAddLink}
+  />
+                ))}
+              </AnimatePresence>
             </div>
           </SortableContext>
 
@@ -944,7 +1071,7 @@ setFields(migratedFields);
 
     // 2. Создаём новую группу
     const newGroup: QuickButtonGroup = {
-      id: Date.now().toString(36),
+      id: crypto.randomUUID(),
       label: '',
       isExpanded: true,
       phrases: [''],
@@ -1104,114 +1231,101 @@ setFields(migratedFields);
       
       
 
-      {showSaveModal && (
-  <dialog 
-    className="modal modal-open"
-    onKeyDown={(e) => {
-      if (e.key === 'Enter') performSave(false);
-      if (e.key === 'Escape') setShowSaveModal(false);
-    }}
-  >
-    <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-sm mx-4">
+      <AnimatedModal
+        open={showSaveModal}
+        onClose={() => setShowSaveModal(false)}
+        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-sm mx-4"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') performSave(false);
+          if (e.key === 'Escape') setShowSaveModal(false);
+        }}
+      >
+        {/* Шапка */}
+        <div className="px-6 pt-5 pb-3 border-b border-white/10">
+          <h2 className="text-lg font-semibold text-white">Сохранение шаблона</h2>
+        </div>
 
-      {/* Шапка */}
-      <div className="px-6 pt-5 pb-3 border-b border-white/10">
-        <h2 className="text-lg font-semibold text-white">Сохранение шаблона</h2>
-      </div>
+        {/* Кнопки */}
+        <div className="px-6 py-5 space-y-3">
+          <button
+            onClick={() => performSave(false)}
+            className="w-full py-4 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 hover:text-amber-400 rounded-2xl text-white text-base font-medium transition-all cursor-pointer"
+          >
+            Сохранить
+          </button>
 
-      {/* Кнопки */}
-      <div className="px-6 py-5 space-y-3">
-        <button
-          onClick={() => performSave(false)}
-          className="w-full py-4 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 hover:text-amber-400 rounded-2xl text-white text-base font-medium transition-all cursor-pointer"
-        >
-          Сохранить
-        </button>
+          <button
+            onClick={() => performSave(true)}
+            className="w-full py-4 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 hover:text-amber-400 rounded-2xl text-white text-base font-medium transition-all cursor-pointer"
+          >
+            Сохранить как новый шаблон
+          </button>
+        </div>
 
-        <button
-          onClick={() => performSave(true)}
-          className="w-full py-4 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 hover:text-amber-400 rounded-2xl text-white text-base font-medium transition-all cursor-pointer"
-        >
-          Сохранить как новый шаблон
-        </button>
-      </div>
-
-      {/* Отмена */}
-      <div className="px-6 pb-6">
-        <button
-          onClick={() => setShowSaveModal(false)}
-          className="w-full py-3 text-zinc-400 hover:text-white transition-all cursor-pointer"
-        >
-          Отмена
-        </button>
-      </div>
-    </div>
-
-    <form method="dialog" className="modal-backdrop">
-      <button onClick={() => setShowSaveModal(false)}>close</button>
-    </form>
-  </dialog>
-)}
+        {/* Отмена */}
+        <div className="px-6 pb-6">
+          <button
+            onClick={() => setShowSaveModal(false)}
+            className="w-full py-3 text-zinc-400 hover:text-white transition-all cursor-pointer"
+          >
+            Отмена
+          </button>
+        </div>
+      </AnimatedModal>
 
 
-      {showAddLinkModal && (
-        <dialog 
-          className="modal modal-open"
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleAddLink(selectedFieldId!);
-            if (e.key === 'Escape') setShowAddLinkModal(false);
-          }}
-        >
-          <div className="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4">
-            <div className="px-6 pt-5 pb-3 border-b border-white/10">
-              <h2 className="text-xl font-semibold text-white">Добавить ссылку</h2>
-            </div>
+      <AnimatedModal
+        open={showAddLinkModal}
+        onClose={() => setShowAddLinkModal(false)}
+        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') handleAddLink(selectedFieldId!);
+          if (e.key === 'Escape') setShowAddLinkModal(false);
+        }}
+      >
+        <div className="px-6 pt-5 pb-3 border-b border-white/10">
+          <h2 className="text-xl font-semibold text-white">Добавить ссылку</h2>
+        </div>
 
-            <div className="px-6 py-6 space-y-6">
-              <div>
-                <label className="block text-sm text-zinc-400 mb-2">Название</label>
-                <input 
-                  type="text" 
-                  value={tempLinkText} 
-                  onChange={e => setTempLinkText(e.target.value)} 
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
-                  placeholder="Введите значение"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-zinc-400 mb-2">URL</label>
-                <input 
-                  type="text" 
-                  value={tempLinkUrl} 
-                  onChange={e => setTempLinkUrl(e.target.value)} 
-                  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
-                  placeholder="Введите значение "
-                />
-              </div>
-            </div>
-
-            <div className="px-6 pb-6 flex gap-3">
-              <button
-                onClick={() => setShowAddLinkModal(false)}
-                className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm text-white font-medium transition-all cursor-pointer"
-              >
-                Отмена
-              </button>
-              <button
-                onClick={() => handleAddLink(selectedFieldId!)}
-                className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 hover:text-amber-300 border border-white/10 hover:border-amber-400 rounded-2xl text-sm text-white font-medium transition-all cursor-pointer"
-              >
-                Добавить
-              </button>
-            </div>
+        <div className="px-6 py-6 space-y-6">
+          <div>
+            <label className="block text-sm text-zinc-400 mb-2">Название</label>
+            <input
+              type="text"
+              value={tempLinkText}
+              onChange={e => setTempLinkText(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
+              placeholder="Введите значение"
+            />
           </div>
 
-          <form method="dialog" className="modal-backdrop">
-            <button onClick={() => setShowAddLinkModal(false)}>close</button>
-          </form>
-        </dialog>
-      )}
+          <div>
+            <label className="block text-sm text-zinc-400 mb-2">URL</label>
+            <input
+              type="text"
+              value={tempLinkUrl}
+              onChange={e => setTempLinkUrl(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
+              placeholder="Введите значение "
+            />
+          </div>
+        </div>
+
+        <div className="px-6 pb-6 flex gap-3">
+          <button
+            onClick={() => setShowAddLinkModal(false)}
+            className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm text-white font-medium transition-all cursor-pointer"
+          >
+            Отмена
+          </button>
+          <button
+            onClick={() => handleAddLink(selectedFieldId!)}
+            className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 hover:text-amber-300 border border-white/10 hover:border-amber-400 rounded-2xl text-sm text-white font-medium transition-all cursor-pointer"
+          >
+            Добавить
+          </button>
+        </div>
+      </AnimatedModal>
 
     </div>
   );

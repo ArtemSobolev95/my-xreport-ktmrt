@@ -12,7 +12,10 @@ export function migrateQuickButtons(groups: any[] | undefined | null): QuickButt
     // Уже новый формат
     if (Array.isArray(g.phrases)) {
       return {
-        id: g.id || Date.now().toString(36),
+        // crypto.randomUUID(), не Date.now() — .map() перебирает группы
+        // синхронно, и для нескольких групп без id подряд в одном шаблоне
+        // Date.now() легко вернёт одно и то же значение (разрешение — 1мс).
+        id: g.id || crypto.randomUUID(),
         label: g.label || '',
         isExpanded: g.isExpanded ?? true,
         phrases: g.phrases.length > 0 ? g.phrases : [''],
@@ -30,7 +33,7 @@ export function migrateQuickButtons(groups: any[] | undefined | null): QuickButt
     });
 
     return {
-      id: g.id || Date.now().toString(36),
+      id: g.id || crypto.randomUUID(),
       label: g.label || '',
       isExpanded: g.isExpanded ?? true,
       phrases: phrases.length > 0 ? phrases : [''],

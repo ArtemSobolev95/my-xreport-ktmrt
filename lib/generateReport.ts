@@ -57,8 +57,8 @@ export function generateReport({
     plainText += `Описание исследования в сравнении ${label} ${datesStr}:\n\n`;
   }
   if (isStateAfterActive && stateAfterText) {
-    htmlText += `<span class="text-amber-400">Состояние после ${escapeHtml(stateAfterText)}</span>\n\n`;
-    plainText += `Состояние после ${stateAfterText}\n\n`;
+    htmlText += `<span class="text-amber-400">${escapeHtml(stateAfterText)}</span>\n\n`;
+    plainText += `${stateAfterText}\n\n`;
   }
 
   template.fields.forEach((f: BuilderField) => {

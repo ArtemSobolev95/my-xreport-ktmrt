@@ -3,14 +3,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../../lib/pocketbase';
 pb.autoCancellation(false);
-import { GripVertical, Trash2, ChevronUp, ChevronDown, ChevronRight, FolderPlus, FolderMinus } from 'lucide-react';
+import { GripVertical, Trash2, ChevronUp, ChevronDown, ChevronRight, FolderPlus, FolderMinus, Paperclip } from 'lucide-react';
 import {
   ClipboardDocumentListIcon,
   PencilIcon,
   HashtagIcon,
   CheckCircleIcon,
   ListBulletIcon,
-  BookmarkIcon,
   CalculatorIcon,
   DocumentCheckIcon,
   ArrowRightIcon,
@@ -83,7 +82,7 @@ const availableFields = [
       <path d="M18.375 2.25c-1.035 0-1.875.84-1.875 1.875v15.75c0 1.035.84 1.875 1.875 1.875h.75c1.035 0 1.875-.84 1.875-1.875V4.125c0-1.036-.84-1.875-1.875-1.875h-.75ZM9.75 8.625c0-1.036.84-1.875 1.875-1.875h.75c1.036 0 1.875.84 1.875 1.875v11.25c0 1.035-.84 1.875-1.875 1.875h-.75a1.875 1.875 0 0 1-1.875-1.875V8.625ZM3 13.125c0-1.036.84-1.875 1.875-1.875h.75c1.036 0 1.875.84 1.875 1.875v6.75c0 1.035-.84 1.875-1.875 1.875h-.75A1.875 1.875 0 0 1 3 19.875v-6.75Z" />
     </svg>
   )},
-  { type: 'notes' as FieldType, label: 'Заметки', icon: <BookmarkIcon className="w-7 h-7" /> },
+  { type: 'notes' as FieldType, label: 'Заметки', icon: <Paperclip className="w-7 h-7" /> },
   { type: 'formula' as FieldType, label: 'Формула', icon: <CalculatorIcon className="w-7 h-7" /> },
 ];
 
@@ -414,7 +413,7 @@ function SortableField({
           )}
           {field.type === 'notes' && (
             <div className="flex items-center gap-2 text-white">
-              <BookmarkIcon className="w-5 h-5" />
+              <Paperclip className="w-5 h-5" />
               <span className="font-semibold">Заметки</span>
             </div>
           )}
@@ -452,24 +451,21 @@ function SortableField({
 
       <div>
         {field.type === 'header' ? (
-          <div className="text-lg font-bold text-white py-0.5">
+          <div className="text-lg font-bold text-white">
             <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="w-full bg-transparent outline-none" placeholder="Заголовок" />
           </div>
         ) : field.type === 'text' ? (
           <div>
-            {/* Placeholder — редактируется прямо внутри карточки */}
-            <div className="mb-4">
-            
-              <input 
-                type="text" 
-                value={field.placeholder || ''} 
-                onChange={e => onUpdate(field.id, { placeholder: e.target.value })} 
-                className="w-full bg-transparent border-0 px-0 py-0.5 leading-tight text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm" 
-                placeholder="Введите значение" 
-              />
-            </div>
-
-            {/* Значение по умолчанию удалено для text */}
+            {/* Placeholder — редактируется прямо внутри карточки. Без mb-4
+                (лишний хвостовой отступ снизу карточки, которого нет у
+                остальных типов — только у своего инпута свой py-0.5). */}
+            <input
+              type="text"
+              value={field.placeholder || ''}
+              onChange={e => onUpdate(field.id, { placeholder: e.target.value })}
+              className="w-full bg-transparent border-0 px-0 py-0.5 leading-tight text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
+              placeholder="Введите значение"
+            />
           </div>
         ) : field.type === 'number' ? (
   <div className="space-y-2">
@@ -562,7 +558,7 @@ function SortableField({
   <motion.div layout className="space-y-2" transition={{ duration: 0.2, ease: 'easeOut' }}>
 
     {/* Количество баллов */}
-    <div className="flex items-center justify-between">
+    <div className="flex items-center gap-3">
       <label className="text-sm font-medium text-zinc-400">Количество категорий</label>
       <input
         type="number"
@@ -623,31 +619,31 @@ function SortableField({
   </motion.div>
         ) : field.type === 'notes' ? (
           <div>
-            <div className="flex gap-0 mb-1">
+            <div className="flex items-center gap-2 mb-1">
               {/* Добавить ссылку */}
-              <button 
-                onClick={(e) => { 
-                  e.stopPropagation(); 
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
                   onSelect(field.id);           // ← важно!
-                  setShowAddLinkModal(true); 
-                }} 
-                className="flex items-center gap-2 text-sm font-medium text-zinc-400 hover:text-white px-4 py-2 border-none cursor-pointer tooltip tooltip-top"
+                  setShowAddLinkModal(true);
+                }}
+                className="text-white hover:text-amber-400 transition-all cursor-pointer tooltip tooltip-top"
                 data-tip="Добавить ссылку"
               >
-                <PlusIcon className="w-5 h-5 text-white hover:text-amber-400 transition-all" />
+                <PlusIcon className="w-5 h-5" />
               </button>
 
               {/* Добавить изображение */}
-              <button 
-                onClick={(e) => { 
-                  e.stopPropagation(); 
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
                   onSelect(field.id);           // ← важно!
-                  handleAddImage(); 
-                }} 
-                className="flex items-center gap-2 text-sm font-medium text-zinc-400 hover:text-white px-4 py-2 border-none cursor-pointer tooltip tooltip-top"
+                  handleAddImage();
+                }}
+                className="text-white hover:text-amber-400 transition-all cursor-pointer tooltip tooltip-top"
                 data-tip="Загрузить изображение"
               >
-                <PhotoIcon className="w-5 h-5 text-white hover:text-amber-400 transition-all" />
+                <PhotoIcon className="w-5 h-5" />
               </button>
             </div>
 

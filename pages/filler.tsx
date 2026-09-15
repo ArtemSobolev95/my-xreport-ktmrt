@@ -44,29 +44,39 @@ const RatingField = ({
   };
 
   return (
-    <div className="flex gap-2 justify-center">
-      {Array.from({ length: field.max || 5 }, (_, i) => {
-        const score = i + 1;
-        const isActive = value === score;
+    // Центр — относительно "Название поля" выше, а не всей карточки: та
+    // строка сама не по центру карточки (справа от неё ещё 2 кнопки
+    // добавить/удалить, 24px+24px, без right-элемента слева для баланса).
+    // Правый спейсер той же ширины (w-12 = 48px) повторяет эту асимметрию,
+    // чтобы центр кнопок совпадал с центром названия поля.
+    <div className="flex items-center gap-1">
+      <div className="flex-1 flex justify-center min-w-0">
+        <div className="flex gap-2">
+          {Array.from({ length: field.max || 5 }, (_, i) => {
+            const score = i + 1;
+            const isActive = value === score;
 
-        return (
-          <button
-              key={score}
-              onClick={() => handleClick(score)}
-              tabIndex={disabled ? -1 : 0}
-              data-custom-focus
-              className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-xl transition-all border cursor-pointer
-                focus:outline-none focus-visible:border-amber-400 focus-visible:ring-2 focus-visible:ring-amber-400/40
-                ${isActive
-                  ? 'bg-zinc-800 border-amber-400 text-white shadow-md'
-                  : 'bg-transparent border-white/30 hover:border-amber-400 hover:bg-white/5 text-white'
-                }
-              `}
-            >
-              {score}
-            </button>
-        );
-      })}
+            return (
+              <button
+                  key={score}
+                  onClick={() => handleClick(score)}
+                  tabIndex={disabled ? -1 : 0}
+                  data-custom-focus
+                  className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-xl transition-all border cursor-pointer
+                    focus:outline-none focus-visible:border-amber-400 focus-visible:ring-2 focus-visible:ring-amber-400/40
+                    ${isActive
+                      ? 'bg-zinc-800 border-amber-400 text-white shadow-md'
+                      : 'bg-transparent border-white/30 hover:border-amber-400 hover:bg-white/5 text-white'
+                    }
+                  `}
+                >
+                  {score}
+                </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="w-12 shrink-0" aria-hidden="true" />
     </div>
   );
 };
@@ -2178,7 +2188,7 @@ for (const f of visibleFields) {
 
 
                 {f.type === 'formula' && (
-  <div className="px-3 pt-0 pb-1 space-y-2">
+  <div className="px-3 pt-0 pb-3 space-y-2">
     {/* Переменные */}
     <div className="space-y-1">
       {(f.variables || []).map((v, i: number) => (
@@ -2402,7 +2412,7 @@ for (const f of visibleFields) {
         }}
       >
         <div className="px-6 pt-5 pb-3 border-b border-white/10">
-          <h2 className="text-xl font-semibold text-white">Заметки</h2>
+          <h2 className="text-lg font-semibold text-white">Заметки</h2>
         </div>
 
         <div className="px-6 py-4 max-h-[60vh] overflow-y-auto space-y-1">
@@ -2440,7 +2450,7 @@ for (const f of visibleFields) {
         }}
       >
             <div className="px-6 pt-5 pb-3 border-b border-white/10 flex items-center justify-between">
-              <h2 className="text-xl font-semibold text-white">Сравнение с предыдущим</h2>
+              <h2 className="text-lg font-semibold text-white">Сравнение с предыдущим</h2>
             </div>
 
             <div className="p-6 space-y-4">
@@ -2455,7 +2465,7 @@ for (const f of visibleFields) {
                     onChange={(e) => handleComparisonDateChange(e, 0)}
                     placeholder="ДД-ММ-ГГГГ" 
                     maxLength={10}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all text-center"
+                    className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all text-center"
                   />
                 </div>
               </div>
@@ -2493,7 +2503,7 @@ for (const f of visibleFields) {
                           onChange={(e) => handleComparisonDateChange(e, realIndex)}
                           placeholder="ДД-ММ-ГГГГ" 
                           maxLength={10}
-                          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all text-center"
+                          className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all text-center"
                         />
                         <button 
                           onClick={() => {
@@ -2569,7 +2579,7 @@ for (const f of visibleFields) {
         }}
       >
             <div className="px-6 pt-5 pb-3 border-b border-white/10 relative">
-              <h2 className="text-xl font-semibold text-white">Примечание</h2>
+              <h2 className="text-lg font-semibold text-white">Примечание</h2>
               <button
                 type="button"
                 onClick={() => {
@@ -2623,7 +2633,7 @@ for (const f of visibleFields) {
     }
   }}
   placeholder="Введите текст — совпадающие фразы предложатся ниже"
-  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all resize-none"
+  className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all resize-none"
   rows={3}
 />
                 {stateAfterQuery && stateAfterPhrases.length > 0 && (
@@ -2703,7 +2713,7 @@ for (const f of visibleFields) {
         }}
       >
         <div className="px-6 pt-5 pb-3 border-b border-white/10">
-          <h2 className="text-xl font-semibold text-white">Новая фраза</h2>
+          <h2 className="text-lg font-semibold text-white">Новая фраза</h2>
         </div>
 
         <div className="p-6">
@@ -2713,7 +2723,7 @@ for (const f of visibleFields) {
             value={newNotePhraseText}
             onChange={e => setNewNotePhraseText(e.target.value)}
             placeholder="Текст фразы"
-            className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
+            className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
           />
         </div>
 
@@ -2744,7 +2754,7 @@ for (const f of visibleFields) {
       >
       {/* Шапка модалки — кнопки в правом верхнем углу */}
       <div className="px-6 pt-5 pb-3 border-b border-white/10 relative">
-  <h2 className="text-xl font-semibold text-white">Автокоррекции</h2>
+  <h2 className="text-lg font-semibold text-white">Автокоррекции</h2>
 
   <div className="absolute top-5 right-4 flex items-center gap-1">
     <button
@@ -3028,7 +3038,7 @@ for (const f of visibleFields) {
         }}
       >
         <div className="px-6 pt-5 pb-1">
-          <h2 className="text-xl font-semibold text-white">Сохранить</h2>
+          <h2 className="text-lg font-semibold text-white">Сохранить</h2>
         </div>
 
         <div className="px-6 py-5 space-y-5">

@@ -1245,14 +1245,14 @@ setFields(migratedFields);
         <div className="px-6 py-5 space-y-3">
           <button
             onClick={() => performSave(false)}
-            className="w-full py-4 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 hover:text-amber-400 rounded-2xl text-white text-base font-medium transition-all cursor-pointer"
+            className="w-full py-4 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 hover:text-amber-400 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer"
           >
             Сохранить
           </button>
 
           <button
             onClick={() => performSave(true)}
-            className="w-full py-4 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 hover:text-amber-400 rounded-2xl text-white text-base font-medium transition-all cursor-pointer"
+            className="w-full py-4 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 hover:text-amber-400 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer"
           >
             Сохранить как новый шаблон
           </button>
@@ -1262,7 +1262,7 @@ setFields(migratedFields);
         <div className="px-6 pb-6">
           <button
             onClick={() => setShowSaveModal(false)}
-            className="w-full py-3 text-zinc-400 hover:text-white transition-all cursor-pointer"
+            className="w-full py-3 text-sm text-zinc-400 hover:text-white transition-all cursor-pointer"
           >
             Отмена
           </button>
@@ -1280,7 +1280,7 @@ setFields(migratedFields);
         }}
       >
         <div className="px-6 pt-5 pb-3 border-b border-white/10">
-          <h2 className="text-xl font-semibold text-white">Добавить ссылку</h2>
+          <h2 className="text-lg font-semibold text-white">Добавить ссылку</h2>
         </div>
 
         <div className="px-6 py-6 space-y-6">
@@ -1290,7 +1290,7 @@ setFields(migratedFields);
               type="text"
               value={tempLinkText}
               onChange={e => setTempLinkText(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
               placeholder="Введите значение"
             />
           </div>
@@ -1301,7 +1301,7 @@ setFields(migratedFields);
               type="text"
               value={tempLinkUrl}
               onChange={e => setTempLinkUrl(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-white placeholder:text-zinc-400 focus:outline-none transition-all"
+              className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
               placeholder="Введите значение "
             />
           </div>

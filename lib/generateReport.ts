@@ -69,7 +69,7 @@ export function generateReport({
     const val = fieldsData[f.id];
     const label = escapeHtml(f.label);
 
-    if (f.type === 'text' && isFieldEmpty(f, val) && !f.placeholder) {
+    if ((f.type === 'text' || f.type === 'conclusion') && isFieldEmpty(f, val) && !f.placeholder) {
       return;
     }
 
@@ -82,11 +82,11 @@ export function generateReport({
     }
 
     let coloredHtml = displayHtml;
-    if (val && ['text', 'number', 'select', 'checkbox', 'formula'].includes(f.type)) {
+    if (val && ['text', 'number', 'select', 'checkbox', 'formula', 'conclusion'].includes(f.type)) {
       coloredHtml = `<span class="text-amber-400">${escapeHtml(val)}</span>`;
     }
 
-    if (f.type === 'text') {
+    if (f.type === 'text' || f.type === 'conclusion') {
       // Берём реальное значение пользователя (или placeholder)
       let textValue = (val || displayPlain || '').trim();
 

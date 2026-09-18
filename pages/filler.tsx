@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, ChevronsDownUp, Paperclip, Plus } from 'lucide-react';
+import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, ChevronsDownUp, Paperclip, Plus, CornerDownRight } from 'lucide-react';
 import { 
   ArrowDownOnSquareIcon, 
   ArrowUpOnSquareIcon        
@@ -92,6 +92,15 @@ const isSafeUrl = (url: string): boolean => {
   } catch {
     return false;
   }
+};
+
+// Строка, вставляемая в "Заключение" по чипу: с большой буквы, с точкой на
+// конце (если там уже не .!?… — не дублируем).
+const formatConclusionLine = (text: string): string => {
+  const t = text.trim();
+  if (!t) return t;
+  const capitalized = t.charAt(0).toUpperCase() + t.slice(1);
+  return /[.!?…]$/.test(capitalized) ? capitalized : `${capitalized}.`;
 };
 
 // Должно совпадать с duration-200 на карточках полей (см. className ниже,
@@ -1415,6 +1424,126 @@ useEffect(() => {
   updateField(fieldId, value, { groupTyping: true });
 };
 
+// === Заключение: кнопка на текстовых полях, добавляющая ВЫДЕЛЕННЫЙ в них
+// текст в отдельное поле-цель типа "conclusion". Активный статус — чтобы
+// можно было быстро отменить ошибочную вставку повторным нажатием (строка
+// убирается из "Заключения"). Если в шаблоне несколько полей "Заключение"
+// — берём первое; сценарий с несколькими целями не предусмотрен.
+const conclusionField = useMemo(
+  () => template?.fields.find(f => f.type === 'conclusion' && !deletedFieldIds.includes(f.id)) || null,
+  [template, deletedFieldIds]
+);
+
+// Текст, вставленный ПРИ АКТИВАЦИИ (а не текущее выделение — к моменту
+// повторного нажатия выделения уже может не быть), чтобы при отмене убрать
+// именно эту строку, а не всё поле "Заключение" целиком.
+type ConclusionEntry = { fieldId: string; text: string };
+const conclusionEntries: ConclusionEntry[] = fieldsData['__conclusionEntries'] || [];
+const isInConclusion = (fieldId: string) => conclusionEntries.some(e => e.fieldId === fieldId);
+
+const toggleConclusionEntry = (textFieldId: string) => {
+  if (!conclusionField) return;
+  // fieldsDataRef, а не fieldsData — эта функция вызывается и из
+  // обработчика Ctrl+Enter на window, чей useEffect не перезапускается при
+  // каждом изменении fieldsData (иначе слушатель клавиатуры пришлось бы
+  // пересоздавать на каждое нажатие), поэтому замыкание через обычный
+  // fieldsData было бы устаревшим уже после первой вставки.
+  const entries = fieldsDataRef.current['__conclusionEntries'] || [];
+  const existingIndex = entries.findIndex((e: ConclusionEntry) => e.fieldId === textFieldId);
+  const currentText: string = fieldsDataRef.current[conclusionField.id] || '';
+
+  let newEntries: ConclusionEntry[];
+  let newText: string;
+
+  if (existingIndex !== -1) {
+    const entry = entries[existingIndex];
+    newEntries = entries.filter((_: ConclusionEntry, i: number) => i !== existingIndex);
+    const lines = currentText.split('\n');
+    const lineIdx = lines.indexOf(entry.text);
+    // Строку могли отредактировать вручную после вставки — тогда она уже
+    // не найдётся дословно, и текст поля не трогаем, снимаем только статус.
+    if (lineIdx !== -1) lines.splice(lineIdx, 1);
+    newText = lines.join('\n');
+  } else {
+    const textarea = inputRefs.current[textFieldId] as HTMLTextAreaElement | undefined;
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? 0;
+    const end = textarea.selectionEnd ?? 0;
+    if (start === end) {
+      dialog.alert('Выделите текст, который нужно добавить в Заключение');
+      return;
+    }
+    const formatted = formatConclusionLine(textarea.value.substring(start, end));
+    if (!formatted) return;
+    newEntries = [...entries, { fieldId: textFieldId, text: formatted }];
+    newText = currentText ? `${currentText}\n${formatted}` : formatted;
+  }
+
+  endTypingSession();
+  saveToHistory();
+  setFieldsData(prev => {
+    const next = { ...prev, __conclusionEntries: newEntries, [conclusionField.id]: newText };
+    fieldsDataRef.current = next;
+    return next;
+  });
+
+  // Высота textarea "Заключения" считается через autoResize только по
+  // событию onChange — при таком, программном обновлении значения (не
+  // через ввод с клавиатуры) React перерисует текст, но не пересчитает
+  // inline height, оставшуюся от предыдущего содержимого. rAF — чтобы
+  // измерить scrollHeight уже после того, как DOM отрисует новый текст.
+  requestAnimationFrame(() => {
+    autoResize(inputRefs.current[conclusionField.id] as HTMLTextAreaElement | undefined ?? null);
+  });
+};
+
+// Горячие клавиши: Ctrl+Enter — выделенный текст активного текстового поля
+// в "Заключение" (то же, что кнопка на поле); Alt+C / Alt+P — переключить
+// "Сравнение" / "Примечание" (та же логика, что в onClick этих кнопок).
+// Слушатель на window, а не на конкретном элементе — "Сравнение"/
+// "Примечание" не привязаны к какому-то одному полю, а Ctrl+Enter должен
+// сработать независимо от того, что именно сейчас в фокусе внутри поля.
+useEffect(() => {
+  const handleGlobalKeyDown = (e: KeyboardEvent) => {
+    if (e.ctrlKey && !e.altKey && !e.metaKey && e.key === 'Enter') {
+      const fieldId = activeFieldRef.current;
+      const field = fieldId ? template?.fields.find(f => f.id === fieldId) : null;
+      if (!field || field.type !== 'text') return;
+      e.preventDefault();
+      toggleConclusionEntry(fieldId!);
+      return;
+    }
+
+    // e.code (физическая позиция клавиши), а не e.key — на macOS Option
+    // подменяет символ (Option+C -> "ç", Option+P -> "π" на US-раскладке),
+    // из-за чего e.key.toLowerCase() === 'c' никогда не сработает при
+    // зажатом Option, хотя e.altKey для Option на Mac уже верно = true.
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyC') {
+      e.preventDefault();
+      if (isComparisonActive) {
+        setIsComparisonActive(false);
+      } else {
+        if (comparisonDates.length === 0) setComparisonDates(['']);
+        if (comparisonDates.length > 1) setIsMultipleComparison(true);
+        setShowComparisonModal(true);
+      }
+      return;
+    }
+
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyP') {
+      e.preventDefault();
+      if (isStateAfterActive) {
+        setIsStateAfterActive(false);
+      } else {
+        setShowStateAfterModal(true);
+      }
+    }
+  };
+
+  window.addEventListener('keydown', handleGlobalKeyDown);
+  return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+}, [template, isComparisonActive, comparisonDates, isStateAfterActive]);
+
 // Автоскролл выбранной фразы при навигации стрелками
 useEffect(() => {
   if (!pathNav) return;
@@ -1946,7 +2075,17 @@ for (const f of visibleFields) {
       
 
      {/* === Анимируемая обёртка (вставь сюда) === */}
-     <div className="overflow-hidden transition-all duration-200 ease-out">
+     {/* overflow-hidden только пока карточка реально анимируется (сворачивание
+         раздела через grid-rows-0fr, появление/исчезновение через max-h-0) —
+         это единственные случаи, где обрезка контента нужна технически. В
+         остальное время overflow-visible, иначе тултипы кнопок (➕/➖, чип
+         "в Заключение") обрезаются этим враппером и не видны за границей
+         карточки. */}
+     <div className={`transition-all duration-200 ease-out ${
+       isSectionCollapsed || newlyAddedId === f.id || removingId === f.id
+         ? 'overflow-hidden'
+         : 'overflow-visible'
+     }`}>
 
       <div className={`card-body ${
   f.type === 'header'
@@ -1976,12 +2115,32 @@ for (const f of visibleFields) {
         className="max-w-full text-center bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-all"
       />
     </div>
-    <div className="flex shrink-0">
+    <div className="flex shrink-0 relative">
+              {/* Кнопка "в Заключение" — только у обычных текстовых полей, и
+                  только если в шаблоне вообще есть поле "Заключение" (иначе
+                  вставлять некуда). absolute + right-full: визуально стоит
+                  сразу слева от кластера ➕/➖ (там же, где и раньше), но не
+                  участвует в его ширине — иначе у текстовых полей кластер
+                  становится шире, чем у остальных типов, и "Название поля"
+                  (центрируется в оставшемся треке) уезжает относительно них. */}
+              {f.type === 'text' && conclusionField && (
+                <button
+                  onClick={() => toggleConclusionEntry(f.id)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  tabIndex={-1}
+                  className={`absolute right-full top-0 btn btn-ghost btn-square w-6 h-6 min-h-0 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top ${
+                    isInConclusion(f.id) ? 'text-amber-400 hover:text-amber-300' : 'text-white hover:text-amber-400'
+                  }`}
+                  data-tip={isInConclusion(f.id) ? 'Убрать из Заключения' : 'Добавить выделенный текст в Заключение (Ctrl+Enter)'}
+                >
+                  <CornerDownRight className="w-4 h-4" />
+                </button>
+              )}
               <button
                 onClick={() => addTextFieldAfter(f.id)}
                 tabIndex={-1}
-                className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
-                title="Добавить поле"
+                className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top"
+                data-tip="Добавить поле"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -1990,8 +2149,8 @@ for (const f of visibleFields) {
               <button
                 onClick={() => removeField(f.id)}
                 tabIndex={-1}
-                className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
-                title="Удалить"
+                className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top"
+                data-tip="Удалить"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -2008,7 +2167,7 @@ for (const f of visibleFields) {
     tabIndex={0}
     data-header-id={f.id}
     className="py-2 flex items-center justify-between cursor-pointer group select-none outline-none
-  rounded-xl px-2
+  rounded-xl px-2 relative
   focus:bg-white/10 focus:text-amber-400
   focus:ring-2 focus:ring-amber-400/40 focus:ring-inset"
     onClick={() => openOnlySection(f.id)}
@@ -2057,8 +2216,8 @@ for (const f of visibleFields) {
         openOnlySection(f.id);
       }}
       tabIndex={-1}
-      className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 shadow-none transition-all"
-      title={collapsedHeaders.has(f.id) ? 'Развернуть раздел' : 'Свернуть раздел'}
+      className="absolute right-2 top-1/2 -translate-y-1/2 btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 shadow-none transition-all tooltip tooltip-top"
+      data-tip={collapsedHeaders.has(f.id) ? 'Развернуть раздел' : 'Свернуть раздел'}
     >
       {collapsedHeaders.has(f.id) ? <ChevronRight size={22} /> : <ChevronDown size={22} />}
     </button>
@@ -2066,7 +2225,7 @@ for (const f of visibleFields) {
 )}
         
         {/* Все поля остаются без изменений */}
-        {f.type === 'text' && (
+        {(f.type === 'text' || f.type === 'conclusion') && (
   <textarea
     ref={el => { if (el) inputRefs.current[f.id] = el; }}
     data-custom-focus
@@ -2144,8 +2303,8 @@ for (const f of visibleFields) {
       <button
         onClick={() => addTextFieldAfter(f.id)}
         tabIndex={-1}
-        className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
-        title="Добавить поле"
+        className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top"
+        data-tip="Добавить поле"
       >
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
           <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -2154,8 +2313,8 @@ for (const f of visibleFields) {
       <button
         onClick={() => removeField(f.id)}
         tabIndex={-1}
-        className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors"
-        title="Удалить"
+        className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top"
+        data-tip="Удалить"
       >
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
           <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -2274,11 +2433,12 @@ for (const f of visibleFields) {
   setShowComparisonModal(true);
 }
       }}
-      className={`px-4 py-1.5 text-xs font-medium rounded-2xl border transition-all cursor-pointer
-        ${isComparisonActive 
-          ? 'bg-amber-400/10 border-amber-400 text-amber-400' 
+      className={`px-4 py-1.5 text-xs font-medium rounded-2xl border transition-all cursor-pointer tooltip tooltip-bottom
+        ${isComparisonActive
+          ? 'bg-amber-400/10 border-amber-400 text-amber-400'
           : 'bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-white/20'
         }`}
+      data-tip="Alt+C"
     >
       Сравнение
     </button>
@@ -2293,11 +2453,12 @@ for (const f of visibleFields) {
   setShowStateAfterModal(true);
 }
       }}
-      className={`px-4 py-1.5 text-xs font-medium rounded-2xl border transition-all cursor-pointer
-        ${isStateAfterActive 
-          ? 'bg-amber-400/10 border-amber-400 text-amber-400' 
+      className={`px-4 py-1.5 text-xs font-medium rounded-2xl border transition-all cursor-pointer tooltip tooltip-bottom
+        ${isStateAfterActive
+          ? 'bg-amber-400/10 border-amber-400 text-amber-400'
           : 'bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-white/20'
         }`}
+      data-tip="Alt+P"
     >
       Примечание
     </button>
@@ -2459,11 +2620,12 @@ for (const f of visibleFields) {
                 
                 
                 <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    value={formatDateToDDMMYYYY(comparisonDates[0] || '')} 
+                  <input
+                    autoFocus
+                    type="text"
+                    value={formatDateToDDMMYYYY(comparisonDates[0] || '')}
                     onChange={(e) => handleComparisonDateChange(e, 0)}
-                    placeholder="ДД-ММ-ГГГГ" 
+                    placeholder="ДД-ММ-ГГГГ"
                     maxLength={10}
                     className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all text-center"
                   />
@@ -2598,6 +2760,7 @@ for (const f of visibleFields) {
               <div className="relative">
                 <textarea
   ref={stateAfterTextareaRef}
+  autoFocus
   value={stateAfterText}
   onChange={e => setStateAfterText(e.target.value)}
   onKeyDown={(e) => {

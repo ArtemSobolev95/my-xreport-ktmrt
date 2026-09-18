@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../../lib/pocketbase';
 pb.autoCancellation(false);
-import { GripVertical, Trash2, ChevronUp, ChevronDown, ChevronRight, FolderPlus, FolderMinus, Paperclip } from 'lucide-react';
+import { GripVertical, Trash2, ChevronUp, ChevronDown, ChevronRight, FolderPlus, FolderMinus, Paperclip, ClipboardCheck } from 'lucide-react';
 import {
   ClipboardDocumentListIcon,
   PencilIcon,
@@ -84,6 +84,7 @@ const availableFields = [
   )},
   { type: 'notes' as FieldType, label: 'Заметки', icon: <Paperclip className="w-7 h-7" /> },
   { type: 'formula' as FieldType, label: 'Формула', icon: <CalculatorIcon className="w-7 h-7" /> },
+  { type: 'conclusion' as FieldType, label: 'Заключение', icon: <ClipboardCheck className="w-7 h-7" /> },
 ];
 
 // Одна перетаскиваемая строка варианта в инструменте "Список" — своя ручка
@@ -401,7 +402,7 @@ function SortableField({
             своего label нет, но статичное название "Заметки" с иконкой
             тоже центрируется здесь же, а не отдельной строкой в контенте. */}
         <div className="flex-1 flex justify-center min-w-0">
-          {(field.type === 'text' || field.type === 'number' || field.type === 'checkbox' || field.type === 'select' || field.type === 'rating' || field.type === 'formula') && (
+          {(field.type === 'text' || field.type === 'number' || field.type === 'checkbox' || field.type === 'select' || field.type === 'rating' || field.type === 'formula' || field.type === 'conclusion') && (
             <input
               type="text"
               value={field.label || ''}
@@ -454,7 +455,7 @@ function SortableField({
           <div className="text-lg font-bold text-white">
             <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="w-full bg-transparent outline-none" placeholder="Заголовок" />
           </div>
-        ) : field.type === 'text' ? (
+        ) : field.type === 'text' || field.type === 'conclusion' ? (
           <div>
             {/* Placeholder — редактируется прямо внутри карточки. Без mb-4
                 (лишний хвостовой отступ снизу карточки, которого нет у
@@ -843,7 +844,7 @@ setFields(migratedFields);
       
     };
 
-    if (type === 'text') {
+    if (type === 'text' || type === 'conclusion') {
       newField = {
         ...newField,
         quickButtons: [],
@@ -1048,7 +1049,7 @@ setFields(migratedFields);
 
       {/* ПРАВАЯ ПАНЕЛЬ */}
       <div className="w-[400px] min-w-[300px] max-w-[680px] flex-shrink-0 bg-zinc-900 border-l border-zinc-800 flex flex-col">
-        {selectedFieldId && fields.find(f => f.id === selectedFieldId)?.type === 'text' ? (
+        {selectedFieldId && ['text', 'conclusion'].includes(fields.find(f => f.id === selectedFieldId)?.type || '') ? (
   <div className="flex-1 overflow-auto p-6">
     <div className="flex items-center justify-between mb-4">
       <h3 className="font-semibold text-lg tracking-tigh">Быстрые кнопки</h3>

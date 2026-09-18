@@ -1,6 +1,6 @@
-export type FieldType = 
-  'header' | 'text' | 'number' | 'checkbox' | 'select' | 
-  'rating' | 'notes' | 'formula' ;
+export type FieldType =
+  'header' | 'text' | 'number' | 'checkbox' | 'select' |
+  'rating' | 'notes' | 'formula' | 'conclusion' ;
 
 export interface QuickButtonGroup {
   id: string;

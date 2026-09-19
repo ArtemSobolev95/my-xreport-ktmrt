@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, ChevronsDownUp, Paperclip, Plus, CornerDownRight } from 'lucide-react';
+import { Copy, Download, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, CornerDownRight } from 'lucide-react';
 import { 
   ArrowDownOnSquareIcon, 
   ArrowUpOnSquareIcon        
@@ -44,43 +44,46 @@ const RatingField = ({
   };
 
   return (
-    // Центр — относительно "Название поля" выше, а не всей карточки: та
-    // строка сама не по центру карточки (справа от неё ещё 2 кнопки
-    // добавить/удалить, 24px+24px, без right-элемента слева для баланса).
-    // Правый спейсер той же ширины (w-12 = 48px) повторяет эту асимметрию,
-    // чтобы центр кнопок совпадал с центром названия поля.
-    <div className="flex items-center gap-1">
-      <div className="flex-1 flex justify-center min-w-0">
-        <div className="flex gap-2">
-          {Array.from({ length: field.max || 5 }, (_, i) => {
-            const score = i + 1;
-            const isActive = value === score;
+    // Центрируется просто по ширине своей колонки контента (та же, что и у
+    // "Название поля" выше) — кнопки добавить/удалить/в Заключение теперь
+    // живут в отдельной боковой панели карточки, а не в этой строке, так
+    // что больше не нужен компенсирующий спейсер под их ширину.
+    <div className="flex justify-center gap-2">
+      {Array.from({ length: field.max || 5 }, (_, i) => {
+        const score = i + 1;
+        const isActive = value === score;
 
-            return (
-              <button
-                  key={score}
-                  onClick={() => handleClick(score)}
-                  tabIndex={disabled ? -1 : 0}
-                  data-custom-focus
-                  className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-xl transition-all border cursor-pointer
-                    focus:outline-none focus-visible:border-amber-400 focus-visible:ring-2 focus-visible:ring-amber-400/40
-                    ${isActive
-                      ? 'bg-zinc-800 border-amber-400 text-white shadow-md'
-                      : 'bg-transparent border-white/30 hover:border-amber-400 hover:bg-white/5 text-white'
-                    }
-                  `}
-                >
-                  {score}
-                </button>
-            );
-          })}
-        </div>
-      </div>
-      <div className="w-12 shrink-0" aria-hidden="true" />
+        return (
+          <button
+              key={score}
+              onClick={() => handleClick(score)}
+              tabIndex={disabled ? -1 : 0}
+              data-custom-focus
+              className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-xl transition-all border cursor-pointer
+                focus:outline-none focus-visible:border-amber-400 focus-visible:ring-2 focus-visible:ring-amber-400/40
+                ${isActive
+                  ? 'bg-zinc-800 border-amber-400 text-white shadow-md'
+                  : 'bg-transparent border-white/30 hover:border-amber-400 hover:bg-white/5 text-white'
+                }
+              `}
+            >
+              {score}
+            </button>
+        );
+      })}
     </div>
   );
 };
 // ===========================================================================
+
+// Ширина боковой панели кнопок (➕/➖/чип "в Заключение") у карточек полей —
+// разделитель + колонка кнопок, измерено через getBoundingClientRect. Панель
+// есть только у карточек (справа), а не у названия шаблона и заголовков
+// разделов — из-за этого их центрирование давало бы другую ось. Чтобы все
+// три уровня (название шаблона, заголовки, названия полей) были выровнены
+// по одной вертикали, название шаблона и заголовки получают такой же
+// "фантомный" отступ справа той же ширины.
+const FIELD_ACTIONS_RAIL_WIDTH = 46;
 
 // Ссылки в заметках тоже приходят из шаблона — не даём вставить javascript:/data: URL.
 const isSafeUrl = (url: string): boolean => {
@@ -2037,7 +2040,10 @@ for (const f of visibleFields) {
               ))}
             </div>
           )}
-        <h1 className="text-3xl font-bold mb-6 text-center mx-auto max-w-3xl tracking-tight select-none">{template.title}</h1>
+        <div className="flex items-center mb-6">
+          <h1 className="flex-1 text-3xl font-bold text-center tracking-tight select-none">{template.title}</h1>
+          <div style={{ width: FIELD_ACTIONS_RAIL_WIDTH }} className="shrink-0" aria-hidden="true" />
+        </div>
                         <div className="space-y-4">
   {visibleFields.map((f: BuilderField) => {
     const parentHeaderId = f.type !== 'header' ? sectionHeaderMap.get(f.id) : null;
@@ -2086,14 +2092,32 @@ for (const f of visibleFields) {
          до 0 только когда overflow ≠ visible). Без явного min-w-0 длинное
          "Название поля" (у него нет верхней границы для width в ch)
          распирало бы весь враппер шире самой карточки именно в
-         overflow-visible режиме — воспроизведено и проверено. */}
-     <div className={`min-w-0 transition-all duration-200 ease-out ${
+         overflow-visible режиме — воспроизведено и проверено.
+         flex — делит карточку на колонку контента и боковую панель кнопок
+         (➕/➖/чип "в Заключение", справа от вертикального разделителя) для
+         text/number/select/rating/formula/conclusion. У header и checkbox
+         панели нет — единственный ребёнок flex-контейнера просто занимает
+         всю ширину, как и раньше. */}
+     <div className={`min-w-0 transition-all duration-200 ease-out flex ${
        isSectionCollapsed || newlyAddedId === f.id || removingId === f.id
          ? 'overflow-hidden'
          : 'overflow-visible'
      }`}>
 
-      <div className={`card-body ${
+      {/* flex flex-col — нужно, чтобы card-body (у неё у самой daisyUI
+          задаёт flex-grow) реально растягивалась по высоте этой колонки,
+          когда та выше своего контента (боковая панель кнопок справа, вне
+          card-body, оказалась выше — например, у чекбокса: панель ➕/➖
+          заметно выше однострочной надписи с галочкой). Без flex-контекста
+          здесь card-body просто взяла бы свою обычную блочную высоту по
+          контенту, оставив пустоту под собой. */}
+      <div className="flex-1 min-w-0 flex flex-col">
+
+      {/* justify-center на card-body центрирует её контент по вертикали
+          внутри уже растянутой (см. выше) высоты. Для карточек, где
+          контента и так больше высоты панели, растягивать нечего —
+          justify-center действует на уже полностью заполненную колонку. */}
+      <div className={`card-body justify-center ${
   f.type === 'header'
     ? 'px-1 py-0'
     : 'px-4 pt-3 pb-3'
@@ -2101,11 +2125,13 @@ for (const f of visibleFields) {
 
 
 
-        {/* Название поля */}
+        {/* Название поля — просто центрируется по ширине колонки контента;
+            больше не делит строку с кнопками (они в боковой панели правее),
+            поэтому не нужен ни компенсирующий спейсер, ни flex-1/min-w-0
+            трюк — сама строка и есть вся доступная ширина. */}
 {/* === РЕДАКТИРУЕМЫЙ ЗАГОЛОВОК ДЛЯ ВСЕХ ПОЛЕЙ === */}
                 {f.type !== 'header' && f.type !== 'checkbox' && (
-          <div className="flex items-center gap-1 mb-1">
-    <div className="flex-1 flex justify-center min-w-0">
+          <div className="flex justify-center mb-1">
       <input
         type="text"
         tabIndex={-1}
@@ -2120,53 +2146,6 @@ for (const f of visibleFields) {
         }}
         className="max-w-full text-center bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-all"
       />
-    </div>
-    <div className="flex shrink-0">
-              {/* Слот под кнопку "в Заключение" рендерится ВСЕГДА (для всех
-                  типов полей этого блока — text/number/select/rating/
-                  formula/conclusion), даже когда сама кнопка не нужна —
-                  так ширина кластера ➕/➖ одинакова у всех типов, и
-                  "Название поля" (центрируется в оставшемся треке) не
-                  уезжает относительно них. Раньше кнопку выводили через
-                  position:absolute, чтобы не занимать место в потоке — но
-                  тогда input с длинным названием не знал, что нужно
-                  оставить место под неё, и переползал под кнопку. */}
-              <div className="w-6 h-6 shrink-0">
-                {f.type === 'text' && conclusionField && (
-                  <button
-                    onClick={() => toggleConclusionEntry(f.id)}
-                    onMouseDown={(e) => e.preventDefault()}
-                    tabIndex={-1}
-                    className={`btn btn-ghost btn-square w-6 h-6 min-h-0 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top ${
-                      isInConclusion(f.id) ? 'text-amber-400 hover:text-amber-300' : 'text-white hover:text-amber-400'
-                    }`}
-                    data-tip={isInConclusion(f.id) ? 'Убрать из Заключения' : 'В заключение (Ctrl+Enter)'}
-                  >
-                    <CornerDownRight className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-              <button
-                onClick={() => addTextFieldAfter(f.id)}
-                tabIndex={-1}
-                className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top"
-                data-tip="Добавить поле"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                </svg>
-              </button>
-              <button
-                onClick={() => removeField(f.id)}
-                tabIndex={-1}
-                className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top"
-                data-tip="Удалить"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                </svg>
-              </button>
-            </div>
           </div>
         )}
 
@@ -2226,11 +2205,15 @@ for (const f of visibleFields) {
         openOnlySection(f.id);
       }}
       tabIndex={-1}
-      className="absolute right-2 top-1/2 -translate-y-1/2 btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 shadow-none transition-all tooltip tooltip-top"
-      data-tip={collapsedHeaders.has(f.id) ? 'Развернуть раздел' : 'Свернуть раздел'}
+      className="absolute right-2 top-1/2 -translate-y-1/2 btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 shadow-none transition-all"
     >
       {collapsedHeaders.has(f.id) ? <ChevronRight size={22} /> : <ChevronDown size={22} />}
     </button>
+    {/* Фантомный отступ той же ширины, что и боковая панель кнопок у
+        карточек полей (FIELD_ACTIONS_RAIL_WIDTH) — без него h2 (flex-1)
+        центрировался бы по всей ширине строки и не совпадал бы с
+        названиями полей, у которых эта панель отъедает место справа. */}
+    <div style={{ width: FIELD_ACTIONS_RAIL_WIDTH }} className="shrink-0" aria-hidden="true" />
   </div>
 )}
         
@@ -2272,6 +2255,9 @@ for (const f of visibleFields) {
 
                 {f.type === 'checkbox' && (
   <div className="flex items-center gap-1">
+    {/* ➕/➖ этого поля больше не здесь — они в общей боковой панели
+        карточки (как и у остальных типов), чтобы их позиция совпадала по
+        горизонтали с остальными карточками. */}
     <label
       className="flex flex-1 items-center gap-3 cursor-pointer text-sm group min-w-0"
       onClick={() => handleFocus(f.id, null)}
@@ -2309,28 +2295,6 @@ for (const f of visibleFields) {
         {f.label}
       </span>
     </label>
-    <div className="flex shrink-0">
-      <button
-        onClick={() => addTextFieldAfter(f.id)}
-        tabIndex={-1}
-        className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top"
-        data-tip="Добавить поле"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-        </svg>
-      </button>
-      <button
-        onClick={() => removeField(f.id)}
-        tabIndex={-1}
-        className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top"
-        data-tip="Удалить"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-        </svg>
-      </button>
-    </div>
   </div>
 )}
 
@@ -2392,10 +2356,59 @@ for (const f of visibleFields) {
   </div>
 )}
 
-                
-              </div>   
+      </div>
 
-    </div>     
+      {/* Боковая панель кнопок — чип "в Заключение" (только у text при
+          наличии поля "Заключение" в шаблоне), "Добавить поле", "Удалить".
+          Вертикальный разделитель отделяет её от колонки контента, как и
+          просил пользователь — так кнопки больше не делят строку с
+          "Название поля" и не влияют на её центрирование. У checkbox нет
+          отдельной строки "Название поля", но панель та же общая — иначе
+          её ➕/➖ оказались бы левее, чем у остальных карточек. */}
+      {f.type !== 'header' && (
+        <>
+          <div className="w-px bg-white/10 my-3 shrink-0" />
+          <div className="flex flex-col items-center gap-1 pt-3 pb-3 pl-2 pr-3 shrink-0">
+            {f.type === 'text' && conclusionField && (
+              <button
+                onClick={() => toggleConclusionEntry(f.id)}
+                onMouseDown={(e) => e.preventDefault()}
+                tabIndex={-1}
+                className={`btn btn-ghost btn-square w-6 h-6 min-h-0 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-left ${
+                  isInConclusion(f.id) ? 'text-amber-400 hover:text-amber-300' : 'text-white hover:text-amber-400'
+                }`}
+                data-tip={isInConclusion(f.id) ? 'Убрать из Заключения' : 'В заключение (Ctrl+Enter)'}
+              >
+                <CornerDownRight className="w-4 h-4" />
+              </button>
+            )}
+            <button
+              onClick={() => addTextFieldAfter(f.id)}
+              tabIndex={-1}
+              className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-amber-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-left"
+              data-tip="Добавить поле"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => removeField(f.id)}
+              tabIndex={-1}
+              className="btn btn-ghost btn-square w-6 h-6 min-h-0 text-white hover:text-red-400 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-left"
+              data-tip="Удалить"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.5" stroke="currentColor" className="size-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12H9m12 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+            </button>
+          </div>
+        </>
+      )}
+
+    </div>
+
+    </div>
   )
 })}
           </div>
@@ -2555,14 +2568,6 @@ for (const f of visibleFields) {
 
           {/* Нижний ряд кнопок — НЕ фокусируются по Tab */}
           <div className="flex justify-center gap-4 mt-10">
-            <button 
-                  onClick={toggleAllSections} 
-                  tabIndex={-1} 
-                  className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" 
-                  data-tip="Свернуть/Развернуть текущий раздел (Ctrl+E/Cmd+E)"
-                >
-                  <ChevronsDownUp size={22} />
-                </button>
             <button onClick={copyToClipboard} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Скопировать (Ctrl+Shift+C)" ><Copy size={22} /></button>
             <button onClick={resetToDefault} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Сбросить протокол (Ctrl+Shift+R)" ><RotateCcw size={22} /></button>
             <button onClick={downloadTxt} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 shadow-none active:shadow-none transition-all tooltip" data-tip="Сохранить" ><Download size={22}/></button>

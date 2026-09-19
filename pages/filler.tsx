@@ -2080,8 +2080,14 @@ for (const f of visibleFields) {
          это единственные случаи, где обрезка контента нужна технически. В
          остальное время overflow-visible, иначе тултипы кнопок (➕/➖, чип
          "в Заключение") обрезаются этим враппером и не видны за границей
-         карточки. */}
-     <div className={`transition-all duration-200 ease-out ${
+         карточки. min-w-0 — отдельно от overflow: этот div одновременно
+         грид-элемент внутри .card (display:grid), а у элементов грида
+         auto-minimum-size по умолчанию считается по содержимому (сжимается
+         до 0 только когда overflow ≠ visible). Без явного min-w-0 длинное
+         "Название поля" (у него нет верхней границы для width в ch)
+         распирало бы весь враппер шире самой карточки именно в
+         overflow-visible режиме — воспроизведено и проверено. */}
+     <div className={`min-w-0 transition-all duration-200 ease-out ${
        isSectionCollapsed || newlyAddedId === f.id || removingId === f.id
          ? 'overflow-hidden'
          : 'overflow-visible'
@@ -2115,27 +2121,31 @@ for (const f of visibleFields) {
         className="max-w-full text-center bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-all"
       />
     </div>
-    <div className="flex shrink-0 relative">
-              {/* Кнопка "в Заключение" — только у обычных текстовых полей, и
-                  только если в шаблоне вообще есть поле "Заключение" (иначе
-                  вставлять некуда). absolute + right-full: визуально стоит
-                  сразу слева от кластера ➕/➖ (там же, где и раньше), но не
-                  участвует в его ширине — иначе у текстовых полей кластер
-                  становится шире, чем у остальных типов, и "Название поля"
-                  (центрируется в оставшемся треке) уезжает относительно них. */}
-              {f.type === 'text' && conclusionField && (
-                <button
-                  onClick={() => toggleConclusionEntry(f.id)}
-                  onMouseDown={(e) => e.preventDefault()}
-                  tabIndex={-1}
-                  className={`absolute right-full top-0 btn btn-ghost btn-square w-6 h-6 min-h-0 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top ${
-                    isInConclusion(f.id) ? 'text-amber-400 hover:text-amber-300' : 'text-white hover:text-amber-400'
-                  }`}
-                  data-tip={isInConclusion(f.id) ? 'Убрать из Заключения' : 'Добавить выделенный текст в Заключение (Ctrl+Enter)'}
-                >
-                  <CornerDownRight className="w-4 h-4" />
-                </button>
-              )}
+    <div className="flex shrink-0">
+              {/* Слот под кнопку "в Заключение" рендерится ВСЕГДА (для всех
+                  типов полей этого блока — text/number/select/rating/
+                  formula/conclusion), даже когда сама кнопка не нужна —
+                  так ширина кластера ➕/➖ одинакова у всех типов, и
+                  "Название поля" (центрируется в оставшемся треке) не
+                  уезжает относительно них. Раньше кнопку выводили через
+                  position:absolute, чтобы не занимать место в потоке — но
+                  тогда input с длинным названием не знал, что нужно
+                  оставить место под неё, и переползал под кнопку. */}
+              <div className="w-6 h-6 shrink-0">
+                {f.type === 'text' && conclusionField && (
+                  <button
+                    onClick={() => toggleConclusionEntry(f.id)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    tabIndex={-1}
+                    className={`btn btn-ghost btn-square w-6 h-6 min-h-0 hover:bg-white/10 rounded-md border-0 shadow-none p-0 transition-colors tooltip tooltip-top ${
+                      isInConclusion(f.id) ? 'text-amber-400 hover:text-amber-300' : 'text-white hover:text-amber-400'
+                    }`}
+                    data-tip={isInConclusion(f.id) ? 'Убрать из Заключения' : 'В заключение (Ctrl+Enter)'}
+                  >
+                    <CornerDownRight className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
               <button
                 onClick={() => addTextFieldAfter(f.id)}
                 tabIndex={-1}

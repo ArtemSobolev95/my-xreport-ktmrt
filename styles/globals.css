@@ -56,6 +56,34 @@ html:not(.js-focus-mouse) textarea:focus-visible:not([data-custom-focus]),
   box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.55) inset !important;
 }
 
+/* Safari рисует на input/textarea при фокусе собственное "свечение"
+   вокруг рамки через нативный рендер поля (-webkit-appearance), отдельно
+   от CSS outline/box-shadow — обычные focus:outline-none и
+   focus-visible:ring-* (как и правило выше) на него не действуют, поэтому
+   оно остаётся видно поверх нашего дизайна. Особенно заметно при
+   автофокусе в модалках (input/textarea с autoFocus получают фокус сразу
+   при открытии, ещё до какого-либо клика/Tab). appearance: none в :focus
+   отключает именно это нативное свечение, не трогая обычный вид поля —
+   он и так везде уже задаётся своими классами (bg-white/5, border и т.д.),
+   а не браузерным appearance. select сюда намеренно не входит — у него
+   (в отличие от input/textarea) нет своих классов на замену нативной
+   стрелки выпадающего списка, и appearance:none на фокусе заставил бы её
+   мигать (пропадать на фокусе и появляться обратно на blur). */
+input:focus,
+textarea:focus {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Firefox отдельно рисует пунктирную рамку внутри button/input[type=button]
+   при фокусе (через ::-moz-focus-inner) — она не outline и не box-shadow,
+   поэтому тоже не перекрывается правилом выше и остаётся видна поверх
+   янтарного/красного кольца, например на автофокусной кнопке подтверждения
+   в модалках (components/DialogProvider.tsx). */
+button::-moz-focus-inner {
+  border: 0;
+}
+
 /* Все модалки анимируются через components/AnimatedModal.tsx (framer-motion).
    У daisyUI при этом остаётся собственный встроенный CSS-переход на
    .modal/.modal-box (через @starting-style — он проигрывает анимацию входа,

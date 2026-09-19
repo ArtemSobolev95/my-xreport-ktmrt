@@ -20,18 +20,20 @@ import AnimatedModal from '../components/AnimatedModal';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
 
-const RatingField = ({ 
-  field, 
-  value, 
-  onChange, 
+const RatingField = ({
+  field,
+  value,
+  onChange,
   onFocus,
+  onKeyDown,
   disabled = false,
 }: {
   field: BuilderField;
   value: number;
   onChange: (value: number) => void;
   onFocus: (fieldId: string, el: HTMLElement | null) => void;
-  disabled?: boolean;  
+  onKeyDown: (e: React.KeyboardEvent) => void;
+  disabled?: boolean;
 }) => {
   const handleClick = (score: number) => {
     // Если уже выбрана эта оценка — сбрасываем в 0 (деактивируем)
@@ -57,6 +59,7 @@ const RatingField = ({
           <button
               key={score}
               onClick={() => handleClick(score)}
+              onKeyDown={onKeyDown}
               tabIndex={disabled ? -1 : 0}
               data-custom-focus
               className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-xl transition-all border cursor-pointer
@@ -1596,8 +1599,14 @@ const insertPhrase = (phrase: string) => {
     finalPhrase = phrase.charAt(0).toLowerCase() + phrase.slice(1);
     prefix = before.endsWith(' ') ? '' : ' ';
   } else if (before.length === 0 || trimmedBefore.length === 0) {
-    // Начало поля — всегда с маленькой буквы, без пробела
-    finalPhrase = phrase.charAt(0).toLowerCase() + phrase.slice(1);
+    // Начало поля — обычно с маленькой буквы, без пробела (после метки
+    // "Название поля:" в готовом протоколе фраза идёт как продолжение
+    // предложения). Только для "Заключения" первая фраза — начало
+    // самостоятельного предложения, поэтому с большой буквы; во всех
+    // остальных текстовых полях поведение не меняется.
+    finalPhrase = fieldId === conclusionField?.id
+      ? phrase.charAt(0).toUpperCase() + phrase.slice(1)
+      : phrase.charAt(0).toLowerCase() + phrase.slice(1);
     prefix = '';
   } else {
     // Обычный случай — оставляем регистр как в шаблоне,
@@ -1626,7 +1635,15 @@ const resetTextareaHeights = () => {
   setTimeout(() => {
     Object.values(inputRefs.current).forEach((el) => {
       if (el && el.tagName === 'TEXTAREA') {
-        el.style.height = '30px';        // дефолтная высота
+        // Раньше здесь стояла захардкоженная '30px' — она не совпадает с
+        // реальной однострочной высотой (у неё зависит от padding/line-height
+        // конкретного поля, на деле ~22px), а совпадение с фактическим видом
+        // поля до этого держалось только на отдельном эффекте (autoResize по
+        // fieldsData/template, с задержкой 80мс), который её потом
+        // перевычислял. Из-за двух несинхронизированных таймеров сброс
+        // иногда "проскакивал" не до конца видимо — здесь тот же autoResize,
+        // который сам меряет реальную scrollHeight уже очищенного поля.
+        autoResize(el as HTMLTextAreaElement);
       }
     });
   }, 30);
@@ -2315,7 +2332,7 @@ for (const f of visibleFields) {
                   </select>
                 )}
 
-                {f.type === 'rating' && <RatingField field={f} value={fieldsData[f.id] || 0} onChange={(val) => updateField(f.id, val)} onFocus={handleFocus} disabled={isSectionCollapsed}/>} 
+                {f.type === 'rating' && <RatingField field={f} value={fieldsData[f.id] || 0} onChange={(val) => updateField(f.id, val)} onFocus={handleFocus} onKeyDown={e => handleFieldTabNavigation(e, f.id)} disabled={isSectionCollapsed}/>} 
               </div>
                 
 

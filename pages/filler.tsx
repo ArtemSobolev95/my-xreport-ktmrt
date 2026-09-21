@@ -448,14 +448,22 @@ const focusFieldElement = (fieldId: string) => {
   }
 
   if (el) {
+    // preventScroll — свой scrollIntoView ниже плавный (behavior: 'smooth'),
+    // а нативная прокрутка браузера при фокусе происходит мгновенно и
+    // сбивала бы эту анимацию своим скачком в середине. Без явного
+    // scrollIntoView прокрутки не было вообще — раздел, схлопываясь и
+    // разворачиваясь, двигал контент под фиксированной точкой обзора сам
+    // (через layout/scroll anchoring), что и выглядело как рывок вверх при
+    // сворачивании прошлых разделов, а затем вниз при раскрытии текущего.
     el.focus({ preventScroll: true });
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   } else {
     setActiveFieldId(fieldId);
     activeFieldRef.current = fieldId;
   }
 };
 
-const openOnlySection = (headerId: string) => {
+const openOnlySection = (headerId: string, instant = false) => {
   if (!template) return;
 
   const allHeaderIds = (template.fields || [])
@@ -481,10 +489,23 @@ const openOnlySection = (headerId: string) => {
     return;
   }
 
-  // Открываем этот раздел, остальные закрываем — анимированно, так же,
-  // как и закрытие (раньше здесь стоял setSkipSectionTransition(true),
+  // Открываем этот раздел, остальные закрываем — по умолчанию анимированно,
+  // так же, как и закрытие (раньше здесь стоял setSkipSectionTransition(true),
   // из-за чего открытие происходило мгновенно, без анимации, а закрытие —
-  // с анимацией; теперь оба случая ведут себя одинаково).
+  // с анимацией; теперь оба случая по умолчанию ведут себя одинаково).
+  //
+  // instant=true — исключение для перехода Tab с последнего поля раздела
+  // на следующий (см. handleFieldTabNavigation): там одновременно
+  // схлопывается текущий (уже прочитанный пользователем, часто длинный)
+  // раздел и разворачивается следующий. Пока это анимировано, схлопывание
+  // раздела ВЫШЕ текущей позиции скролла убирает опору под ней раньше, чем
+  // успевает вырасти новый раздел — браузер зажимает scrollY вниз, и это
+  // выглядит как рывок вверх, а последующий scrollIntoView в
+  // focusFieldElement лишь чуть довинчивает уже сбившееся положение (рывок
+  // вниз). Мгновенное схлопывание/разворот (как и при обратном Shift+Tab)
+  // убирает это окно рассинхронизации: DOM встаёт на место одним кадром,
+  // и единственное движение экрана — один плавный scrollIntoView к цели.
+  if (instant) setSkipSectionTransition(true);
   setCollapsedHeaders(new Set(allHeaderIds.filter((id: string) => id !== headerId)));
 
   // Ищем первое поле после этого заголовка
@@ -508,10 +529,17 @@ const openOnlySection = (headerId: string) => {
     }
   }
 
-  // Фокус на первое поле — ждём завершения CSS-анимации разворота
-  // (см. SECTION_TRANSITION_MS), иначе scrollIntoView внутри
-  // focusFieldElement целится в ещё двигающийся элемент и дёргается.
-  if (firstFieldId) {
+  if (!firstFieldId) return;
+
+  if (instant) {
+    // Транзиция пропущена (duration-0) — DOM уже в конечном состоянии на
+    // следующем кадре, ждать SECTION_TRANSITION_MS не нужно (см. Shift+Tab
+    // назад чуть ниже, где используется тот же приём).
+    requestAnimationFrame(() => focusFieldElement(firstFieldId!));
+  } else {
+    // Фокус на первое поле — ждём завершения CSS-анимации разворота
+    // (см. SECTION_TRANSITION_MS), иначе scrollIntoView внутри
+    // focusFieldElement целится в ещё двигающийся элемент и дёргается.
     setTimeout(() => {
       focusFieldElement(firstFieldId!);
     }, SECTION_TRANSITION_MS + 10);
@@ -571,7 +599,7 @@ const handleFieldTabNavigation = (
     e.preventDefault();
     const next = sections[sectionIndex + 1];
     if (!next) return;
-    openOnlySection(next.headerId);
+    openOnlySection(next.headerId, true);
     return;
   }
 
@@ -723,7 +751,7 @@ useEffect(() => {
   });
 
   setFieldsData(init);
-  resetTextareaHeights();
+  resetTextareaHeights(init);
 
   // Сброс дополнительных состояний
   setIsComparisonActive(false);
@@ -763,7 +791,7 @@ const handleClearDraft = async () => {
   });
 
   setFieldsData(init);
-  resetTextareaHeights();
+  resetTextareaHeights(init);
   setIsComparisonActive(false);
   setComparisonDates([]);
   setIsMultipleComparison(false);
@@ -1631,22 +1659,33 @@ const insertPhrase = (phrase: string) => {
   });
 };
 
-const resetTextareaHeights = () => {
-  setTimeout(() => {
-    Object.values(inputRefs.current).forEach((el) => {
-      if (el && el.tagName === 'TEXTAREA') {
-        // Раньше здесь стояла захардкоженная '30px' — она не совпадает с
-        // реальной однострочной высотой (у неё зависит от padding/line-height
-        // конкретного поля, на деле ~22px), а совпадение с фактическим видом
-        // поля до этого держалось только на отдельном эффекте (autoResize по
-        // fieldsData/template, с задержкой 80мс), который её потом
-        // перевычислял. Из-за двух несинхронизированных таймеров сброс
-        // иногда "проскакивал" не до конца видимо — здесь тот же autoResize,
-        // который сам меряет реальную scrollHeight уже очищенного поля.
-        autoResize(el as HTMLTextAreaElement);
+const resetTextareaHeights = (values?: Record<string, unknown>) => {
+  // Баг воспроизводился ТОЛЬКО когда курсор оставался внутри textarea в
+  // момент сброса. Причина — internal scrollTop поля: пока курсор был
+  // где-то в середине длинного многострочного текста, браузер прокручивал
+  // видимую область textarea вниз, к каретке. Значение (value) после
+  // сброса React меняет на пустое корректно, но САМ scrollTop фокусного
+  // поля браузер не обнуляет автоматически — он остаётся там же, где был.
+  // В итоге видимая область поля указывает "в пустоту" ниже настоящего
+  // содержимого (которого уже нет), а placeholder, который рисуется от
+  // scrollTop=0, оказывается выше этой видимой области и не виден — именно
+  // это и выглядело как "пустые строки без placeholder". У полей без
+  // фокуса эта проблема не проявлялась, потому что там либо не было
+  // прокрутки, либо браузер сам возвращал её при следующем фокусе.
+  //
+  // Явно выставляем value (на случай, если React ещё не успел применить
+  // его к этому DOM-узлу) и, что здесь главное, scrollTop = 0.
+  Object.entries(inputRefs.current).forEach(([fieldId, el]) => {
+    if (el && el.tagName === 'TEXTAREA') {
+      const ta = el as HTMLTextAreaElement;
+      if (values && fieldId in values) {
+        const target = values[fieldId];
+        ta.value = typeof target === 'string' ? target : '';
       }
-    });
-  }, 30);
+      ta.style.height = '';
+      ta.scrollTop = 0;
+    }
+  });
 };
 
 const parseVariants = (text: string): { prefix: string; variants: string[] } | null => {
@@ -2587,9 +2626,9 @@ for (const f of visibleFields) {
           <div className="flex justify-center gap-4 mt-10">
             <button onClick={copyToClipboard} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Скопировать (Ctrl+Shift+C)" ><Copy size={22} /></button>
             <button onClick={resetToDefault} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Сбросить протокол (Ctrl+Shift+R)" ><RotateCcw size={22} /></button>
-            <button onClick={downloadTxt} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 shadow-none active:shadow-none transition-all tooltip" data-tip="Сохранить" ><Download size={22}/></button>
+            <button onClick={downloadTxt} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Сохранить" ><Download size={22}/></button>
             <button onClick={goToTemplateList} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="К списку шаблонов (Ctrl+Shift+H)" ><Home size={22} /></button>
-            <button onClick={() => setShowAbbrModal(true)} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 shadow-none active:shadow-none transition-all tooltip" data-tip="Автокоррекции" ><Settings size={22} /></button>
+            <button onClick={() => setShowAbbrModal(true)} tabIndex={-1} className="btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all tooltip" data-tip="Автокоррекции" ><Settings size={22} /></button>
           </div>
         </div>
       </div>

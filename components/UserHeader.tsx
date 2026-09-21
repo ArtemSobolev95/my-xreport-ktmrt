@@ -41,9 +41,10 @@ export default function UserHeader({ children }: UserHeaderProps) {
           {user.email}
         </div>
 
-        {/* Кнопка выхода */}
+        {/* Кнопка выхода — не должна попадать в Tab-навигацию по полям протокола */}
         <button
   onClick={handleLogout}
+  tabIndex={-1}
   className="flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white hover:text-red-400 rounded-3xl transition-all active:scale-95 cursor-pointer"
 >
   <LogOut size={18} />

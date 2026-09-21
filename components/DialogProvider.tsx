@@ -37,8 +37,20 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
   // туда же при закрытии, а не оставлять его потерянным на теле документа.
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
+  // Между вызовом confirm/alert и тем моментом, когда autoFocus реально
+  // переносит фокус на кнопку модалки, есть окно в один-два кадра (модалка
+  // ещё не смонтирована/не отыграла autoFocus). Если пользователь в этот
+  // момент жмёт Enter привычным рефлексом — событие уходит туда, где фокус
+  // был ДО открытия (например, textarea, из которой и вызвали confirm), и
+  // Enter просто вставляет перенос строки вместо подтверждения. Модалка
+  // получает Enter только со следующего нажатия — на практике это как раз
+  // тот самый баг "открой любой сброс и сразу жми Enter": работает через
+  // раз, эффект отличается от клика мышью. blur() сразу после сохранения
+  // previouslyFocusedRef убирает фокус с исходного поля синхронно, пока
+  // browser не переключил его на кнопку — окна для лишнего Enter больше нет.
   const confirm = useCallback((message: string, options?: DialogOptions) => {
     previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+    previouslyFocusedRef.current?.blur();
     return new Promise<boolean>((resolve) => {
       setPending({ message, isAlert: false, confirmText: 'Да', cancelText: 'Отмена', ...options, resolve });
     });
@@ -46,6 +58,7 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
 
   const alertFn = useCallback((message: string, options?: DialogOptions) => {
     previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
+    previouslyFocusedRef.current?.blur();
     return new Promise<void>((resolve) => {
       setPending({ message, isAlert: true, confirmText: 'Ок', ...options, resolve: () => resolve() });
     });
@@ -54,8 +67,16 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
   const close = (result: boolean) => {
     pending?.resolve(result);
     setPending(null);
-    previouslyFocusedRef.current?.focus();
+    // Подтверждение по Enter вызывает close() ИЗ ОБРАБОТЧИКА этого самого
+    // keydown — если вернуть фокус на исходное поле синхронно прямо здесь,
+    // браузер после наших слушателей ещё доигрывает действие по умолчанию
+    // для той же клавиши Enter, и оно достаётся уже ПЕРЕФОКУСНУТОМУ полю:
+    // для textarea это перенос строки, вставленный в только что закрытую
+    // модалку задним числом. setTimeout переносит возврат фокуса в новую
+    // задачу, уже после того как браузер полностью обработал это нажатие.
+    const target = previouslyFocusedRef.current;
     previouslyFocusedRef.current = null;
+    setTimeout(() => target?.focus(), 0);
   };
 
   const value = useMemo(() => ({ confirm, alert: alertFn }), [confirm, alertFn]);

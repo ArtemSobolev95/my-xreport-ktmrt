@@ -1,5 +1,7 @@
 'use client';
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
@@ -196,10 +198,29 @@ function FillerPage() {
   // Индекс подсвеченной подсказки в dropdown'е "Примечание" — сбрасывается
   // на 0 при каждом новом запросе (см. useEffect ниже).
   const [stateAfterHighlightedIndex, setStateAfterHighlightedIndex] = useState(0);
+  // Dropdown подсказок "Примечание" закрыт вручную (Esc), хотя запрос всё
+  // ещё мог бы что-то предложить — сбрасывается при новом запросе и при
+  // каждом открытии модалки, чтобы список снова появлялся как обычно.
+  const [stateAfterDropdownDismissed, setStateAfterDropdownDismissed] = useState(false);
+  // Экранные координаты dropdown'а подсказок "Примечание" — вычисляются из
+  // textarea и используются для портала в document.body (см. ниже), чтобы
+  // список не обрезался overflow-y:auto самой модалки, когда он большой.
+  const [stateAfterDropdownRect, setStateAfterDropdownRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
   const [pathNav, setPathNav] = useState<{
   groupIdx: number;
   phraseIdx: number;
 } | null>(null);
+  // Группа кнопок патологий, раскрытая кликом мыши (в отличие от pathNav,
+  // который отвечает за раскрытие горячими клавишами/клавиатурой и не
+  // должен меняться от наведения курсора) — раскрытие по hover убрано,
+  // список раскрывается только по клику на группу.
+  const [openQuickButtonGroupIdx, setOpenQuickButtonGroupIdx] = useState<number | null>(null);
+  const quickButtonGroupRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
 
   // === Валидация и форматирование даты ДД-ММ-ГГГГ ===
@@ -1070,6 +1091,20 @@ const handleClearDraft = async () => {
     await saveStateAfterPhrasesToServer(newPhrases);
   };
 
+    // Подгоняет регистр первой буквы фразы под то, что стоит перед ней:
+    // с большой — в начале текста и после точки/!/?, с маленькой — после
+    // запятой или пробела (продолжение того же предложения).
+  const applyStateAfterPhraseCase = (phrase: string, before: string): string => {
+    if (!phrase) return phrase;
+    const trimmedBefore = before.replace(/\s+$/, '');
+    const lastChar = trimmedBefore.slice(-1);
+    const startsNewSentence =
+      trimmedBefore.length === 0 || lastChar === '.' || lastChar === '!' || lastChar === '?';
+    return startsNewSentence
+      ? phrase.charAt(0).toUpperCase() + phrase.slice(1)
+      : phrase.charAt(0).toLowerCase() + phrase.slice(1);
+  };
+
     // Заменить набранное текущее слово выбранной фразой-подсказкой: без
     // знаков препинания вокруг неё (пользователь ставит их сам). Часть
     // текста до последнего пробела (включая сам пробел, если он есть) не
@@ -1077,7 +1112,7 @@ const handleClearDraft = async () => {
     // поэтому никогда не добавляется и не дублируется.
   const selectStateAfterPhrase = (phrase: string) => {
     const before = stateAfterText.slice(0, stateAfterQueryStart);
-    const newText = `${before}${phrase}`;
+    const newText = `${before}${applyStateAfterPhraseCase(phrase, before)}`;
     setStateAfterText(newText);
     // Курсор поставим в конец после того, как DOM textarea реально получит
     // это значение — см. useEffect ниже.
@@ -1099,15 +1134,53 @@ const handleClearDraft = async () => {
     }
   }, [stateAfterText]);
 
-  // При каждом новом запросе подсветка в dropdown'е начинается заново сверху.
+  // При каждом новом запросе подсветка в dropdown'е начинается заново сверху,
+  // и список подсказок, если он был закрыт по Esc, появляется снова —
+  // пользователь печатает дальше, значит хочет видеть новые варианты.
   useEffect(() => {
     setStateAfterHighlightedIndex(0);
+    setStateAfterDropdownDismissed(false);
   }, [stateAfterQuery]);
+
+  // Каждое открытие модалки — список подсказок не должен оставаться
+  // закрытым из-за Esc, нажатого в прошлый раз.
+  useEffect(() => {
+    if (showStateAfterModal) setStateAfterDropdownDismissed(false);
+  }, [showStateAfterModal]);
 
   // Подсказки — фразы, совпадающие с текущим запросом.
   const filteredStateAfterPhrases = stateAfterPhrases.filter(phrase =>
     phrase.toLowerCase().includes(stateAfterQuery.toLowerCase())
   );
+
+  // Видимость dropdown'а подсказок "Примечание" — используется и для
+  // рендера, и для решения, что должен закрыть Esc (список или модалку).
+  const stateAfterDropdownVisible =
+    Boolean(stateAfterQuery) && stateAfterPhrases.length > 0 && !stateAfterDropdownDismissed;
+
+  // Пересчитывает экранную позицию dropdown'а из textarea — используется
+  // порталом в document.body (см. рендер модалки "Примечание"), чтобы
+  // большой список подсказок не обрезался overflow-y:auto самой модалки.
+  useEffect(() => {
+    if (!stateAfterDropdownVisible) {
+      setStateAfterDropdownRect(null);
+      return;
+    }
+    const updateRect = () => {
+      const el = stateAfterTextareaRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setStateAfterDropdownRect({
+        top: rect.bottom + 8,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: Math.max(120, Math.min(240, window.innerHeight - rect.bottom - 24)),
+      });
+    };
+    updateRect();
+    window.addEventListener('resize', updateRect);
+    return () => window.removeEventListener('resize', updateRect);
+  }, [stateAfterDropdownVisible]);
 
     const notesLinks = useMemo(() => {
     if (!template?.fields) return [];
@@ -1452,6 +1525,7 @@ const handleBlur = () => {
 
 useEffect(() => {
     setPathNav(null);
+    setOpenQuickButtonGroupIdx(null);
   }, [activeFieldId]);
 
   const handleInputChange = (fieldId: string, value: string) => {
@@ -1592,6 +1666,23 @@ useEffect(() => {
     }
   });
 }, [pathNav]);
+
+// Клик вне раскрытой кликом группы кнопок патологий закрывает её —
+// у dropdown больше нет hover, так что кроме повторного клика по самой
+// группе это единственный способ её закрыть мышью.
+useEffect(() => {
+  if (openQuickButtonGroupIdx === null) return;
+
+  const handleClickOutside = (e: MouseEvent) => {
+    const el = quickButtonGroupRefs.current[openQuickButtonGroupIdx];
+    if (el && !el.contains(e.target as Node)) {
+      setOpenQuickButtonGroupIdx(null);
+    }
+  };
+
+  document.addEventListener('mousedown', handleClickOutside);
+  return () => document.removeEventListener('mousedown', handleClickOutside);
+}, [openQuickButtonGroupIdx]);
 
 const insertPhrase = (phrase: string) => {
   const fieldId = activeFieldRef.current;
@@ -1954,21 +2045,34 @@ useEffect(() => {
       if (phrases.length === 1) {
         insertPhrase(phrases[0]);
         setPathNav(null);
+        setOpenQuickButtonGroupIdx(null);
         return;
       }
 
+      // Повторное нажатие той же комбинации закрывает уже открытый ею (или
+      // кликом) список этой же группы — а не просто переоткрывает его заново.
+      if (pathNav?.groupIdx === idx || openQuickButtonGroupIdx === idx) {
+        setPathNav(null);
+        setOpenQuickButtonGroupIdx(null);
+        return;
+      }
+
+      // Хоткей открывает свою группу — если кликом была раскрыта другая,
+      // закрываем её, чтобы не остались открыты сразу две.
+      setOpenQuickButtonGroupIdx(null);
       setPathNav({ groupIdx: idx, phraseIdx: 0 });
       return;
     }
 
-    if (!pathNav) return;
-
-    // Escape — закрыть
-    if (e.key === 'Escape') {
+    // Escape — закрыть (и клавиатурную навигацию, и группу, раскрытую кликом)
+    if (e.key === 'Escape' && (pathNav || openQuickButtonGroupIdx !== null)) {
       e.preventDefault();
       setPathNav(null);
+      setOpenQuickButtonGroupIdx(null);
       return;
     }
+
+    if (!pathNav) return;
 
     // Стрелки вниз/вверх по фразам
     if (e.key === 'ArrowDown') {
@@ -2011,6 +2115,7 @@ useEffect(() => {
   activeFieldId,
   template,
   pathNav,
+  openQuickButtonGroupIdx,
   variantSelector,
   showComparisonModal,
   showStateAfterModal,
@@ -2209,7 +2314,14 @@ for (const f of visibleFields) {
 {f.type === 'header' && (
   <div
     role="button"
-    tabIndex={0}
+    // Заголовок попадает в естественный порядок Tab, только пока его раздел
+    // свёрнут (тогда внутри него нет табируемых полей, и Tab должен уметь
+    // "перепрыгнуть" на заголовок как таковой). Когда раздел раскрыт, Tab не
+    // должен задерживаться на самом заголовке — фокус должен уходить сразу в
+    // поля внутри него, у которых уже tabIndex=0 (см. isSectionCollapsed
+    // ниже); программному focus() из openOnlySection/focusHeaderForNav
+    // tabIndex=-1 не мешает.
+    tabIndex={collapsedHeaders.has(f.id) ? 0 : -1}
     data-header-id={f.id}
     className="py-2 flex items-center justify-between cursor-pointer group select-none outline-none
   rounded-xl px-2 relative
@@ -2557,7 +2669,16 @@ for (const f of visibleFields) {
     <div
       className="flex flex-wrap gap-2"
       onMouseDown={(e) => e.preventDefault()}
-      onMouseEnter={() => setPathNav(null)}
+      // Раньше здесь сбрасывался pathNav при наведении мыши на ряд — это
+      // было нужно для старой модели с dropdown-hover. Теперь раскрытие по
+      // hover убрано (см. openQuickButtonGroupIdx), и этот сброс стал не
+      // просто лишним, а вредным: когда список открывается горячей клавишей
+      // (Ctrl+1..9) прямо под НЕПОДВИЖНым курсором, Chrome всё равно
+      // синтезирует mouseenter для элементов, появившихся под курсором без
+      // реального движения мыши — из-за чего pathNav сбрасывался и список
+      // тут же захлопывался. Закрытие по мыши теперь делает отдельный
+      // click-outside эффект на openQuickButtonGroupIdx, а pathNav закрывается
+      // явно — по Ctrl+число/Escape/смене активного поля.
     >
       {(activeField.quickButtons || []).map((group: QuickButtonGroup, gIdx: number) => {
         const phrases = (group.phrases || []).filter(Boolean);
@@ -2565,21 +2686,29 @@ for (const f of visibleFields) {
         const singlePhrase = isSinglePhrase ? phrases[0] : '';
 
         const isNavOpen = pathNav?.groupIdx === gIdx;
+        const isClickOpen = openQuickButtonGroupIdx === gIdx;
+        const isOpen = isNavOpen || isClickOpen;
 
         return (
           <div
             key={group.id}
-            className={`dropdown dropdown-hover ${isNavOpen ? 'dropdown-open' : ''}`}
+            ref={(el) => { quickButtonGroupRefs.current[gIdx] = el; }}
+            className={`dropdown ${isOpen ? 'dropdown-open' : ''}`}
           >
-            {/* Кнопка группы */}
+            {/* Кнопка группы — раскрытие списка только по клику (не по hover) */}
             <div
               tabIndex={-1}
               role="button"
               className={`btn btn-ghost btn-sm px-6 py-2.5 text-sm text-white border border-transparent hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all ${
-                isNavOpen ? 'text-amber-400 border-amber-400/40' : ''
+                isOpen ? 'text-amber-400 border-amber-400/40' : ''
               }`}
               onClick={() => {
-                if (isSinglePhrase && singlePhrase) insertPhrase(singlePhrase);
+                if (isSinglePhrase && singlePhrase) {
+                  insertPhrase(singlePhrase);
+                  return;
+                }
+                setPathNav(null);
+                setOpenQuickButtonGroupIdx(prev => (prev === gIdx ? null : gIdx));
               }}
             >
               {gIdx < 9 && (
@@ -2595,23 +2724,34 @@ for (const f of visibleFields) {
             {!isSinglePhrase && (
               <ul
                 tabIndex={-1}
-                className="dropdown-content menu bg-zinc-900/90 backdrop-blur-md border border-zinc-700 rounded-box z-[10000] min-w-[340px] p-1"
+                className="dropdown-content menu bg-zinc-900 rounded-box z-[10000] min-w-[340px] p-1"
               >
                 <div className="max-h-[280px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
-                  {phrases.map((phrase: string, pIdx: number) => (
+                  {phrases.map((phrase: string, pIdx: number) => {
+                    // Подсветка курсором (hover) и подсветка клавиатурой
+                    // (pathNav) — два независимых источника: наводя мышь на
+                    // другую фразу, не меняем pathNav (иначе стрелки/Enter
+                    // неожиданно перехватывали бы клавиши, пока мышь просто
+                    // лежит над списком, открытым кликом). Поэтому им нужны
+                    // визуально разные стили — иначе непонятно, какую фразу
+                    // на самом деле вставит Enter, если курсор в этот момент
+                    // наведён на другую строку.
+                    const isKeyboardSelected = isNavOpen && pathNav?.phraseIdx === pIdx;
+                    return (
                     <li key={pIdx}>
                       <button
                         data-path-group={gIdx}
                         data-path-phrase={pIdx}
                         onClick={() => insertPhrase(phrase)}
-                        className={`w-full text-left justify-start hover:bg-zinc-800 text-white text-xs py-3 px-5 rounded-lg transition-colors ${
-                          isNavOpen && pathNav?.phraseIdx === pIdx ? 'bg-zinc-800' : ''
+                        className={`w-full text-left justify-start text-xs py-3 px-5 rounded-lg text-white transition-colors ${
+                          isKeyboardSelected ? 'bg-zinc-700' : 'hover:bg-zinc-600'
                         }`}
                       >
                         {phrase}
                       </button>
                     </li>
-                  ))}
+                    );
+                  })}
                 </div>
               </ul>
             )}
@@ -2835,7 +2975,17 @@ for (const f of visibleFields) {
   value={stateAfterText}
   onChange={e => setStateAfterText(e.target.value)}
   onKeyDown={(e) => {
-    const dropdownOpen = Boolean(stateAfterQuery) && filteredStateAfterPhrases.length > 0;
+    const dropdownOpen = stateAfterDropdownVisible && filteredStateAfterPhrases.length > 0;
+
+    // Esc сперва закрывает только список подсказок, не саму модалку —
+    // модалку закрывает следующий Esc (обработчик на dialog ниже), когда
+    // список уже не открыт.
+    if (e.key === 'Escape' && stateAfterDropdownVisible) {
+      e.preventDefault();
+      e.stopPropagation();
+      setStateAfterDropdownDismissed(true);
+      return;
+    }
 
     if (dropdownOpen && e.key === 'ArrowDown') {
       e.preventDefault();
@@ -2870,44 +3020,69 @@ for (const f of visibleFields) {
   className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all resize-none"
   rows={3}
 />
-                {stateAfterQuery && stateAfterPhrases.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full mt-2 z-20 bg-zinc-900/90 backdrop-blur-md rounded-xl shadow-xl py-1 max-h-[240px] overflow-y-auto">
-                    {filteredStateAfterPhrases.length > 0 ? (
-                      filteredStateAfterPhrases.map((phrase, index) => {
-                        const originalIndex = stateAfterPhrases.indexOf(phrase);
-                        const isHighlighted = index === stateAfterHighlightedIndex;
-                        return (
-                          <div
-                            key={originalIndex}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => selectStateAfterPhrase(phrase)}
-                            onMouseEnter={() => setStateAfterHighlightedIndex(index)}
-                            className={`flex items-center justify-between px-4 py-[6px] rounded-xl cursor-pointer group transition-colors ${
-                              isHighlighted ? 'bg-white/10' : 'hover:bg-white/10'
-                            }`}
-                          >
-                            <span className={`text-sm pr-4 ${isHighlighted ? 'text-white font-medium' : 'text-white'}`}>{phrase}</span>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteStateAfterPhrase(originalIndex);
-                              }}
-                              className="text-zinc-400 hover:text-red-400 opacity-60 group-hover:opacity-100 transition-all p-1 text-xl leading-none cursor-pointer"
-                            >
-                              -
-                            </button>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="px-4 py-3 text-sm text-zinc-500 text-center">Ничего не найдено</div>
+                {createPortal(
+                  <AnimatePresence>
+                    {stateAfterDropdownVisible && stateAfterDropdownRect && (
+                      <motion.div
+                        key="state-after-dropdown"
+                        style={{
+                          position: 'fixed',
+                          top: stateAfterDropdownRect.top,
+                          left: stateAfterDropdownRect.left,
+                          width: stateAfterDropdownRect.width,
+                          maxHeight: stateAfterDropdownRect.maxHeight,
+                        }}
+                        initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                        transition={{ duration: 0.15, ease: 'easeOut' }}
+                        // Портал в document.body — список подсказок иначе обрезался бы
+                        // overflow-y:auto самой модалки, когда он не помещается под
+                        // textarea (см. комментарий у stateAfterDropdownRect выше).
+                        className="z-[2000] bg-zinc-900/90 backdrop-blur-md rounded-xl shadow-xl py-1 overflow-y-auto"
+                      >
+                        {filteredStateAfterPhrases.length > 0 ? (
+                          filteredStateAfterPhrases.map((phrase, index) => {
+                            const originalIndex = stateAfterPhrases.indexOf(phrase);
+                            const isHighlighted = index === stateAfterHighlightedIndex;
+                            return (
+                              <div
+                                key={originalIndex}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => selectStateAfterPhrase(phrase)}
+                                onMouseEnter={() => setStateAfterHighlightedIndex(index)}
+                                className={`flex items-center justify-between px-4 py-[6px] rounded-xl cursor-pointer group transition-colors ${
+                                  isHighlighted ? 'bg-white/10' : 'hover:bg-white/10'
+                                }`}
+                              >
+                                <span className={`text-sm pr-4 ${isHighlighted ? 'text-white font-medium' : 'text-white'}`}>{phrase}</span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteStateAfterPhrase(originalIndex);
+                                  }}
+                                  className="text-zinc-400 hover:text-red-400 opacity-60 group-hover:opacity-100 transition-all p-1 text-xl leading-none cursor-pointer"
+                                >
+                                  -
+                                </button>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="px-4 py-3 text-sm text-zinc-500 text-center">Ничего не найдено</div>
+                        )}
+                      </motion.div>
                     )}
-                  </div>
+                  </AnimatePresence>,
+                  document.body
                 )}
               </div>
             </div>
 
-            <div className="px-6 pb-6 pt-2 flex gap-3">
+            {/* pt увеличен (было pt-2), чтобы под textarea оставалось место
+                хотя бы под одну строку dropdown'а подсказок (например,
+                "Ничего не найдено") — иначе она перекрывала бы эти кнопки. */}
+            <div className="px-6 pb-6 pt-12 flex gap-3">
               <button
                 onClick={() => setShowStateAfterModal(false)}
                 className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm font-medium text-white transition-all cursor-pointer"

@@ -1501,6 +1501,25 @@ const handleBlur = () => {
   }, 180); // увеличил задержку
 };
 
+// Клик по-настоящему "пустому" месту (не по интерактивному элементу) не
+// должен снимать фокус с активного поля — иначе, например, чтобы просто
+// закрыть кликом открытый dropdown кнопок патологий, приходится потом
+// кликать по полю заново, чтобы продолжить печатать. Клик по другому полю,
+// кнопке или ссылке по-прежнему переключает фокус как обычно — здесь
+// глушится только "промах" по фону/пустоте.
+useEffect(() => {
+  const handleGlobalMouseDown = (e: MouseEvent) => {
+    if (!activeFieldRef.current) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('input, textarea, select, button, a, [role="button"], [contenteditable="true"]')) {
+      return;
+    }
+    e.preventDefault();
+  };
+  window.addEventListener('mousedown', handleGlobalMouseDown);
+  return () => window.removeEventListener('mousedown', handleGlobalMouseDown);
+}, []);
+
       useEffect(() => {
     if (!activeFieldId) return;
 
@@ -2049,16 +2068,17 @@ useEffect(() => {
         return;
       }
 
-      // Повторное нажатие той же комбинации закрывает уже открытый ею (или
-      // кликом) список этой же группы — а не просто переоткрывает его заново.
-      if (pathNav?.groupIdx === idx || openQuickButtonGroupIdx === idx) {
+      // Именно клавиатурный режим на этой же группе уже активен — повторное
+      // нажатие закрывает список целиком. Если группа открыта мышью (или не
+      // открыта вовсе) — хоткей не закрывает, а забирает/открывает её в
+      // клавиатурном режиме (см. ниже — симметрично тому, как настоящее
+      // движение мыши забирает управление в обратную сторону).
+      if (pathNav?.groupIdx === idx) {
         setPathNav(null);
         setOpenQuickButtonGroupIdx(null);
         return;
       }
 
-      // Хоткей открывает свою группу — если кликом была раскрыта другая,
-      // закрываем её, чтобы не остались открыты сразу две.
       setOpenQuickButtonGroupIdx(null);
       setPathNav({ groupIdx: idx, phraseIdx: 0 });
       return;
@@ -2072,33 +2092,42 @@ useEffect(() => {
       return;
     }
 
-    if (!pathNav) return;
+    // Стрелки вниз/вверх по фразам — если список уже открыт (кем угодно —
+    // клавиатурой или мышью/кликом), но клавиатурного выделения там ещё
+    // нет, первая же стрелка забирает управление себе и подсвечивает
+    // первую фразу; если выделение уже есть — просто двигает его. Стрелки
+    // не трогаем вовсе (пропускаем в поле как обычно), если ни один список
+    // сейчас не открыт.
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const targetGroupIdx = pathNav?.groupIdx ?? openQuickButtonGroupIdx;
+      if (targetGroupIdx === null || targetGroupIdx === undefined) return;
 
-    // Стрелки вниз/вверх по фразам
-    if (e.key === 'ArrowDown') {
+      const targetPhrases = (groups[targetGroupIdx]?.phrases || []).filter(Boolean);
+      if (targetPhrases.length === 0) return;
+
       e.preventDefault();
+
+      if (!pathNav || pathNav.groupIdx !== targetGroupIdx) {
+        setOpenQuickButtonGroupIdx(null);
+        setPathNav({ groupIdx: targetGroupIdx, phraseIdx: 0 });
+        return;
+      }
+
+      const delta = e.key === 'ArrowDown' ? 1 : -1;
       setPathNav(prev => {
         if (!prev) return prev;
         const phrases = (groups[prev.groupIdx]?.phrases || []).filter(Boolean);
         return {
           ...prev,
-          phraseIdx: Math.min(phrases.length - 1, prev.phraseIdx + 1),
+          phraseIdx: Math.min(phrases.length - 1, Math.max(0, prev.phraseIdx + delta)),
         };
       });
       return;
     }
 
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setPathNav(prev => {
-        if (!prev) return prev;
-        return { ...prev, phraseIdx: Math.max(0, prev.phraseIdx - 1) };
-      });
-      return;
-    }
-
-    // Enter — вставить фразу
-    if (e.key === 'Enter') {
+    // Enter — вставить фразу (только в клавиатурном режиме — в мышином
+    // Enter должен просто отправлять форму/переводить строку как обычно)
+    if (e.key === 'Enter' && pathNav) {
       e.preventDefault();
       const phrases = (groups[pathNav.groupIdx]?.phrases || []).filter(Boolean);
       if (phrases[pathNav.phraseIdx]) {
@@ -2679,6 +2708,19 @@ for (const f of visibleFields) {
       // тут же захлопывался. Закрытие по мыши теперь делает отдельный
       // click-outside эффект на openQuickButtonGroupIdx, а pathNav закрывается
       // явно — по Ctrl+число/Escape/смене активного поля.
+      onMouseMove={() => {
+        // Настоящее движение мыши (в отличие от mouseenter/mouseover, оно
+        // никогда не синтезируется браузером без реального движения — см.
+        // комментарий выше) передаёт управление списком от клавиатуры к
+        // курсору: сама группа остаётся открытой (теперь через
+        // openQuickButtonGroupIdx), но подсветка стрелками пропадает и
+        // стрелки/Enter перестают работать, пока список не переоткроют
+        // явно горячей клавишей — контроль не может быть у обоих сразу.
+        if (pathNav) {
+          setOpenQuickButtonGroupIdx(pathNav.groupIdx);
+          setPathNav(null);
+        }
+      }}
     >
       {(activeField.quickButtons || []).map((group: QuickButtonGroup, gIdx: number) => {
         const phrases = (group.phrases || []).filter(Boolean);
@@ -2732,10 +2774,19 @@ for (const f of visibleFields) {
                     // (pathNav) — два независимых источника: наводя мышь на
                     // другую фразу, не меняем pathNav (иначе стрелки/Enter
                     // неожиданно перехватывали бы клавиши, пока мышь просто
-                    // лежит над списком, открытым кликом). Поэтому им нужны
-                    // визуально разные стили — иначе непонятно, какую фразу
-                    // на самом деле вставит Enter, если курсор в этот момент
-                    // наведён на другую строку.
+                    // лежит над списком, открытым кликом). Цвет у них
+                    // намеренно один и тот же (bg-white/10, как в поповере
+                    // вариантов аббревиатур) — раз одновременно виден только
+                    // один источник (см. ниже), различать их визуально не
+                    // нужно. Пока клавиатура ведёт эту же группу (isNavOpen),
+                    // hover на остальных строках отключаем совсем — иначе
+                    // там, где физически застыл курсор (а движения не было,
+                    // только переключился режим), повисает лишняя, уже не
+                    // актуальная подсветка мышью. hover:!bg-transparent с !
+                    // обязателен — иначе побеждает собственный :hover самого
+                    // daisyUI у .menu li (см.
+                    // node_modules/daisyui/components/menu.css), которому
+                    // просто отсутствие нашего hover-класса не помеха.
                     const isKeyboardSelected = isNavOpen && pathNav?.phraseIdx === pIdx;
                     return (
                     <li key={pIdx}>
@@ -2744,7 +2795,11 @@ for (const f of visibleFields) {
                         data-path-phrase={pIdx}
                         onClick={() => insertPhrase(phrase)}
                         className={`w-full text-left justify-start text-xs py-3 px-5 rounded-lg text-white transition-colors ${
-                          isKeyboardSelected ? 'bg-zinc-700' : 'hover:bg-zinc-600'
+                          isKeyboardSelected
+                            ? 'bg-white/10'
+                            : isNavOpen
+                              ? 'hover:!bg-transparent'
+                              : 'hover:bg-white/10'
                         }`}
                       >
                         {phrase}

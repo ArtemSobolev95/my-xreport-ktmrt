@@ -1,6 +1,6 @@
 'use client';
 import { createContext, useCallback, useContext, useMemo, useRef, useState, ReactNode } from 'react';
-import AnimatedModal from './AnimatedModal';
+import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader } from './AnimatedModal';
 
 interface DialogOptions {
   title?: string;
@@ -97,59 +97,47 @@ export default function DialogProvider({ children }: { children: ReactNode }) {
     <DialogContext.Provider value={value}>
       {children}
 
+      {/* Единственное окно подтверждения во всём приложении (удаление в
+          "Автокоррекциях" тоже идёт через него). Escape/Enter не
+          всплывают дальше (stopPropagation): иначе глобальный обработчик
+          Escape страницы заполнения закрыл бы заодно и модалку под этим
+          окном. */}
       <AnimatedModal
         open={!!pending}
         onClose={() => close(false)}
-        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-sm mx-4"
+        size="sm"
         onKeyDown={(e) => {
-          if (e.key === 'Escape') close(false);
-          if (e.key === 'Enter') close(true);
+          if (e.key === 'Escape') {
+            e.stopPropagation();
+            close(false);
+          }
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.stopPropagation();
+            close(true);
+          }
         }}
       >
-        {displayedPending?.title && (
-          <div className="px-6 pt-5 pb-3 border-b border-white/10 text-center">
-            <h2 className="text-lg font-semibold text-white">{displayedPending.title}</h2>
-          </div>
-        )}
+        {displayedPending?.title && <ModalHeader title={displayedPending.title} />}
 
-        <div className="px-6 pt-6 pb-5 text-center">
-          <p className="text-sm font-bold text-white leading-relaxed whitespace-pre-line">{displayedPending?.message}</p>
-        </div>
+        <ModalBody>
+          <p className="text-sm text-zinc-300 leading-relaxed whitespace-pre-line">{displayedPending?.message}</p>
+        </ModalBody>
 
-        {displayedPending?.isAlert ? (
-          <div className="px-6 pb-6 flex justify-center">
-            <button
-              onClick={() => close(true)}
-              autoFocus
-              data-custom-focus
-              className="px-8 py-2.5 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 rounded-xl text-white text-sm font-medium hover:text-amber-300 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/40"
-            >
-              {displayedPending?.confirmText}
-            </button>
-          </div>
-        ) : (
-          <div className="px-6 pb-6 flex gap-3">
-            <button
-              onClick={() => close(false)}
-              data-custom-focus
-              className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/40"
-            >
+        <ModalFooter>
+          {!displayedPending?.isAlert && (
+            <ModalButton onClick={() => close(false)}>
               {displayedPending?.cancelText}
-            </button>
-            <button
-              onClick={() => close(true)}
-              autoFocus
-              data-custom-focus
-              className={`flex-1 py-3.5 bg-white/5 border rounded-2xl text-sm font-medium transition-all cursor-pointer focus:outline-none focus-visible:ring-2 ${
-                displayedPending?.danger
-                  ? 'hover:bg-red-500/10 border-white/10 hover:border-red-400 text-white hover:text-red-400 focus-visible:ring-red-400/40'
-                  : 'hover:bg-amber-400/10 border-white/10 hover:border-amber-400 text-white hover:text-amber-300 focus-visible:ring-amber-400/40'
-              }`}
-            >
-              {displayedPending?.confirmText}
-            </button>
-          </div>
-        )}
+            </ModalButton>
+          )}
+          <ModalButton
+            onClick={() => close(true)}
+            autoFocus
+            variant={displayedPending?.danger ? 'danger' : 'primary'}
+          >
+            {displayedPending?.confirmText}
+          </ModalButton>
+        </ModalFooter>
       </AnimatedModal>
     </DialogContext.Provider>
   );

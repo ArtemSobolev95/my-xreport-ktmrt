@@ -3,26 +3,12 @@ import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../../lib/pocketbase';
 pb.autoCancellation(false);
-import { GripVertical, Trash2, ChevronUp, ChevronDown, ChevronRight, FolderPlus, FolderMinus, Paperclip, ClipboardCheck } from 'lucide-react';
 import {
-  ClipboardDocumentListIcon,
-  PencilIcon,
-  HashtagIcon,
-  CheckCircleIcon,
-  ListBulletIcon,
-  CalculatorIcon,
-  DocumentCheckIcon,
-  ArrowRightIcon,
-  HomeIcon,
-  PlusIcon,
-  MinusIcon,
-  PhotoIcon,
-  ArrowRightCircleIcon,
-  DocumentDuplicateIcon
-} from '@heroicons/react/24/outline';
-import {
-  ArrowRightCircleIcon as ArrowRightCircleSolidIcon
-} from '@heroicons/react/24/solid';
+  Trash2, ChevronUp, ChevronDown, ChevronRight, Paperclip, ClipboardCheck,
+  Heading, Type, Hash, SquareCheck, List, ChartNoAxesColumnIncreasing, Calculator,
+  Plus, Minus, ImagePlus, Link, Copy, Circle, CircleDot, ArrowLeft, ArrowRight, Save,
+  LayoutList, MousePointerClick,
+} from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -31,15 +17,15 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
-  DragOverlay,
-  defaultDropAnimation,
-  DragStartEvent,
+  pointerWithin,
+  type CollisionDetection,
 } from '@dnd-kit/core';
 import {
   arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
+  rectSortingStrategy,
 } from '@dnd-kit/sortable';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -53,7 +39,8 @@ import dynamic from 'next/dynamic';
 import { migrateQuickButtons } from '../../lib/migrateQuickButtons';
 import { evaluateFormula } from '../../lib/evaluateFormula';
 import { useDialog } from '../DialogProvider';
-import AnimatedModal from '../AnimatedModal';
+import CollapseRow from '../CollapseRow';
+import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../AnimatedModal';
 
 
 
@@ -69,26 +56,52 @@ import AnimatedModal from '../AnimatedModal';
 // всей страницы". Подтверждено через PerformanceObserver({type:
 // 'layout-shift'}): source-элементом сдвига оказывался именно
 // .flex.flex-1.overflow-hidden — контейнер, оборачивающий обе панели.
+// Ширина боковой панели кнопок у карточек полей (разделитель + колонка
+// кнопок) — та же, что FIELD_ACTIONS_RAIL_WIDTH в pages/filler.tsx. Название
+// шаблона и заголовки разделов получают "фантомный" отступ такой ширины,
+// чтобы центрироваться по той же оси, что и названия полей.
+const FIELD_ACTIONS_RAIL_WIDTH = 46;
+
+// Ширина карточек полей — как у колонки полей на странице заполнения
+// (col-span-5 из 12 в max-w-7xl с lg:px-12 и gap-8 = 475px).
+const FIELDS_COLUMN_WIDTH = 475;
+
 const DynamicUserHeader = dynamic(() => import('../../components/UserHeader'), { ssr: false });
 
+// Иконки — один набор (lucide), один размер и толщина линий. Раньше здесь
+// были смешаны heroicons, lucide и самодельная залитая SVG у "Шкала",
+// заметно тяжелее остальных.
+const TOOL_ICON_CLASS = 'w-[18px] h-[18px]';
 const availableFields = [
-  { type: 'header' as FieldType, label: 'Заголовок', icon: <ClipboardDocumentListIcon className="w-7 h-7" /> },
-  { type: 'text' as FieldType, label: 'Текст', icon: <PencilIcon className="w-7 h-7" /> },
-  { type: 'number' as FieldType, label: 'Число', icon: <HashtagIcon className="w-7 h-7" /> },
-  { type: 'checkbox' as FieldType, label: 'Чекбокс', icon: <CheckCircleIcon className="w-7 h-7" /> },
-  { type: 'select' as FieldType, label: 'Список', icon: <ListBulletIcon className="w-7 h-7" /> },
-  { type: 'rating' as FieldType, label: 'Шкала', icon: (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-7 h-7">
-      <path d="M18.375 2.25c-1.035 0-1.875.84-1.875 1.875v15.75c0 1.035.84 1.875 1.875 1.875h.75c1.035 0 1.875-.84 1.875-1.875V4.125c0-1.036-.84-1.875-1.875-1.875h-.75ZM9.75 8.625c0-1.036.84-1.875 1.875-1.875h.75c1.036 0 1.875.84 1.875 1.875v11.25c0 1.035-.84 1.875-1.875 1.875h-.75a1.875 1.875 0 0 1-1.875-1.875V8.625ZM3 13.125c0-1.036.84-1.875 1.875-1.875h.75c1.036 0 1.875.84 1.875 1.875v6.75c0 1.035-.84 1.875-1.875 1.875h-.75A1.875 1.875 0 0 1 3 19.875v-6.75Z" />
-    </svg>
-  )},
-  { type: 'notes' as FieldType, label: 'Заметки', icon: <Paperclip className="w-7 h-7" /> },
-  { type: 'formula' as FieldType, label: 'Формула', icon: <CalculatorIcon className="w-7 h-7" /> },
-  { type: 'conclusion' as FieldType, label: 'Заключение', icon: <ClipboardCheck className="w-7 h-7" /> },
+  { type: 'header' as FieldType, label: 'Заголовок', icon: <Heading className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
+  { type: 'text' as FieldType, label: 'Текст', icon: <Type className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
+  { type: 'number' as FieldType, label: 'Число', icon: <Hash className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
+  { type: 'checkbox' as FieldType, label: 'Чекбокс', icon: <SquareCheck className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
+  { type: 'select' as FieldType, label: 'Список', icon: <List className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
+  { type: 'rating' as FieldType, label: 'Шкала', icon: <ChartNoAxesColumnIncreasing className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
+  { type: 'notes' as FieldType, label: 'Заметки', icon: <Paperclip className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
+  { type: 'formula' as FieldType, label: 'Формула', icon: <Calculator className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
+  { type: 'conclusion' as FieldType, label: 'Заключение', icon: <ClipboardCheck className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
 ];
 
+// "1 фраза / 2 фразы / 5 фраз"
+function pluralRu(n: number, forms: [string, string, string]) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return forms[0];
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return forms[1];
+  return forms[2];
+}
+
+// Небольшие кнопки с иконкой и подписью (заметки: "Ссылка", "Изображение").
+const NOTES_ACTION_CLASS = 'inline-flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-xs text-zinc-300 bg-white/5 hover:bg-white/10 hover:text-white transition-colors cursor-pointer';
+
+// Кнопки-иконки, которые видны только при наведении/фокусе на свою строку
+// (группа Tailwind "row") — вместо постоянных +/− у каждой строки.
+const ROW_ACTION_CLASS = 'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 transition-[opacity,color]';
+
 // Одна перетаскиваемая строка варианта в инструменте "Список" — своя ручка
-// (GripVertical) слева вместо кнопок вверх/вниз: перетаскивание мышью проще
+// (DragDot) слева вместо кнопок вверх/вниз: перетаскивание мышью проще
 // и выглядит аккуратнее, чем стрелки, упирающиеся в правый край карточки.
 function SortableOption({
   id,
@@ -105,17 +118,17 @@ function SortableOption({
   onChange: (value: string) => void;
   onRemove: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, transition: SORTABLE_TRANSITION });
   const style = {
-    transform: CSS.Transform.toString(transform),
+    transform: CSS.Translate.toString(transform),
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="flex items-center gap-2">
-      <div {...attributes} {...listeners} className="shrink-0 cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white transition-colors">
-        <GripVertical size={14} />
+    <div ref={setNodeRef} style={style} className="group/row flex items-center gap-2">
+      <div {...attributes} {...listeners} className="w-4 h-4 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white transition-colors">
+        <DragDot />
       </div>
 
       <button
@@ -123,13 +136,12 @@ function SortableOption({
           e.stopPropagation();
           onToggleDefault();
         }}
-        className="flex-shrink-0 text-white hover:text-amber-400 transition-colors cursor-pointer tooltip" data-tip="По умолчанию"
+        className={`flex-shrink-0 transition-colors cursor-pointer ${isDefault ? 'text-amber-400' : 'text-zinc-500 hover:text-white'}`}
+        aria-label="По умолчанию"
+        aria-pressed={isDefault}
       >
-        {isDefault ? (
-          <ArrowRightCircleSolidIcon className="w-6 h-6 text-amber-400" />
-        ) : (
-          <ArrowRightCircleIcon className="w-6 h-6" />
-        )}
+        {/* Выбор значения по умолчанию — как радиокнопка: один вариант */}
+        {isDefault ? <CircleDot className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
       </button>
 
       {/* Ширина по содержимому, а не w-full — иначе кнопка удаления
@@ -139,7 +151,7 @@ function SortableOption({
         value={option}
         onChange={e => onChange(e.target.value)}
         style={{ width: `${Math.max((option || 'Введите значение').length + 2, 12)}ch` }}
-        className="max-w-full bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
+        className="max-w-full bg-transparent border-0 rounded-md px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-sm"
         placeholder="Введите значение"
       />
 
@@ -148,17 +160,246 @@ function SortableOption({
           e.stopPropagation();
           onRemove();
         }}
-        className="text-zinc-400 hover:text-red-400 transition-all cursor-pointer ml-1"
+        className={`text-zinc-500 hover:text-red-400 cursor-pointer ml-1 ${ROW_ACTION_CLASS}`}
+        aria-label="Удалить вариант"
       >
-        <MinusIcon className="w-4 h-4" />
+        <Minus className="w-4 h-4" />
       </button>
     </div>
+  );
+}
+
+
+// Пустое состояние: иконка в плашке, заголовок и короткая подсказка,
+// что делать дальше — вместо одной строки серого текста.
+function EmptyState({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
+  return (
+    <div className="flex flex-col items-center text-center py-16 px-6">
+      <div className="w-11 h-11 mb-4 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-zinc-400">
+        {icon}
+      </div>
+      <div className="text-sm font-medium text-zinc-200">{title}</div>
+      <div className="mt-1 max-w-xs text-sm leading-relaxed text-zinc-500">{text}</div>
+    </div>
+  );
+}
+
+// Ручка перетаскивания — одна точка по центру высоты строки (вместо
+// шести точек GripVertical). Сама точка маленькая, поэтому зона захвата —
+// обёртка вокруг неё (w-6 h-6 / w-4 h-4 у вызывающего кода).
+function DragDot() {
+  return <span aria-hidden="true" className="block w-[5px] h-[5px] rounded-full bg-current" />;
+}
+
+// Цель при перетаскивании групп — карточка под курсором. closestCenter
+// сравнивает центры, а группы сильно разной высоты: чтобы поменять местами
+// с длинной группой, пришлось бы тянуть до её середины. Курсор в промежутке
+// между карточками — запасной вариант, ближайший центр.
+const groupCollisionDetection: CollisionDetection = (args) => {
+  const underPointer = pointerWithin(args);
+  return underPointer.length > 0 ? underPointer : closestCenter(args);
+};
+
+// Кривая для сдвига соседей при перетаскивании (dnd-kit) — "ease-out
+// quint": быстрый старт и мягкое торможение вместо стандартной ease.
+const SORTABLE_TRANSITION = { duration: 260, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' };
+
+// Максимум групп быстрых кнопок у поля — на странице заполнения группы
+// вызываются горячими клавишами Ctrl+1..9, десятой клавиши нет.
+const MAX_QUICK_BUTTON_GROUPS = 9;
+
+// Одна карточка группы быстрых кнопок в правой панели — перетаскиваемая
+// (сортировка групп по сетке, номер = позиция = горячая клавиша Ctrl+N в
+// заполнении). Вынесена в компонент ради стабильных id фраз: phrases —
+// обычный string[] без id, а анимировать появление/исчезновение
+// конкретной строки (AnimatePresence) можно только по стабильному key —
+// индекс при удалении из середины "переезжает" на соседнюю строку. id
+// живут в локальном state и меняются ТОЛЬКО вместе с phrases этими же
+// хендлерами (как optionIds у "Список").
+function SortableQuickButtonGroup({
+  group,
+  index,
+  disableLayoutAnimation,
+  onChange,
+  onRemove,
+}: {
+  group: QuickButtonGroup;
+  index: number;
+  disableLayoutAnimation: boolean;
+  onChange: (mutate: (group: QuickButtonGroup) => void) => void;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: group.id, transition: SORTABLE_TRANSITION });
+  // Translate, не Transform: у карточек разная высота, и scaleY из
+  // CSS.Transform растягивал бы перетаскиваемую карточку под размер той,
+  // на место которой она встаёт.
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
+  const phrases = group.phrases || [];
+  const [phraseIds, setPhraseIds] = useState<string[]>(() => phrases.map(() => crypto.randomUUID()));
+  // Страховка на случай, если фразы поменялись не через хендлеры ниже:
+  // "adjusting state during rendering", не useEffect (как deleteConfirm в
+  // filler.tsx) — иначе один рендер прошёл бы с несовпадающими key.
+  if (phraseIds.length !== phrases.length) {
+    setPhraseIds(phrases.map(() => crypto.randomUUID()));
+  }
+  // Только что добавленная фраза получает фокус — чтобы сразу печатать.
+  const [focusPhraseId, setFocusPhraseId] = useState<string | null>(null);
+
+  const addPhraseAfter = (pIndex: number) => {
+    const newId = crypto.randomUUID();
+    onChange(g => { g.phrases.splice(pIndex + 1, 0, ''); });
+    setPhraseIds(ids => [...ids.slice(0, pIndex + 1), newId, ...ids.slice(pIndex + 1)]);
+    setFocusPhraseId(newId);
+  };
+
+  const removePhrase = (pIndex: number) => {
+    onChange(g => { g.phrases.splice(pIndex, 1); });
+    setPhraseIds(ids => ids.filter((_, i) => i !== pIndex));
+  };
+
+  return (
+    // Та же схема из двух motion.div, что у карточек полей (SortableField):
+    // внешний — только layout (плавный сдвиг соседей при добавлении/
+    // удалении групп), внутренний — только появление/исчезновение, а
+    // dnd-kit — на самом внутреннем div, у каждого своя часть transform.
+    <motion.div
+      layout={disableLayoutAnimation ? false : 'position'}
+      transition={{ duration: 0.22, ease: 'easeOut' }}
+      className={isDragging ? 'relative z-10' : ''}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        transition={{ duration: 0.2, ease: 'easeOut' }}
+      >
+      <div
+        ref={setNodeRef}
+        style={style}
+        className={`bg-white/[0.03] border border-white/10 rounded-3xl px-4 py-3 transition-shadow ${isDragging ? 'shadow-2xl' : ''}`}
+      >
+      {/* Группа */}
+      <div className="flex items-center gap-2">
+        <div
+          {...attributes}
+          {...listeners}
+          className="w-4 h-4 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-zinc-400 hover:text-white transition-colors"
+        >
+          <DragDot />
+        </div>
+        <button
+          onClick={() => onChange(g => { g.isExpanded = !g.isExpanded; })}
+          className="text-zinc-400 hover:text-white transition-[color,transform] cursor-pointer shrink-0"
+          style={{ transform: group.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+        >
+          <ChevronRight size={16} />
+        </button>
+        <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-medium rounded bg-white/10 text-zinc-300 shrink-0">
+          {index + 1}
+        </span>
+        <input
+          type="text"
+          value={group.label}
+          onChange={e => {
+            const value = e.target.value;
+            onChange(g => { g.label = value; });
+          }}
+          className="flex-1 min-w-0 bg-transparent text-sm font-semibold outline-none"
+          placeholder="Название группы"
+        />
+        <span className="text-xs text-zinc-500 shrink-0">
+          {phrases.filter(Boolean).length} {pluralRu(phrases.filter(Boolean).length, ['фраза', 'фразы', 'фраз'])}
+        </span>
+        <button
+          onClick={onRemove}
+          className="text-zinc-500 hover:text-red-400 transition-colors cursor-pointer shrink-0"
+          aria-label="Удалить группу"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+
+      {/* Фразы */}
+      <AnimatePresence initial={false}>
+        {group.isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeInOut' }}
+            className="overflow-hidden"
+          >
+            <div className="mt-2 pt-2 border-t border-white/10">
+            {/* Каждая строка сама анимирует высоту 0 ↔ auto — за счёт
+                этого и вся карточка плавно растёт/сжимается при добавлении
+                и удалении фраз. Отступы между строками — py внутри строки,
+                а не space-y: margin у анимируемого по высоте элемента
+                прыгал бы скачком в начале/конце анимации. */}
+            <AnimatePresence initial={false}>
+            {phrases.map((phrase, pIndex) => (
+              <CollapseRow key={phraseIds[pIndex] ?? pIndex}>
+              <div className="group/row flex items-center gap-1 py-px">
+                <input
+                  type="text"
+                  value={phrase}
+                  autoFocus={phraseIds[pIndex] === focusPhraseId}
+                  onChange={e => {
+                    const value = e.target.value;
+                    onChange(g => { g.phrases[pIndex] = value; });
+                  }}
+                  onKeyDown={e => {
+                    // Enter в строке — новая фраза сразу под ней.
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addPhraseAfter(pIndex);
+                    }
+                  }}
+                  className="flex-1 min-w-0 bg-transparent border-0 rounded-lg px-2 py-1.5 text-xs text-white placeholder:text-zinc-500 focus:outline-none focus:bg-white/5 transition-colors"
+                  placeholder="Фраза"
+                />
+                <button
+                  onClick={() => addPhraseAfter(pIndex)}
+                  className={`text-zinc-400 hover:text-amber-400 cursor-pointer shrink-0 ${ROW_ACTION_CLASS}`}
+                  aria-label="Добавить фразу ниже"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+                {/* Фантомная ячейка той же ширины у первой фразы — чтобы "+"
+                    у всех строк стоял в одной колонке. */}
+                {pIndex > 0 ? (
+                  <button
+                    onClick={() => removePhrase(pIndex)}
+                    className={`text-zinc-400 hover:text-red-400 cursor-pointer shrink-0 ${ROW_ACTION_CLASS}`}
+                    aria-label="Удалить фразу"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <span className="w-4 h-4 shrink-0" aria-hidden="true" />
+                )}
+              </div>
+              </CollapseRow>
+            ))}
+            </AnimatePresence>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
 function SortableField({
   field,
   isSelected,
+  disableLayoutAnimation,
   onSelect,
   onRemove,
   onUpdate,
@@ -178,6 +419,7 @@ function SortableField({
 }: {
   field: BuilderField;
   isSelected: boolean;
+  disableLayoutAnimation: boolean;
   onSelect: (id: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, updates: Partial<BuilderField>) => void;
@@ -190,21 +432,22 @@ function SortableField({
   setTempLinkUrl: (url: string) => void;
   handleAddLink: (fieldId: string) => void;
 }) {
+  // Перетаскивается сама карточка (без DragOverlay-копии) — как группы
+  // быстрых кнопок. animateLayoutChanges по умолчанию у dnd-kit срабатывает
+  // только сразу после drop (доводит брошенную карточку до нового места);
+  // layout-анимацию framer на это время выключает disableLayoutAnimation
+  // (см. isDraggingField в TemplateBuilder), чтобы сдвиг не шёл дважды.
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: field.id,
-    // dnd-kit по умолчанию сам анимирует сдвиг соседних элементов при любом
-    // изменении items (не только при живом перетаскивании) — это дублирует
-    // и конфликтует с layout="position" (framer-motion) ниже, который уже
-    // отвечает за плавный сдвиг соседей при добавлении/удалении карточек.
-    // Отключаем — на анимацию самого drag это не влияет (она держится на
-    // transform/transition ниже).
-    animateLayoutChanges: () => false,
+    transition: SORTABLE_TRANSITION,
   });
   // Инлайн, не className: opacity/transition у dnd-kit приходят как
   // инлайн-стиль (transform — для drag), а инлайн-стиль всегда побеждает
-  // className по каскаду.
+  // className по каскаду. Translate, не Transform: у карточек разная
+  // высота, и scaleY из CSS.Transform растягивал бы перетаскиваемую
+  // карточку под размер той, на место которой она встаёт.
   const style = {
-    transform: CSS.Transform.toString(transform),
+    transform: CSS.Translate.toString(transform),
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
@@ -273,10 +516,20 @@ function SortableField({
     }
   };
 
+  // Стабильные id переменных формулы — только для key анимации строк
+  // (CollapseRow): по индексу при удалении из середины исчезала бы
+  // последняя строка, а не удалённая. Меняются только вместе с variables
+  // в add/remove ниже (как optionIds у "Список").
+  const [variableIds, setVariableIds] = useState<string[]>(() => (field.variables || []).map(() => crypto.randomUUID()));
+  if (variableIds.length !== (field.variables || []).length) {
+    setVariableIds((field.variables || []).map(() => crypto.randomUUID()));
+  }
+
   const addVariable = () => {
     const currentVars = field.variables || [];
     const newVarName = String.fromCharCode(97 + currentVars.length);
     onUpdate(field.id, { variables: [...currentVars, { name: newVarName, value: '0' }] });
+    setVariableIds(ids => [...ids, crypto.randomUUID()]);
   };
 
   const removeVariable = (index: number) => {
@@ -284,6 +537,7 @@ function SortableField({
     const newVars = [...currentVars];
     newVars.splice(index, 1);
     onUpdate(field.id, { variables: newVars });
+    setVariableIds(ids => ids.filter((_, i) => i !== index));
   };
 
   const updateVariableName = (index: number, newName: string) => {
@@ -371,7 +625,11 @@ function SortableField({
     // отвечает только за layout="position" (сдвиг соседей, transform),
     // внутренний — только за initial/animate/exit (fade + scale-95), у
     // каждого своя, не пересекающаяся часть transform.
-    <motion.div layout="position" transition={{ duration: 0.22, ease: 'easeOut' }}>
+    <motion.div
+      layout={disableLayoutAnimation ? false : 'position'}
+      transition={{ duration: 0.22, ease: 'easeOut' }}
+      className={isDragging ? 'relative z-10' : ''}
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -383,79 +641,81 @@ function SortableField({
         style={style}
         {...attributes}
         onClick={() => onSelect(field.id)}
-        className={`card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl transition-all duration-200 ease-out relative group mb-2
-    ${isSelected
-      ? 'border-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.3)]'
-      : 'hover:border-white/20'
-    }
-    ${isDragging ? 'scale-105 shadow-2xl z-50' : ''}`}
+        className={`card transition-[border-color,box-shadow,background-color] duration-200 ease-out relative group mb-4 ${
+          field.type === 'header'
+            ? `border-0 shadow-none rounded-xl ${isSelected ? 'bg-white/10 ring-2 ring-amber-400/40 ring-inset' : 'bg-transparent'}`
+            : `bg-zinc-900/75 border border-white/10 shadow-2xl rounded-3xl ${
+                isSelected ? 'border-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.3)]' : 'hover:border-white/20'
+              }`
+        } ${isDragging ? 'shadow-2xl' : ''}`}
       >
-      <div className="px-5 py-4">
-      <div className="flex items-center gap-2 mb-1">
-        <div {...listeners} className="cursor-grab active:cursor-grabbing shrink-0">
-          <GripVertical className="text-zinc-400" size={16} />
+      {/* Раскладка повторяет карточки страницы заполнения (pages/filler.tsx):
+          заголовок раздела — прозрачная строка с крупным текстом по центру,
+          поля — колонка контента + боковая панель кнопок за вертикальным
+          разделителем. У заголовка вместо разделителя — панель той же
+          ширины (FIELD_ACTIONS_RAIL_WIDTH), видимая по наведению, чтобы
+          текст центрировался по той же оси, что и названия полей. */}
+      {field.type === 'header' ? (
+        <div className="py-2 px-2 flex items-center">
+          <input
+            type="text"
+            value={field.label || ''}
+            onChange={e => onUpdate(field.id, { label: e.target.value })}
+            className={`flex-1 min-w-0 bg-transparent outline-none text-2xl font-bold tracking-tight text-center placeholder:text-zinc-500 transition-colors ${
+              isSelected ? 'text-amber-400' : 'text-white'
+            }`}
+            placeholder="Заголовок"
+          />
+          <div
+            style={{ width: FIELD_ACTIONS_RAIL_WIDTH }}
+            className={`shrink-0 flex items-center justify-end gap-1 transition-opacity ${
+              isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+            }`}
+          >
+            <div {...listeners} className="w-6 h-6 flex items-center justify-center cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white transition-colors">
+              <DragDot />
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRemove(field.id);
+              }}
+              className="text-zinc-500 hover:text-red-400 transition-colors cursor-pointer"
+              aria-label="Удалить"
+            >
+              <Trash2 size={16} />
+            </button>
+          </div>
         </div>
-
-        {/* Название поля — чипом по центру, как на странице заполнения
-            (pages/filler.tsx). Кроме "Заголовок" (там label — это крупный
-            видимый текст раздела, а не метаданные-название) — у "Заметки"
-            своего label нет, но статичное название "Заметки" с иконкой
-            тоже центрируется здесь же, а не отдельной строкой в контенте. */}
-        <div className="flex-1 flex justify-center min-w-0">
-          {(field.type === 'text' || field.type === 'number' || field.type === 'checkbox' || field.type === 'select' || field.type === 'rating' || field.type === 'formula' || field.type === 'conclusion') && (
+      ) : (
+      <div className="flex min-w-0">
+      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="card-body justify-center px-4 pt-3 pb-3">
+        {/* Название поля — чипом по центру, как на странице заполнения.
+            У "Заметки" своего label нет — статичный чип с иконкой. */}
+        {(field.type === 'text' || field.type === 'number' || field.type === 'checkbox' || field.type === 'select' || field.type === 'rating' || field.type === 'formula' || field.type === 'conclusion') && (
+          <div className="flex justify-center mb-1">
             <input
               type="text"
               value={field.label || ''}
               onChange={e => onUpdate(field.id, { label: e.target.value })}
               placeholder="Название поля"
               style={{ width: `${Math.max((field.label || 'Название поля').length + 2, 10)}ch` }}
-              className="max-w-full text-center bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-all"
+              className="max-w-full text-center bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-colors"
             />
-          )}
-          {field.type === 'notes' && (
-            <div className="flex items-center gap-2 text-white">
-              <Paperclip className="w-5 h-5" />
-              <span className="font-semibold">Заметки</span>
+          </div>
+        )}
+        {field.type === 'notes' && (
+          <div className="flex justify-center mb-1">
+            <div className="flex items-center gap-1.5 bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white">
+              <Paperclip className="w-3.5 h-3.5" />
+              Заметки
             </div>
-          )}
-        </div>
-
-        {/* Кнопки справа */}
-        <div className="flex items-center gap-1 shrink-0">
-          {/* Кнопка дублирования (только для текста) */}
-          {field.type === 'text' && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDuplicate(field.id);
-              }}
-              className="text-white hover:text-amber-400 transition-colors cursor-pointer tooltip tooltip-top"
-              data-tip="Дублировать"
-            >
-              <DocumentDuplicateIcon className="w-4 h-4" />
-            </button>
-          )}
-
-          {/* Кнопка удаления */}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onRemove(field.id);
-            }}
-            className="text-white hover:text-red-400 transition-colors p-1 cursor-pointer tooltip tooltip-top"
-            data-tip="Удалить"
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </div>
+          </div>
+        )}
 
       <div>
-        {field.type === 'header' ? (
-          <div className="text-lg font-bold text-white">
-            <input type="text" value={field.label || ''} onChange={e => onUpdate(field.id, { label: e.target.value })} className="w-full bg-transparent outline-none" placeholder="Заголовок" />
-          </div>
-        ) : field.type === 'text' || field.type === 'conclusion' ? (
+        {field.type === 'text' || field.type === 'conclusion' ? (
           <div>
             {/* Placeholder — редактируется прямо внутри карточки. Без mb-4
                 (лишний хвостовой отступ снизу карточки, которого нет у
@@ -464,7 +724,7 @@ function SortableField({
               type="text"
               value={field.placeholder || ''}
               onChange={e => onUpdate(field.id, { placeholder: e.target.value })}
-              className="w-full bg-transparent border-0 px-0 py-0.5 leading-tight text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
+              className="w-full bg-transparent rounded-md border-0 px-1 py-0.5 leading-tight text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-sm"
               placeholder="Введите значение"
             />
           </div>
@@ -480,7 +740,7 @@ function SortableField({
           step="any" 
           value={field.defaultValue || ''} 
           onChange={e => onUpdate(field.id, { defaultValue: e.target.value })} 
-          className="w-10 text-center text-sm bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all" 
+          className="w-10 text-center text-sm bg-transparent rounded-md border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors" 
           placeholder="0" 
         />
       </div>
@@ -491,7 +751,7 @@ function SortableField({
           type="text" 
           value={field.unit || ''} 
           onChange={e => onUpdate(field.id, { unit: e.target.value })} 
-          className="w-10 text-sm bg-transparent border-0 px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-center" 
+          className="w-10 text-sm bg-transparent rounded-md border-0 px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-center" 
           placeholder="ед" 
         />
       </div>
@@ -504,7 +764,7 @@ function SortableField({
             <div className="flex items-center gap-3">
               <label className="relative inline-flex shrink-0 cursor-pointer">
                 <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="peer sr-only" />
-                <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-all flex items-center justify-center">
+                <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-colors flex items-center justify-center">
                   {checked && (
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-black">
                       <path d="M5 13l4 4L19 7" />
@@ -530,33 +790,41 @@ function SortableField({
               onDragEnd={handleOptionDragEnd}
             >
               <SortableContext items={optionIds} strategy={verticalListSortingStrategy}>
-                <motion.div layout className="space-y-2" transition={{ duration: 0.2, ease: 'easeOut' }}>
-                  {(field.options || []).map((option, index) => (
-                    <SortableOption
-                      key={optionIds[index] ?? index}
-                      id={optionIds[index] ?? String(index)}
-                      option={option}
-                      isDefault={field.defaultValue === option}
-                      onToggleDefault={() => onUpdate(field.id, { defaultValue: field.defaultValue === option ? '' : option })}
-                      onChange={value => handleOptionChange(index, value)}
-                      onRemove={() => handleRemoveOption(index)}
-                    />
-                  ))}
+                <div>
+                  {/* Отступы между строками — py внутри строки, а не
+                      space-y: margin у анимируемой по высоте строки прыгал
+                      бы скачком в начале/конце анимации. */}
+                  <AnimatePresence initial={false}>
+                    {(field.options || []).map((option, index) => (
+                      <CollapseRow key={optionIds[index] ?? index}>
+                        <div className="py-1">
+                          <SortableOption
+                            id={optionIds[index] ?? String(index)}
+                            option={option}
+                            isDefault={field.defaultValue === option}
+                            onToggleDefault={() => onUpdate(field.id, { defaultValue: field.defaultValue === option ? '' : option })}
+                            onChange={value => handleOptionChange(index, value)}
+                            onRemove={() => handleRemoveOption(index)}
+                          />
+                        </div>
+                      </CollapseRow>
+                    ))}
+                  </AnimatePresence>
 
                   {/* Кнопка добавления — не на всю ширину строки: иначе
                       клик по пустому месту рядом с "+" тоже добавляет
                       вариант. */}
-                  <div className="flex justify-center py-0.5">
-                    <button onClick={handleAddOption} className="text-white hover:text-amber-400 transition-all cursor-pointer">
-                      <PlusIcon className="w-5 h-5" />
+                  <div className="flex justify-center pt-1 pb-0.5">
+                    <button onClick={handleAddOption} className="text-zinc-400 hover:text-amber-400 transition-colors cursor-pointer" aria-label="Добавить вариант">
+                      <Plus className="w-5 h-5" />
                     </button>
                   </div>
-                </motion.div>
+                </div>
               </SortableContext>
             </DndContext>
           </div>
         ) : field.type === 'rating' ? (
-  <motion.div layout className="space-y-2" transition={{ duration: 0.2, ease: 'easeOut' }}>
+  <div>
 
     {/* Количество баллов */}
     <div className="flex items-center gap-3">
@@ -567,14 +835,14 @@ function SortableField({
         onChange={e => onUpdate(field.id, { max: parseInt(e.target.value) || 5 })}
         min={2}
         max={10}
-        className="w-20 px-4 py-1 bg-white/5 border border-white/10 rounded-2xl text-white text-center focus:outline-none transition-all"
+        className="w-20 px-4 py-1 bg-white/5 border border-white/10 rounded-2xl text-white text-center focus:outline-none transition-colors"
       />
     </div>
 
     {/* Включить пояснения — тот же чекбокс, что у поля "Чекбокс" (peer
         + sr-only + своя SVG-галочка), чтобы оба выглядели одинаково —
         нативный checkbox с accent-amber-400 визуально отличается. */}
-    <label className="flex items-center gap-3 cursor-pointer text-sm text-zinc-300">
+    <label className="flex items-center gap-3 cursor-pointer text-sm text-zinc-300 mt-2">
       <span className="relative inline-flex shrink-0">
         <input
           type="checkbox"
@@ -582,7 +850,7 @@ function SortableField({
           onChange={e => onUpdate(field.id, { showExplanations: e.target.checked })}
           className="peer sr-only"
         />
-        <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-all flex items-center justify-center">
+        <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-colors flex items-center justify-center">
           {field.showExplanations && (
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-black">
               <path d="M5 13l4 4L19 7" />
@@ -597,10 +865,14 @@ function SortableField({
         "Список", чтобы строки в обоих инструментах выглядели одинаково;
         цифра в колонке шириной w-6 (как иконка в "Список") и text-left —
         иначе при right-align короткие "1-9" смещались правее иконки. */}
+    <AnimatePresence initial={false}>
     {field.showExplanations && (
-      <motion.div layout className="space-y-2 pt-2" transition={{ duration: 0.2, ease: 'easeOut' }}>
+      <CollapseRow key="explanations">
+      <div className="pt-1">
+        <AnimatePresence initial={false}>
         {Array.from({ length: field.max || 5 }, (_, i) => (
-          <div key={i} className="flex items-center gap-2">
+          <CollapseRow key={i}>
+          <div className="flex items-center gap-2 py-1">
             <div className="w-6 text-left text-sm text-white">{i + 1}</div>
             <input
               type="text"
@@ -610,82 +882,81 @@ function SortableField({
   newExps[i] = e.target.value;
   onUpdate(field.id, { explanations: newExps });
               }}
-              className="flex-1 bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
+              className="flex-1 bg-transparent rounded-md border-0 px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-sm"
               placeholder={`Введите значение`}
             />
           </div>
+          </CollapseRow>
         ))}
-      </motion.div>
+        </AnimatePresence>
+      </div>
+      </CollapseRow>
     )}
-  </motion.div>
+    </AnimatePresence>
+  </div>
         ) : field.type === 'notes' ? (
           <div>
-            <div className="flex items-center gap-2 mb-1">
-              {/* Добавить ссылку */}
+            <div className="flex items-center gap-2 mb-2">
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelect(field.id);           // ← важно!
                   setShowAddLinkModal(true);
                 }}
-                className="text-white hover:text-amber-400 transition-all cursor-pointer tooltip tooltip-top"
-                data-tip="Добавить ссылку"
+                className={NOTES_ACTION_CLASS}
               >
-                <PlusIcon className="w-5 h-5" />
+                <Link className="w-3.5 h-3.5" />
+                Ссылка
               </button>
-
-              {/* Добавить изображение */}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelect(field.id);           // ← важно!
                   handleAddImage();
                 }}
-                className="text-white hover:text-amber-400 transition-all cursor-pointer tooltip tooltip-top"
-                data-tip="Загрузить изображение"
+                className={NOTES_ACTION_CLASS}
               >
-                <PhotoIcon className="w-5 h-5" />
+                <ImagePlus className="w-3.5 h-3.5" />
+                Изображение
               </button>
             </div>
 
             {field.notes && (
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 {field.notes.split('\n').filter(Boolean).map((line, index) => {
                   const match = line.match(/\[(.*?)\]\((.*?)\)/);
                   if (!match) return null;
                   const [, text, url] = match;
                   return (
-                    <div key={index} className="flex items-center justify-between bg-transparent border border-none rounded-none px-0 py-0">
-                      <a 
-                        href={url} 
-                        target="_blank" 
-                        rel="noopener noreferrer" 
-                        className="text-white hover:text-amber-400 underline text-sm flex-1 transition-all"
+                    <div key={index} className="group/row flex items-center gap-1 py-0.5">
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-white hover:text-amber-400 underline underline-offset-2 decoration-white/30 text-sm flex-1 min-w-0 truncate transition-colors"
                       >
                         {text}
                       </a>
-
-                      {/* Вертикальные Chevron — как в "Выбор из списка" */}
-                      <div className="flex flex-col ml-4 gap-px">
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); moveLinkUp(index); }} 
-                          className="text-zinc-400 hover:text-white px-1 py-0 cursor-pointer transition-all"
-                        >
-                          <ChevronUp size={16} />
-                        </button>
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); moveLinkDown(index); }} 
-                          className="text-zinc-400 hover:text-white px-1 py-0 cursor-pointer transition-all"
-                        >
-                          <ChevronDown size={16} />
-                        </button>
-                      </div>
-
-                      <button 
-                        onClick={(e) => { e.stopPropagation(); deleteLink(index); }} 
-                        className="text-zinc-400 ml-3 hover:text-red-400 transition-all 0 cursor-pointer"
+                      <button
+                        onClick={(e) => { e.stopPropagation(); moveLinkUp(index); }}
+                        className={`text-zinc-500 hover:text-white cursor-pointer ${ROW_ACTION_CLASS}`}
+                        aria-label="Выше"
                       >
-                        <MinusIcon className="w-4 h-4" />
+                        <ChevronUp className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); moveLinkDown(index); }}
+                        className={`text-zinc-500 hover:text-white cursor-pointer ${ROW_ACTION_CLASS}`}
+                        aria-label="Ниже"
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteLink(index); }}
+                        className={`text-zinc-500 hover:text-red-400 cursor-pointer ml-1 ${ROW_ACTION_CLASS}`}
+                        aria-label="Удалить ссылку"
+                      >
+                        <Minus className="w-4 h-4" />
                       </button>
                     </div>
                   );
@@ -695,36 +966,40 @@ function SortableField({
           </div>
         ) : field.type === 'formula' ? (
           <div className="space-y-3">
-            <input type="text" value={field.formula || ''} onChange={e => onUpdate(field.id, { formula: e.target.value })} className="w-full bg-transparent border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm" />
+            <input type="text" value={field.formula || ''} onChange={e => onUpdate(field.id, { formula: e.target.value })} className="w-full bg-transparent rounded-md border-0 px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-sm" />
             <div className="flex items-center justify-between text-sm text-white">
               <span>Переменные</span>
             </div>
-            <motion.div layout className="space-y-0" transition={{ duration: 0.2, ease: 'easeOut' }}>
+            <div>
+              <AnimatePresence initial={false}>
               {(field.variables || []).map((v, i) => (
-              <div key={i} className="flex items-center gap-2 w-full bg-transparent px-0 py-0.5 text-white text-sm">
-                  <input type="text" value={v.name} onChange={e => updateVariableName(i, e.target.value)} className="w-9 text-center bg-transparent border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-all" />
+              <CollapseRow key={variableIds[i] ?? i}>
+              <div className="group/row flex items-center gap-2 w-full bg-transparent px-0 py-0.5 text-white text-sm">
+                  <input type="text" value={v.name} onChange={e => updateVariableName(i, e.target.value)} className="w-9 text-center bg-transparent rounded-md border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-colors" />
                   <span className="text-zinc-400 font-medium">=</span>
-                  <input type="text" value={v.value || ''} onChange={e => updateVariableValue(i, e.target.value)} className="w-9 text-center bg-transparent border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-all" />
-                  {/* Кнопка удаления — тот же MinusIcon, что в "Список" */}
-                  <button onClick={() => removeVariable(i)} className="text-zinc-400 hover:text-red-400 transition-all cursor-pointer ml-1">
-                    <MinusIcon className="w-4 h-4" />
+                  <input type="text" value={v.value || ''} onChange={e => updateVariableValue(i, e.target.value)} className="w-9 text-center bg-transparent rounded-md border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-colors" />
+                  {/* Кнопка удаления — тот же Minus, что в "Список" */}
+                  <button onClick={() => removeVariable(i)} className={`text-zinc-500 hover:text-red-400 cursor-pointer ml-1 ${ROW_ACTION_CLASS}`} aria-label="Удалить переменную">
+                    <Minus className="w-4 h-4" />
                   </button>
                 </div>
+              </CollapseRow>
               ))}
+              </AnimatePresence>
 
-              {/* Кнопка добавления — тот же PlusIcon, что в "Список".
+              {/* Кнопка добавления — тот же Plus, что в "Список".
                   Не на всю ширину строки: иначе клик по пустому месту
                   рядом с "+" тоже добавляет переменную. */}
               <div className="flex justify-center py-0.5">
-                <button onClick={addVariable} className="text-white hover:text-amber-400 transition-all cursor-pointer">
-                  <PlusIcon className="w-5 h-5" />
+                <button onClick={addVariable} className="text-zinc-400 hover:text-amber-400 transition-colors cursor-pointer" aria-label="Добавить переменную">
+                  <Plus className="w-5 h-5" />
                 </button>
               </div>
-            </motion.div>
+            </div>
             <div className="flex items-center gap-3 mt-1">
               <span className="text-white text-sm mt-1">Результат:</span>
               <span className="text-white text-sm mt-1">{field.formula ? evaluateFormulaPreview(field.formula) : '—'}</span>
-              <input type="text" value={field.unit || ''} onChange={e => onUpdate(field.id, { unit: e.target.value })} className="w-9 text-center mt-1 bg-transparent border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-all" />
+              <input type="text" value={field.unit || ''} onChange={e => onUpdate(field.id, { unit: e.target.value })} className="w-9 text-center mt-1 bg-transparent rounded-md border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-colors" />
             </div>
           </div>
         
@@ -732,6 +1007,46 @@ function SortableField({
 
       </div>
       </div>
+      </div>
+
+      <div className="w-px bg-white/10 my-3 shrink-0" />
+      {/* Кнопки видны при наведении на карточку, фокусе внутри неё или
+          когда она выбрана — постоянно видимые у каждой карточки они
+          забивали колонку визуальным шумом. */}
+      <div className={`flex flex-col items-center gap-1 pt-3 pb-3 pl-2 pr-3 shrink-0 transition-opacity ${
+        isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+      }`}>
+        <div
+          {...listeners}
+          className="w-6 h-6 flex items-center justify-center cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white rounded-md hover:bg-white/10 transition-colors"
+        >
+          <DragDot />
+        </div>
+        {field.type === 'text' && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDuplicate(field.id);
+            }}
+            className="w-6 h-6 flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/10 rounded-md transition-colors cursor-pointer"
+            aria-label="Дублировать"
+          >
+            <Copy className="w-4 h-4" />
+          </button>
+        )}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove(field.id);
+          }}
+          className="w-6 h-6 flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-white/10 rounded-md transition-colors cursor-pointer"
+          aria-label="Удалить"
+        >
+          <Trash2 size={16} />
+        </button>
+      </div>
+      </div>
+      )}
       </div>
       </motion.div>
     </motion.div>
@@ -752,6 +1067,19 @@ function TemplateBuilder() {
   
   const [showSaveModal, setShowSaveModal] = useState(false);
 
+  // Меняется после загрузки шаблона — пересоздаёт AnimatePresence списка
+  // полей: поля приходят асинхронно, уже после первого рендера, и без
+  // этого считались бы "добавленными" и проявлялись бы все разом.
+  const [fieldsLoadKey, setFieldsLoadKey] = useState(0);
+
+  // Снимок последнего загруженного/сохранённого состояния — для метки
+  // "Не сохранено" рядом с кнопкой "Сохранить".
+  const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify({ title: 'Новый шаблон', fields: [] }));
+  const isDirty = useMemo(
+    () => JSON.stringify({ title: templateTitle, fields }) !== savedSnapshot,
+    [templateTitle, fields, savedSnapshot]
+  );
+
   const updateQuickButtons = (
     fieldId: string,
     updater: (draft: QuickButtonGroup[]) => QuickButtonGroup[]
@@ -766,6 +1094,51 @@ function TemplateBuilder() {
     updateField(fieldId, { quickButtons: updated });
   };
   
+  const addQuickButtonGroup = () => {
+    if (!selectedFieldId) return;
+
+    updateQuickButtons(selectedFieldId, (draft) => {
+      if (draft.length >= MAX_QUICK_BUTTON_GROUPS) return draft;
+
+      // Вставляем сразу после последней раскрытой группы (никто не
+      // раскрыт — в конец), остальные сворачиваем.
+      let insertAfterIndex = -1;
+      for (let i = 0; i < draft.length; i++) {
+        if (draft[i].isExpanded) insertAfterIndex = i;
+      }
+
+      const newGroup: QuickButtonGroup = {
+        id: crypto.randomUUID(),
+        label: '',
+        isExpanded: true,
+        phrases: [''],
+      };
+
+      const newIndex = insertAfterIndex === -1 ? draft.length : insertAfterIndex + 1;
+      draft.splice(newIndex, 0, newGroup);
+      draft.forEach((g, idx) => { g.isExpanded = idx === newIndex; });
+
+      return draft;
+    });
+  };
+
+  // Пока идёт перетаскивание группы (и в рендере, где dnd-kit фиксирует
+  // новый порядок), layout-анимация framer у карточек групп выключена:
+  // сдвиг на drop уже анимирует сам dnd-kit, а framer поверх начал бы
+  // второй сдвиг — "отскок" брошенной карточки назад и снова вперёд.
+  const [isDraggingGroup, setIsDraggingGroup] = useState(false);
+  const handleGroupDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (selectedFieldId && over && active.id !== over.id) {
+      updateQuickButtons(selectedFieldId, (draft) => {
+        const from = draft.findIndex(g => g.id === active.id);
+        const to = draft.findIndex(g => g.id === over.id);
+        return from === -1 || to === -1 ? draft : arrayMove(draft, from, to);
+      });
+    }
+    requestAnimationFrame(() => setIsDraggingGroup(false));
+  };
+
   const [showAddLinkModal, setShowAddLinkModal] = useState(false);
   const [tempLinkText, setTempLinkText] = useState('');
   const [tempLinkUrl, setTempLinkUrl] = useState('');
@@ -783,9 +1156,9 @@ function TemplateBuilder() {
     setShowAddLinkModal(false);
   };
 
-  const [activeId, setActiveId] = useState<string | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [activeType, setActiveType] = useState<'field' | 'quickButton' | null>(null);
+  // Пока идёт перетаскивание поля (и в рендере drop) layout-анимация
+  // framer у карточек выключена — см. комментарий в SortableField.
+  const [isDraggingField, setIsDraggingField] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -808,6 +1181,8 @@ const migratedFields = (record.fields || []).map((f: BuilderField) => ({
 }));
 
 setFields(migratedFields);
+setFieldsLoadKey(k => k + 1);
+setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шаблон", fields: migratedFields }));
       } catch (err) {
         console.error("Ошибка загрузки шаблона в Builder:", err);
       }
@@ -911,20 +1286,11 @@ setFields(migratedFields);
     if (over && active.id !== over.id) {
       setFields(items => arrayMove(items, items.findIndex(i => i.id === active.id), items.findIndex(i => i.id === over.id)));
     }
-    setActiveId(null);
-    setActiveType(null);
+    requestAnimationFrame(() => setIsDraggingField(false));
   };
 
-  const handleDragStart = (event: DragStartEvent) => {
-    setActiveId(event.active.id as string);
-    setActiveType('field');
-  };
-
-  const renderDragOverlay = () => {
-    if (!activeId) return null;
-    const field = fields.find(f => f.id === activeId);
-    if (!field) return null;
-    return <div className="bg-zinc-900 border border-white/30 rounded-2xl p-6 shadow-2xl opacity-75 scale-105 pointer-events-none">{field.label}</div>;
+  const handleDragStart = () => {
+    setIsDraggingField(true);
   };
 
     const performSave = async (asNew: boolean) => {
@@ -944,6 +1310,7 @@ setFields(migratedFields);
           const newRecord = await pb.collection('templates').create(payload);
           setEditingId(newRecord.id);
         }
+        setSavedSnapshot(JSON.stringify({ title: templateTitle, fields }));
         router.push('/');
       } catch (err: unknown) {
      console.error("Ошибка сохранения шаблона:", err);
@@ -969,37 +1336,83 @@ setFields(migratedFields);
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-white">
 
-      <div className="sticky top-0 z-50 bg-zinc-900/90 backdrop-blur-xl border-b border-white/10">
+      <div className="sticky top-0 z-50 bg-zinc-900 border-b border-white/10">
   <DynamicUserHeader />
 </div>
 
       <div className="flex flex-1 overflow-hidden">
 
 
-      {/* ЛЕВАЯ ПАНЕЛЬ */}
-      <div className="w-64 bg-zinc-900/75 backdrop-blur-2xl border-r border-white/10 shadow-2xl p-2 overflow-auto flex flex-col">
-        
-                <div className="space-y-1 flex-1 pt-6">
+      {/* ЛЕВАЯ ПАНЕЛЬ — инструменты. Фон и рамки панелей одни на всю
+          страницу: zinc-900 + border-white/10 (центр — zinc-950). */}
+      <div className="w-60 bg-zinc-900 border-r border-white/10 px-3 pt-6 pb-4 overflow-auto flex flex-col">
+        <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+          Добавить поле
+        </div>
+        <div className="space-y-0.5">
           {availableFields.map(item => (
-            <button key={item.type} onClick={() => addField(item.type)} className="w-full flex items-center gap-4 p-3 hover:bg-zinc-800 hover:text-amber-400 rounded-xl transition-all text-left group cursor-pointer">
-              <div className="w-7 h-7 rounded-2xl flex items-center justify-center text-3xl shadow-inner bg-none group-hover:scale-105 transition-transform">
-                {item.icon}
-              </div>
-              <span className="font-medium text-sm tracking-tight text-white">{item.label}</span>
+            <button
+              key={item.type}
+              onClick={() => addField(item.type)}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-zinc-300 hover:text-amber-400 hover:bg-white/5 transition-colors cursor-pointer"
+            >
+              {item.icon}
+              <span className="text-sm font-medium tracking-tight text-white">{item.label}</span>
             </button>
           ))}
         </div>
+        <p className="mt-auto px-3 pt-6 text-xs leading-relaxed text-zinc-500">
+          Новое поле появится сразу после выбранного, а если ничего не выбрано — в конце шаблона.
+        </p>
       </div>
 
-      <div className="flex-1 p-10 pb-40 overflow-auto [scrollbar-gutter:stable]">
-                <div className="max-w-3xl mx-auto">
-          <input 
-            type="text" 
-            value={templateTitle} 
-            onChange={(e) => setTemplateTitle(e.target.value)} 
-            className="w-full text-2xl font-semibold bg-transparent outline-none text-center pb-4 mb-8 tracking-tight transition-colors"
-            placeholder="Название шаблона" 
+      {/* Центральная колонка по ширине контента — FIELDS_COLUMN_WIDTH, как
+          колонка полей на странице заполнения, чтобы карточки выглядели так
+          же. Всё оставшееся место — правой панели быстрых кнопок (flex-1). */}
+      <div className="shrink-0 px-8 pt-5 pb-40 overflow-auto [scrollbar-gutter:stable]">
+        {/* Действия с подписями вместо трёх иконок без подсказок внизу
+            правой панели. "Сохранить" — единственная заметная кнопка. */}
+        <div style={{ width: FIELDS_COLUMN_WIDTH }} className="flex items-center justify-between mb-5">
+          <button
+            onClick={goToList}
+            className="h-8 -ml-2.5 px-2.5 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Шаблоны
+          </button>
+          <div className="flex items-center gap-2">
+            {isDirty && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                Не сохранено
+              </span>
+            )}
+            <button
+              onClick={goToFiller}
+              className="h-8 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+            >
+              Заполнить
+              <ArrowRight className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleSaveClick}
+              disabled={isSaving}
+              className="h-8 px-3.5 inline-flex items-center gap-1.5 rounded-lg text-sm font-medium bg-amber-400 text-zinc-950 hover:bg-amber-300 disabled:opacity-50 transition-colors cursor-pointer"
+            >
+              <Save className="w-4 h-4" />
+              Сохранить
+            </button>
+          </div>
+        </div>
+        <div style={{ width: FIELDS_COLUMN_WIDTH }} className="flex items-center mb-6">
+          <input
+            type="text"
+            value={templateTitle}
+            onChange={(e) => setTemplateTitle(e.target.value)}
+            className="flex-1 min-w-0 text-3xl font-bold bg-transparent outline-none text-center tracking-tight transition-colors"
+            placeholder="Название шаблона"
           />
+          <div style={{ width: FIELD_ACTIONS_RAIL_WIDTH }} className="shrink-0" aria-hidden="true" />
         </div>
 
         <DndContext
@@ -1008,22 +1421,36 @@ setFields(migratedFields);
           modifiers={[restrictToVerticalAxis]}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
+          onDragCancel={() => setIsDraggingField(false)}
         >
           <SortableContext items={fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
-            <div className="flex flex-col max-w-3xl mx-auto">
-              {fields.length === 0 && <div className="text-center py-24 text-zinc-500 border-2 border-none border-zinc-700 rounded-none">Выберите инструмент из левой панели</div>}
+            <div style={{ width: FIELDS_COLUMN_WIDTH }} className="flex flex-col">
+              {fields.length === 0 && (
+                // Отступ справа — та же ось центрирования, что у названия
+                // шаблона (фантомная колонка FIELD_ACTIONS_RAIL_WIDTH).
+                <div style={{ paddingRight: FIELD_ACTIONS_RAIL_WIDTH }}>
+                <EmptyState
+                  icon={<LayoutList className="w-5 h-5" />}
+                  title="Шаблон пока пуст"
+                  text="Добавьте первое поле из панели слева — например, «Заголовок» раздела или «Текст»."
+                />
+                </div>
+              )}
               {/* mode="popLayout": уходящая карточка сразу вынимается из
                   потока (position: absolute) и доигрывает exit сама по себе
                   вместо того, чтобы держать соседей на месте до своего
                   исчезновения — иначе сдвиг соседей стартует отдельным,
                   рассинхронизированным рендером. См. комментарий в
                   SortableField. */}
-              <AnimatePresence mode="popLayout">
+              {/* initial={false} — при открытии шаблона карточки не
+                  "проявляются" все разом, анимируются только добавленные. */}
+              <AnimatePresence key={fieldsLoadKey} mode="popLayout" initial={false}>
                 {fields.map(field => (
                   <SortableField
     key={field.id}
     field={field}
     isSelected={selectedFieldId === field.id}
+    disableLayoutAnimation={isDraggingField}
     onSelect={setSelectedFieldId}
     onRemove={removeField}
     onUpdate={updateField}
@@ -1041,186 +1468,99 @@ setFields(migratedFields);
             </div>
           </SortableContext>
 
-          <DragOverlay dropAnimation={defaultDropAnimation}>
-            {renderDragOverlay()}
-          </DragOverlay>
         </DndContext>
       </div>
 
       {/* ПРАВАЯ ПАНЕЛЬ */}
-      <div className="w-[400px] min-w-[300px] max-w-[680px] flex-shrink-0 bg-zinc-900 border-l border-zinc-800 flex flex-col">
+      <div className="flex-1 min-w-[360px] bg-zinc-900 border-l border-white/10 flex flex-col">
         {selectedFieldId && ['text', 'conclusion'].includes(fields.find(f => f.id === selectedFieldId)?.type || '') ? (
-  <div className="flex-1 overflow-auto p-6">
-    <div className="flex items-center justify-between mb-4">
-      <h3 className="font-semibold text-lg tracking-tigh">Быстрые кнопки</h3>
+  <div className="flex-1 overflow-auto p-6 [scrollbar-gutter:stable]">
+    {(() => {
+      const selectedField = fields.find(f => f.id === selectedFieldId);
+      const groups = selectedField?.quickButtons || [];
+      const limitReached = groups.length >= MAX_QUICK_BUTTON_GROUPS;
+      return (
+        <>
+    {/* Заголовок по центру панели; "+" — справа, абсолютно, чтобы не
+        сдвигать центр. */}
+    <div className="relative flex flex-col items-center mb-5 px-36">
+      <h3 className="font-semibold text-lg tracking-tight">Быстрые кнопки</h3>
+      <span className="text-sm text-zinc-400 truncate max-w-full">
+        {selectedField?.label || 'Без названия'}
+      </span>
       <button
-        onClick={() => {
-  if (!selectedFieldId) return;
-
-  updateQuickButtons(selectedFieldId, (draft) => {
-    // 1. Находим индекс последней раскрытой группы
-    let insertAfterIndex = -1;
-    for (let i = 0; i < draft.length; i++) {
-      if (draft[i].isExpanded) {
-        insertAfterIndex = i;
-      }
-    }
-
-    // 2. Создаём новую группу
-    const newGroup: QuickButtonGroup = {
-      id: crypto.randomUUID(),
-      label: '',
-      isExpanded: true,
-      phrases: [''],
-    };
-
-    // 3. Вставляем
-    if (insertAfterIndex === -1) {
-      // Никто не раскрыт → в конец
-      draft.push(newGroup);
-    } else {
-      // Вставляем сразу после последней раскрытой
-      draft.splice(insertAfterIndex + 1, 0, newGroup);
-    }
-
-    // 4. (рекомендую) Закрываем все остальные группы
-    draft.forEach((g, idx) => {
-      g.isExpanded = idx === (insertAfterIndex === -1 ? draft.length - 1 : insertAfterIndex + 1);
-    });
-
-    return draft;
-  });
-}}  
-        className="flex items-center gap-1 text-blue-400 hover:text-blue-300"
+        onClick={addQuickButtonGroup}
+        disabled={limitReached}
+        className="absolute right-0 top-0 h-8 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 bg-white/5 hover:bg-white/10 hover:text-white disabled:opacity-40 disabled:hover:bg-white/5 disabled:hover:text-zinc-300 disabled:cursor-not-allowed cursor-pointer transition-colors"
       >
-        <PlusIcon className="w-5 h-5 text-white hover:text-amber-400 cursor-pointer transition-all" />
+        <Plus className="w-4 h-4" />
+        Группа
+        <span className="text-zinc-500 tabular-nums">{groups.length}/{MAX_QUICK_BUTTON_GROUPS}</span>
       </button>
     </div>
 
-    <div className="space-y-1">
-  {(fields.find(f => f.id === selectedFieldId)?.quickButtons || []).map((group: QuickButtonGroup, gIndex: number) => (
-    <div key={group.id} className="bg-none border border-transparent p-0">
-      {/* Группа */}
-      <div className="flex items-center gap-1 mb-3">
-        <button
-          onClick={() => {
-            updateQuickButtons(selectedFieldId!, (draft) => {
-              draft[gIndex].isExpanded = !draft[gIndex].isExpanded;
-              return draft;
-            });
-          }}
-          className="text-zinc-400 hover:text-white transition-all cursor-pointer"
-          style={{ transform: group.isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
-        >
-          <ChevronRight size={18} />
-        </button>
-        <input
-          type="text"
-          value={group.label}
-          onChange={e => {
-            updateQuickButtons(selectedFieldId!, (draft) => {
-              draft[gIndex].label = e.target.value;
-              return draft;
-            });
-          }}
-          className="flex-1 bg-transparent text-sm font-semibold outline-none"
-          placeholder="Название группы"
-        />
-        <button
-          onClick={() => {
-            updateQuickButtons(selectedFieldId!, (draft) => {
-              draft.splice(gIndex, 1);
-              return draft;
-            });
-          }}
-          className="text-white hover:text-red-400 transition-all cursor-pointer"
-        >
-          <Trash2 size={16} />
-        </button>
-      </div>
-
-      {/* Фразы */}
-      <AnimatePresence>
-        {group.isExpanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.15, ease: 'easeInOut' }}
-            className="pl-4 space-y-2 overflow-hidden"
-          >
-            {(group.phrases || []).map((phrase, pIndex) => (
-              <div key={pIndex} className="flex items-center gap-1">
-                <input
-                  type="text"
-                  value={phrase}
-                  onChange={e => {
-                    updateQuickButtons(selectedFieldId!, (draft) => {
-                      draft[gIndex].phrases[pIndex] = e.target.value;
-                      return draft;
-                    });
-                  }}
-                  className="flex-1 min-w-0 bg-transparent border border-transparent px-4 py-2 text-xs focus:outline-none focus:ring-0"
-                  placeholder="Фраза"
-                />
-                <button
-                  onClick={() => {
-                    updateQuickButtons(selectedFieldId!, (draft) => {
-                      draft[gIndex].phrases.splice(pIndex + 1, 0, '');
-                      return draft;
-                    });
-                  }}
-                  className="text-white hover:text-amber-400 cursor-pointer transition-all"
-                >
-                  <PlusIcon className="w-4 h-4" />
-                </button>
-                {pIndex > 0 && (
-                  <button
-                    onClick={() => {
-                      updateQuickButtons(selectedFieldId!, (draft) => {
-                        draft[gIndex].phrases.splice(pIndex, 1);
-                        return draft;
-                      });
-                    }}
-                    className="text-white hover:text-red-400 cursor-pointer transition-all"
-                  >
-                    <MinusIcon className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
+    {/* Группы — карточками в адаптивной сетке. Порядок меняется
+        перетаскиванием за точку слева от номера; номер — позиция группы,
+        он же горячая клавиша Ctrl+1..9 на странице заполнения. */}
+    {groups.length === 0 && (
+      <EmptyState
+        icon={<Plus className="w-5 h-5" />}
+        title="Групп пока нет"
+        text="Добавьте группу кнопкой «Группа» — в заполнении она откроется по Ctrl+номер."
+      />
+    )}
+    <DndContext
+      sensors={sensors}
+      collisionDetection={groupCollisionDetection}
+      onDragStart={() => setIsDraggingGroup(true)}
+      onDragEnd={handleGroupDragEnd}
+      onDragCancel={() => setIsDraggingGroup(false)}
+    >
+      <SortableContext items={groups.map(g => g.id)} strategy={rectSortingStrategy}>
+        {/* relative — для AnimatePresence popLayout: уходящая карточка
+            вынимается из сетки (position: absolute) относительно неё. */}
+        <div className="relative grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 items-start">
+          {/* initial={false} — анимация появления только у добавленных
+              групп, а не у всех разом при выборе поля. */}
+          <AnimatePresence mode="popLayout" initial={false}>
+            {groups.map((group, gIndex) => (
+              <SortableQuickButtonGroup
+                key={group.id}
+                group={group}
+                index={gIndex}
+                disableLayoutAnimation={isDraggingGroup}
+                onChange={(mutate) => {
+                  updateQuickButtons(selectedFieldId!, (draft) => {
+                    mutate(draft[gIndex]);
+                    return draft;
+                  });
+                }}
+                onRemove={() => {
+                  updateQuickButtons(selectedFieldId!, (draft) => {
+                    draft.splice(gIndex, 1);
+                    return draft;
+                  });
+                }}
+              />
             ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  ))}
-</div>
+          </AnimatePresence>
+        </div>
+      </SortableContext>
+    </DndContext>
+        </>
+      );
+    })()}
   <div className="h-[300px] flex-shrink-0"></div>
   </div>
 ) : (
-  <div className="flex-1 flex items-center justify-center text-zinc-500 text-center px-6">
-    Выберите текстовое поле слева,<br />чтобы редактировать его быстрые кнопки
+  <div className="flex-1 flex items-center justify-center px-6">
+    <EmptyState
+      icon={<MousePointerClick className="w-5 h-5" />}
+      title="Быстрые кнопки"
+      text="Выберите поле «Текст» или «Заключение» — здесь появятся его группы готовых фраз."
+    />
   </div>
 )}
-
-<div className="mt-auto bg-zinc-900/75  border-t border-white/10 p-4 flex gap-1 justify-center">
-        <button
-          onClick={handleSaveClick}
-          disabled={isSaving}
-          className="w-11 h-11 flex items-center justify-center bg-none hover:text-amber-400 text-white rounded-none shadow-2xl transition-all active:scale-95 disabled:opacity-50 cursor-pointer tooltip tooltip-top"
-        data-tip="Сохранить шаблон"
-        >
-          <DocumentCheckIcon className="w-6 h-6" />
-        </button>
-        <button onClick={goToFiller} className="w-11 h-11 flex items-center justify-center bg-none hover:text-amber-400 text-white rounded-none shadow-2xl transition-all active:scale-95 cursor-pointer tooltip tooltip-top" data-tip="Заполнить протокол"><ArrowRightIcon className="w-6 h-6" 
-        
-        /></button>
-      
-        <button onClick={goToList} className="w-11 h-11 flex items-center justify-center bg-none hover:text-amber-400 text-white rounded-none shadow-2xl transition-all active:scale-95 cursor-pointer tooltip tooltip-top" data-tip="К шаблонам"><HomeIcon className="w-6 h-6" 
-        
-        /></button>
-        
-      </div>
       </div>
       </div>
 
@@ -1231,97 +1571,71 @@ setFields(migratedFields);
       <AnimatedModal
         open={showSaveModal}
         onClose={() => setShowSaveModal(false)}
-        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-sm mx-4"
+        size="md"
         onKeyDown={(e) => {
-          if (e.key === 'Enter') performSave(false);
           if (e.key === 'Escape') setShowSaveModal(false);
         }}
       >
-        {/* Шапка */}
-        <div className="px-6 pt-5 pb-3 border-b border-white/10">
-          <h2 className="text-lg font-semibold text-white">Сохранение шаблона</h2>
-        </div>
-
-        {/* Кнопки */}
-        <div className="px-6 py-5 space-y-3">
-          <button
-            onClick={() => performSave(false)}
-            className="w-full py-4 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 hover:text-amber-400 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer"
-          >
+        <ModalHeader title="Сохранение шаблона" onClose={() => setShowSaveModal(false)} />
+        <ModalBody>
+          <p className="text-sm text-zinc-400 leading-relaxed">
+            {editingId
+              ? 'Обновить этот шаблон или сохранить изменения отдельной копией?'
+              : 'Шаблон будет сохранён в вашем списке.'}
+          </p>
+        </ModalBody>
+        <ModalFooter>
+          <ModalButton onClick={() => setShowSaveModal(false)}>Отмена</ModalButton>
+          {editingId && (
+            <ModalButton onClick={() => performSave(true)} disabled={isSaving}>
+              Сохранить как новый
+            </ModalButton>
+          )}
+          <ModalButton variant="primary" autoFocus onClick={() => performSave(false)} disabled={isSaving}>
             Сохранить
-          </button>
-
-          <button
-            onClick={() => performSave(true)}
-            className="w-full py-4 bg-white/5 hover:bg-amber-400/10 border border-white/10 hover:border-amber-400 hover:text-amber-400 rounded-2xl text-white text-sm font-medium transition-all cursor-pointer"
-          >
-            Сохранить как новый шаблон
-          </button>
-        </div>
-
-        {/* Отмена */}
-        <div className="px-6 pb-6">
-          <button
-            onClick={() => setShowSaveModal(false)}
-            className="w-full py-3 text-sm text-zinc-400 hover:text-white transition-all cursor-pointer"
-          >
-            Отмена
-          </button>
-        </div>
+          </ModalButton>
+        </ModalFooter>
       </AnimatedModal>
 
 
       <AnimatedModal
         open={showAddLinkModal}
         onClose={() => setShowAddLinkModal(false)}
-        boxClassName="modal-box bg-zinc-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-w-md mx-4"
         onKeyDown={(e) => {
           if (e.key === 'Enter') handleAddLink(selectedFieldId!);
           if (e.key === 'Escape') setShowAddLinkModal(false);
         }}
       >
-        <div className="px-6 pt-5 pb-3 border-b border-white/10">
-          <h2 className="text-lg font-semibold text-white">Добавить ссылку</h2>
-        </div>
-
-        <div className="px-6 py-6 space-y-6">
+        <ModalHeader title="Добавить ссылку" onClose={() => setShowAddLinkModal(false)} />
+        <ModalBody className="space-y-4">
           <div>
-            <label className="block text-sm text-zinc-400 mb-2">Название</label>
+            <label className="block text-xs text-zinc-400 mb-1.5">Название</label>
             <input
               type="text"
+              autoFocus
               value={tempLinkText}
               onChange={e => setTempLinkText(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
-              placeholder="Введите значение"
+              className={MODAL_INPUT_CLASS}
+              placeholder="Например, «Классификация Bosniak»"
             />
           </div>
-
           <div>
-            <label className="block text-sm text-zinc-400 mb-2">URL</label>
+            <label className="block text-xs text-zinc-400 mb-1.5">URL</label>
             <input
               type="text"
               value={tempLinkUrl}
               onChange={e => setTempLinkUrl(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-white placeholder:text-zinc-400 focus:outline-none transition-all"
-              placeholder="Введите значение "
+              className={MODAL_INPUT_CLASS}
+              placeholder="https://"
             />
           </div>
-        </div>
-
-        <div className="px-6 pb-6 flex gap-3">
-          <button
-            onClick={() => setShowAddLinkModal(false)}
-            className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-sm text-white font-medium transition-all cursor-pointer"
-          >
-            Отмена
-          </button>
-          <button
-            onClick={() => handleAddLink(selectedFieldId!)}
-            className="flex-1 py-3.5 bg-white/5 hover:bg-amber-400/10 hover:text-amber-300 border border-white/10 hover:border-amber-400 rounded-2xl text-sm text-white font-medium transition-all cursor-pointer"
-          >
+        </ModalBody>
+        <ModalFooter>
+          <ModalButton onClick={() => setShowAddLinkModal(false)}>Отмена</ModalButton>
+          <ModalButton variant="primary" onClick={() => handleAddLink(selectedFieldId!)} disabled={!tempLinkUrl.trim()}>
             Добавить
-          </button>
-        </div>
+          </ModalButton>
+        </ModalFooter>
       </AnimatedModal>
 
     </div>

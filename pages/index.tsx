@@ -89,7 +89,7 @@ function HomePage() {
 };
 
   const deleteTemplate = async (id: string, title: string) => {
-  const confirmed = await dialog.confirm(`Удалить шаблон "${title}"?`, { danger: true, confirmText: 'Удалить' });
+  const confirmed = await dialog.confirm(`Шаблон «${title}» будет удалён без возможности восстановления.`, { title: 'Удалить шаблон?', danger: true, confirmText: 'Удалить' });
   if (!confirmed) return;
 
   try {

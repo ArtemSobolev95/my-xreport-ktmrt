@@ -7,7 +7,7 @@ import {
   Trash2, ChevronUp, ChevronDown, ChevronRight, Paperclip, ClipboardCheck,
   Heading, Type, Hash, SquareCheck, List, ChartNoAxesColumnIncreasing, Calculator,
   Plus, Minus, ImagePlus, Link, Copy, Circle, CircleDot, ArrowLeft, ArrowRight, Save,
-  LayoutList, MousePointerClick,
+  LayoutList, MousePointerClick, Globe,
 } from 'lucide-react';
 import {
   DndContext,
@@ -1063,6 +1063,13 @@ function TemplateBuilder() {
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  // Публичный шаблон виден всем вошедшим пользователям, но менять его может
+  // только автор (это же проверяет updateRule коллекции на сервере). Чужой
+  // публичный шаблон открывается здесь на просмотр/доработку, а сохранить
+  // его можно только как новый — уже свой, личный.
+  const [isPublic, setIsPublic] = useState(false);
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const isOwner = !ownerId || ownerId === user?.id;
 
   
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -1074,10 +1081,10 @@ function TemplateBuilder() {
 
   // Снимок последнего загруженного/сохранённого состояния — для метки
   // "Не сохранено" рядом с кнопкой "Сохранить".
-  const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify({ title: 'Новый шаблон', fields: [] }));
+  const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify({ title: 'Новый шаблон', fields: [], isPublic: false }));
   const isDirty = useMemo(
-    () => JSON.stringify({ title: templateTitle, fields }) !== savedSnapshot,
-    [templateTitle, fields, savedSnapshot]
+    () => JSON.stringify({ title: templateTitle, fields, isPublic }) !== savedSnapshot,
+    [templateTitle, fields, isPublic, savedSnapshot]
   );
 
   const updateQuickButtons = (
@@ -1182,7 +1189,12 @@ const migratedFields = (record.fields || []).map((f: BuilderField) => ({
 
 setFields(migratedFields);
 setFieldsLoadKey(k => k + 1);
-setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шаблон", fields: migratedFields }));
+// Флаг публичности — только у своего шаблона: копия чужого публичного
+// сохраняется личной.
+const loadedIsPublic = record.user === user?.id ? !!record.isPublic : false;
+setOwnerId(record.user || null);
+setIsPublic(loadedIsPublic);
+setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шаблон", fields: migratedFields, isPublic: loadedIsPublic }));
       } catch (err) {
         console.error("Ошибка загрузки шаблона в Builder:", err);
       }
@@ -1190,7 +1202,7 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
 
     loadTemplate();
   }
-}, [edit]);
+}, [edit, user?.id]);
 
   const addField = (type: FieldType) => {
     let newField: BuilderField = {
@@ -1294,23 +1306,79 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
   };
 
     const performSave = async (asNew: boolean) => {
+      const title = templateTitle.trim().replace(/\s+/g, ' ');
+      if (!title) {
+        setShowSaveModal(false);
+        await dialog.alert('Укажите название шаблона.');
+        return;
+      }
+
       setIsSaving(true);
 
+      // Чужой публичный шаблон перезаписать нельзя (сервер это тоже
+      // запрещает) — только сохранить копию, и она всегда личная.
+      const saveAsNew = asNew || !isOwner;
+      const willBePublic = isOwner ? isPublic : false;
+
+      // Название уникально среди СВОИХ шаблонов, а у публикуемого — ещё и
+      // среди всех публичных (иначе в разделе "Публичные" появлялись бы
+      // неотличимые дубликаты). Чужие публичные шаблоны не мешают сохранить
+      // личный с тем же названием: иначе чужая публикация "занимала" бы
+      // название и у вас. Сравнение без учёта регистра и лишних пробелов —
+      // на клиенте: оператор ~ в фильтре PocketBase (SQLite LIKE) регистр
+      // кириллицы не игнорирует. При обновлении самого себя совпадение не
+      // считается.
+      try {
+        const normalize = (s: string) => s.trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru');
+        const existing = await pb.collection('templates').getFullList({
+          filter: pb.filter('user = {:uid} || isPublic = true', { uid: user?.id }),
+          fields: 'id,title,user,isPublic',
+        });
+        const duplicate = existing.find(t =>
+          normalize(t.title || '') === normalize(title) &&
+          (saveAsNew || t.id !== editingId) &&
+          (t.user === user?.id || (willBePublic && t.isPublic))
+        );
+        if (duplicate) {
+          setIsSaving(false);
+          setShowSaveModal(false);
+          await dialog.alert(
+            duplicate.user === user?.id
+              ? `Шаблон «${duplicate.title}» уже существует. Измените название, чтобы сохранить.`
+              : `Публичный шаблон «${duplicate.title}» уже есть у другого автора. Измените название или сохраните шаблон личным.`,
+            { title: 'Название занято' }
+          );
+          return;
+        }
+      } catch (err: unknown) {
+        console.error("Ошибка проверки названия шаблона:", err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setIsSaving(false);
+        setShowSaveModal(false);
+        await dialog.alert("Не удалось проверить название шаблона: " + errorMessage);
+        return;
+      }
+
       const payload = {
-        title: templateTitle,
+        title,
         fields: JSON.parse(JSON.stringify(fields)),
         user: user?.id,
-        isPublic: false
+        // Раньше здесь было жёстко isPublic: false — любое сохранение
+        // молча снимало шаблон с публикации.
+        isPublic: willBePublic
       };
 
       try {
-        if (editingId && !asNew) {
+        if (editingId && !saveAsNew) {
           await pb.collection('templates').update(editingId, payload);
         } else {
           const newRecord = await pb.collection('templates').create(payload);
           setEditingId(newRecord.id);
+          setOwnerId(user?.id ?? null);
         }
-        setSavedSnapshot(JSON.stringify({ title: templateTitle, fields }));
+        setTemplateTitle(title);
+        setIsPublic(willBePublic);
+        setSavedSnapshot(JSON.stringify({ title, fields, isPublic: willBePublic }));
         router.push('/');
       } catch (err: unknown) {
      console.error("Ошибка сохранения шаблона:", err);
@@ -1382,7 +1450,7 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
           </button>
           <div className="flex items-center gap-2">
             {isDirty && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-500">
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
                 Не сохранено
               </span>
@@ -1400,10 +1468,16 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
               className="h-8 px-3.5 inline-flex items-center gap-1.5 rounded-lg text-sm font-medium bg-amber-400 text-zinc-950 hover:bg-amber-300 disabled:opacity-50 transition-colors cursor-pointer"
             >
               <Save className="w-4 h-4" />
-              Сохранить
+              {isOwner ? 'Сохранить' : 'Сохранить копию'}
             </button>
           </div>
         </div>
+        {!isOwner && (
+          <div style={{ width: FIELDS_COLUMN_WIDTH }} className="mb-5 px-3 py-2 flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 text-xs text-zinc-400">
+            <Globe className="w-4 h-4 shrink-0 text-zinc-500" strokeWidth={1.75} />
+            Публичный шаблон другого автора — изменения можно сохранить только как новый шаблон в вашем списке.
+          </div>
+        )}
         <div style={{ width: FIELDS_COLUMN_WIDTH }} className="flex items-center mb-6">
           <input
             type="text"
@@ -1412,7 +1486,29 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
             className="flex-1 min-w-0 text-3xl font-bold bg-transparent outline-none text-center tracking-tight transition-colors"
             placeholder="Название шаблона"
           />
-          <div style={{ width: FIELD_ACTIONS_RAIL_WIDTH }} className="shrink-0" aria-hidden="true" />
+          {/* Переключатель публичности — в колонке справа от названия (та же
+              ширина, что у боковой панели кнопок полей, поэтому название
+              по-прежнему по центру): это свойство самого шаблона, а в
+              верхней панели действий он уже не помещался в ширину колонки.
+              Только у своего шаблона; применяется при сохранении, как и
+              остальные правки. */}
+          <div style={{ width: FIELD_ACTIONS_RAIL_WIDTH }} className="shrink-0 flex justify-end">
+            {isOwner && (
+              <button
+                onClick={() => setIsPublic(v => !v)}
+                aria-pressed={isPublic}
+                aria-label={isPublic ? 'Публичный шаблон' : 'Личный шаблон'}
+                className={`tooltip tooltip-bottom w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                  isPublic
+                    ? 'text-amber-400 bg-amber-400/10 hover:bg-amber-400/15'
+                    : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                }`}
+                data-tip={isPublic ? 'Публичный — виден всем. Нажмите, чтобы сделать личным' : 'Личный — виден только вам. Нажмите, чтобы сделать публичным'}
+              >
+                <Globe className="w-4 h-4" strokeWidth={1.75} />
+              </button>
+            )}
+          </div>
         </div>
 
         <DndContext
@@ -1579,20 +1675,23 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
         <ModalHeader title="Сохранение шаблона" onClose={() => setShowSaveModal(false)} />
         <ModalBody>
           <p className="text-sm text-zinc-400 leading-relaxed">
-            {editingId
-              ? 'Обновить этот шаблон или сохранить изменения отдельной копией?'
-              : 'Шаблон будет сохранён в вашем списке.'}
+            {!isOwner
+              ? 'Это публичный шаблон другого автора. Изменения сохранятся новым личным шаблоном в вашем списке — оригинал не изменится.'
+              : editingId
+                ? 'Обновить этот шаблон или сохранить изменения отдельной копией?'
+                : 'Шаблон будет сохранён в вашем списке.'}
+            {isOwner && isPublic && ' Шаблон публичный — его увидят все пользователи, но изменять сможете только вы.'}
           </p>
         </ModalBody>
         <ModalFooter>
           <ModalButton onClick={() => setShowSaveModal(false)}>Отмена</ModalButton>
-          {editingId && (
+          {isOwner && editingId && (
             <ModalButton onClick={() => performSave(true)} disabled={isSaving}>
               Сохранить как новый
             </ModalButton>
           )}
-          <ModalButton variant="primary" autoFocus onClick={() => performSave(false)} disabled={isSaving}>
-            Сохранить
+          <ModalButton variant="primary" autoFocus onClick={() => performSave(!isOwner)} disabled={isSaving}>
+            {isOwner ? 'Сохранить' : 'Сохранить как новый'}
           </ModalButton>
         </ModalFooter>
       </AnimatedModal>

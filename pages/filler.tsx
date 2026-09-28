@@ -463,7 +463,9 @@ const toggleAllSections = () => {
 };
 
 
-const focusFieldElement = (fieldId: string) => {
+// scroll=false — прокрутку уже сделал вызывающий код (glideHeaderIntoPlace),
+// здесь только фокус.
+const focusFieldElement = (fieldId: string, scroll = true) => {
   // обычные поля
   let el = inputRefs.current[fieldId] as HTMLElement | undefined;
 
@@ -488,7 +490,7 @@ const focusFieldElement = (fieldId: string) => {
     // (через layout/scroll anchoring), что и выглядело как рывок вверх при
     // сворачивании прошлых разделов, а затем вниз при раскрытии текущего.
     el.focus({ preventScroll: true });
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (scroll) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
   } else {
     setActiveFieldId(fieldId);
     activeFieldRef.current = fieldId;
@@ -569,13 +571,70 @@ const openOnlySection = (headerId: string, instant = false) => {
     // назад чуть ниже, где используется тот же приём).
     requestAnimationFrame(() => focusFieldElement(firstFieldId!));
   } else {
-    // Фокус на первое поле — ждём завершения CSS-анимации разворота
-    // (см. SECTION_TRANSITION_MS), иначе scrollIntoView внутри
-    // focusFieldElement целится в ещё двигающийся элемент и дёргается.
-    setTimeout(() => {
-      focusFieldElement(firstFieldId!);
-    }, SECTION_TRANSITION_MS + 10);
+    // Раньше здесь ждали конца CSS-анимации и затем делали scrollIntoView к
+    // первому полю. Это давало два движения подряд: пока схлопывался
+    // раздел ВЫШЕ кликнутого заголовка, заголовок вместе со всем контентом
+    // уезжал вверх (выглядит как скролл вниз), а потом scrollIntoView
+    // возвращал страницу обратно (скролл вверх) — "мини-скролл вниз, потом
+    // вверх", особенно заметно на длинных разделах. Теперь на каждом кадре
+    // анимации сами держим кликнутый заголовок в нужной точке экрана и
+    // плавно ведём его от исходного положения к верху области просмотра —
+    // одно непрерывное движение одновременно со схлопыванием/раскрытием.
+    glideHeaderIntoPlace(headerId, () => focusFieldElement(firstFieldId!, false));
   }
+};
+
+// rAF-цикл текущего "ведения" заголовка — повторный клик по другому
+// заголовку до окончания анимации отменяет предыдущий цикл.
+const headerGlideRafRef = useRef<number | null>(null);
+// До этого момента (performance.now()) авто-прокрутка к активному полю
+// (эффект на activeFieldId/collapsedHeaders) отключена — см. там.
+const manualScrollUntilRef = useRef(0);
+
+const glideHeaderIntoPlace = (headerId: string, onDone: () => void) => {
+  if (headerGlideRafRef.current !== null) cancelAnimationFrame(headerGlideRafRef.current);
+  // С запасом: onDone (фокус первого поля) вызывается в конце цикла, а
+  // эффект реагирует на него ещё через кадр.
+  manualScrollUntilRef.current = performance.now() + SECTION_TRANSITION_MS + 500;
+
+  const headerEl = document.querySelector(`[data-header-id="${headerId}"]`) as HTMLElement | null;
+  if (!headerEl) {
+    setTimeout(onDone, SECTION_TRANSITION_MS + 10);
+    return;
+  }
+
+  // Целевое положение — сразу под липкой верхней панелью, с небольшим
+  // отступом: так раскрытый раздел виден максимально.
+  const topBar = document.querySelector('[data-filler-topbar]') as HTMLElement | null;
+  const targetTop = (topBar?.getBoundingClientRect().bottom ?? 0) + 16;
+  const startTop = headerEl.getBoundingClientRect().top;
+
+  // Ведём заголовок чуть дольше самой CSS-транзиции: она стартует на кадр
+  // позже (после коммита React), и последние кадры нужно тоже удержать.
+  const glideMs = SECTION_TRANSITION_MS;
+  const holdMs = SECTION_TRANSITION_MS + 80;
+  const start = performance.now();
+
+  const step = (now: number) => {
+    const elapsed = now - start;
+    const t = Math.min(1, elapsed / glideMs);
+    const eased = 1 - Math.pow(1 - t, 3);
+    const desired = startTop + (targetTop - startTop) * eased;
+    const delta = headerEl.getBoundingClientRect().top - desired;
+    // behavior: 'instant' обязателен — в globals.css у html стоит
+    // scroll-behavior: smooth, и без этого каждая покадровая поправка
+    // сама превращалась бы в отдельную плавную прокрутку.
+    if (Math.abs(delta) > 0.5) {
+      window.scrollTo({ top: window.scrollY + delta, behavior: 'instant' });
+    }
+    if (elapsed < holdMs) {
+      headerGlideRafRef.current = requestAnimationFrame(step);
+    } else {
+      headerGlideRafRef.current = null;
+      onDone();
+    }
+  };
+  headerGlideRafRef.current = requestAnimationFrame(step);
 };
 
 // Переход фокуса между заголовками при Tab-навигации (см. onKeyDown у
@@ -1218,6 +1277,46 @@ const handleClearDraft = async () => {
   const stateAfterDropdownVisible =
     Boolean(stateAfterQuery) && stateAfterPhrases.length > 0 && !stateAfterDropdownDismissed;
 
+  // Карточка готового протокола плавно меняет высоту вместе с текстом:
+  // высота задаётся явно (от высоты содержимого, до 42vh) и анимируется
+  // CSS-переходом — раньше она менялась скачком, и быстрые кнопки под ней
+  // резко прыгали вниз. ResizeObserver ловит любое изменение содержимого
+  // (новый текст, перенос строк при смене ширины).
+  const reportCardRef = useRef<HTMLDivElement | null>(null);
+  const reportContentRef = useRef<HTMLDivElement | null>(null);
+  const [reportCard, setReportCard] = useState<{ height: number; capped: boolean } | null>(null);
+  useLayoutEffect(() => {
+    const content = reportContentRef.current;
+    const card = reportCardRef.current;
+    const scroller = content?.parentElement;
+    if (!content || !card || !scroller) return;
+
+    const measure = () => {
+      const px = (v: string) => parseFloat(v) || 0;
+      const sc = getComputedStyle(scroller);
+      const cc = getComputedStyle(card);
+      const natural =
+        content.offsetHeight +
+        px(sc.paddingTop) + px(sc.paddingBottom) +
+        px(cc.paddingTop) + px(cc.paddingBottom) +
+        px(cc.borderTopWidth) + px(cc.borderBottomWidth);
+      const max = window.innerHeight * 0.42;
+      const next = { height: Math.min(natural, max), capped: natural > max };
+      setReportCard(prev =>
+        prev && prev.height === next.height && prev.capped === next.capped ? prev : next
+      );
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [loading]);
+
   // Поле "Примечание" растёт вместе с текстом (от 3 строк до 240px, дальше
   // — прокрутка), и высота меняется плавно (transition на height): новая
   // высота задаётся явно в px от старой в px — из 'auto' CSS-переход не
@@ -1622,7 +1721,12 @@ useEffect(() => {
         inputRefs.current[activeFieldId] ||
         (document.querySelector(`[data-field-id="${activeFieldId}"]`) as HTMLElement | null);
 
-      if (el) {
+      // Пока прокруткой управляет glideHeaderIntoPlace (клик по заголовку
+      // раздела), не вмешиваемся: иначе эффект срабатывал дважды — сразу
+      // при смене collapsedHeaders (ехал к старому, схлопывающемуся полю) и
+      // в конце, при фокусе первого поля нового раздела (центрировал его и
+      // стягивал только что доведённый наверх заголовок обратно вниз).
+      if (el && performance.now() >= manualScrollUntilRef.current) {
         el.scrollIntoView({
           behavior: 'smooth',
           block: 'center',
@@ -1765,6 +1869,59 @@ useEffect(() => {
   return () => window.removeEventListener('keydown', handleGlobalKeyDown);
 }, [template, isComparisonActive, comparisonDates, isStateAfterActive]);
 
+// Плавная прокрутка списка фраз быстрых кнопок: на каждом кадре проходим
+// долю оставшегося пути до цели. Если цель сдвигается во время анимации
+// (следующее нажатие стрелки), цикл не перезапускается — просто догоняет
+// новую цель, поэтому при зажатой стрелке движение остаётся непрерывным.
+const phraseScrollAnimRef = useRef<{ el: HTMLElement; target: number; raf: number } | null>(null);
+
+// Было ли последнее событие mousemove настоящим движением курсора, а не
+// синтетическим (Chrome шлёт mousemove без движения мыши, когда под
+// курсором прокручивается или появляется контент) — см. onMouseMove у ряда
+// быстрых кнопок. Слушатель в фазе захвата на window срабатывает раньше
+// обработчиков React, поэтому флаг всегда актуален для текущего события.
+const lastMousePosRef = useRef<{ x: number; y: number } | null>(null);
+const mouseMoveIsRealRef = useRef(false);
+useEffect(() => {
+  const onMove = (e: MouseEvent) => {
+    const last = lastMousePosRef.current;
+    mouseMoveIsRealRef.current = !!last && (last.x !== e.screenX || last.y !== e.screenY);
+    lastMousePosRef.current = { x: e.screenX, y: e.screenY };
+  };
+  window.addEventListener('mousemove', onMove, true);
+  return () => window.removeEventListener('mousemove', onMove, true);
+}, []);
+
+const smoothScrollPhraseList = (el: HTMLElement, target: number) => {
+  const anim = phraseScrollAnimRef.current;
+  if (anim && anim.el === el) {
+    anim.target = target;
+    return;
+  }
+  if (anim) cancelAnimationFrame(anim.raf);
+  if (Math.abs(el.scrollTop - target) < 1) {
+    phraseScrollAnimRef.current = null;
+    return;
+  }
+
+  const step = () => {
+    const a = phraseScrollAnimRef.current;
+    if (!a) return;
+    const diff = a.target - a.el.scrollTop;
+    if (Math.abs(diff) < 1 || !a.el.isConnected) {
+      if (a.el.isConnected) a.el.scrollTop = a.target;
+      phraseScrollAnimRef.current = null;
+      return;
+    }
+    // Не меньше 1px за кадр: scrollTop округляется, и на последних
+    // пикселях доля пути могла бы округляться в ноль — цикл бы завис.
+    const move = diff * 0.3;
+    a.el.scrollTop += Math.abs(move) < 1 ? Math.sign(diff) : move;
+    a.raf = requestAnimationFrame(step);
+  };
+  phraseScrollAnimRef.current = { el, target, raf: requestAnimationFrame(step) };
+};
+
 // Автоскролл выбранной фразы при навигации стрелками. useLayoutEffect, а
 // не useEffect + requestAnimationFrame: DOM с новой подсветкой уже
 // закоммичен, и прокрутка применяется в том же кадре — без отставания на
@@ -1776,28 +1933,40 @@ useLayoutEffect(() => {
     `[data-path-group="${pathNav.groupIdx}"][data-path-phrase="${pathNav.phraseIdx}"]`
   ) as HTMLElement | null;
   if (!el) return;
-  // Прокручиваем только сам контейнер списка, мгновенно: scrollIntoView
-  // двигал ещё и страницу (список лежит в sticky-панели внизу), а
-  // behavior: 'smooth' при зажатой стрелке каждый раз обрывал предыдущую
-  // анимацию — прокрутка отставала от подсветки и дёргалась.
+  // Прокручиваем только сам контейнер списка: scrollIntoView двигал ещё и
+  // страницу (список лежит в sticky-панели внизу), а behavior: 'smooth' при
+  // зажатой стрелке каждый раз обрывал предыдущую анимацию — прокрутка
+  // отставала от подсветки и дёргалась. Поэтому своя плавная прокрутка
+  // (smoothScrollPhraseList): новое нажатие не перезапускает анимацию, а
+  // лишь сдвигает её цель, и текущее движение просто её догоняет.
   const container = el.closest('.overflow-y-auto') as HTMLElement | null;
   if (!container) return;
+  const maxScroll = container.scrollHeight - container.clientHeight;
   // Крайние фразы — до упора, чтобы был виден и вертикальный padding списка.
   if (!el.closest('li')?.previousElementSibling) {
-    container.scrollTop = 0;
+    smoothScrollPhraseList(container, 0);
     return;
   }
   if (!el.closest('li')?.nextElementSibling) {
-    container.scrollTop = container.scrollHeight;
+    smoothScrollPhraseList(container, maxScroll);
     return;
   }
+  // Считаем от ЦЕЛЕВОЙ прокрутки (если анимация ещё идёт), а не от текущей:
+  // иначе при быстрых нажатиях каждое новое вычисление опиралось бы на
+  // недокрученное положение, и выделенная фраза уезжала бы за край.
+  const anim = phraseScrollAnimRef.current;
+  const base = anim && anim.el === container ? anim.target : container.scrollTop;
   const itemRect = el.getBoundingClientRect();
   const containerRect = container.getBoundingClientRect();
-  if (itemRect.top < containerRect.top) {
-    container.scrollTop -= containerRect.top - itemRect.top;
-  } else if (itemRect.bottom > containerRect.bottom) {
-    container.scrollTop += itemRect.bottom - containerRect.bottom;
+  const itemTop = itemRect.top - containerRect.top + container.scrollTop;
+  const itemBottom = itemTop + itemRect.height;
+  let target = base;
+  if (itemTop < base) {
+    target = itemTop;
+  } else if (itemBottom > base + container.clientHeight) {
+    target = itemBottom - container.clientHeight;
   }
+  smoothScrollPhraseList(container, Math.max(0, Math.min(maxScroll, target)));
 }, [pathNav]);
 
 // Клик вне раскрытой кликом группы кнопок патологий закрывает её —
@@ -2398,9 +2567,16 @@ for (const f of visibleFields) {
 
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white">
+    // [overflow-anchor:none] — браузерная привязка прокрутки (scroll
+    // anchoring) выключена: всю прокрутку при раскрытии/сворачивании
+    // разделов делает наш код (focusFieldElement, scrollIntoView). Иначе при
+    // клике на заголовок раздела ВЫШЕ текущего браузер, удерживая видимый
+    // контент на месте, сам докручивал страницу вниз, пока раздел
+    // раскрывается, а затем scrollIntoView к первому полю вёл её обратно
+    // вверх — "скролл вниз, потом вверх".
+    <div className="min-h-screen bg-zinc-950 text-white [overflow-anchor:none]">
             
-        <div className="sticky top-0 z-50 bg-zinc-950 border-b border-white/10">
+        <div data-filler-topbar className="sticky top-0 z-50 bg-zinc-950 border-b border-white/10">
         <UserHeader>
           {/* Плавно исчезающее уведомление (черновик, копирование и т.п.) */}
           <div
@@ -2847,7 +3023,11 @@ for (const f of visibleFields) {
 
             </div>
 
-                    <div className="card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-h-[42vh] flex flex-col min-h-0 overflow-hidden mb-6 p-1 relative">
+                    <div
+                      ref={reportCardRef}
+                      className="card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-h-[42vh] flex flex-col min-h-0 overflow-hidden mb-6 p-1 relative"
+                      style={reportCard ? { height: reportCard.height, transition: 'height 240ms cubic-bezier(0.22, 1, 0.36, 1)' } : undefined}
+                    >
   
   {/* Градиентная защита от наложения */}
   <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-zinc-900/95 via-zinc-900 to-transparent z-10 pointer-events-none" />
@@ -2916,10 +3096,14 @@ for (const f of visibleFields) {
     </button>
   </div>
 
-  <div className="flex-1 p-8 pt-14 overflow-auto text-zinc-100 text-[14px] leading-relaxed"
-       style={{ lineHeight: '1.65' }}
-       dangerouslySetInnerHTML={{ __html: finalText }} 
-  />
+  {/* Пока карточка не упёрлась в максимум (42vh), прокрутки нет —
+      иначе во время плавного роста на мгновение мелькала бы полоса
+      прокрутки: новый текст уже есть, а высота ещё догоняет. */}
+  <div className="flex-1 min-h-0 p-8 pt-14 text-zinc-100 text-[14px] leading-relaxed"
+       style={{ lineHeight: '1.65', overflowY: reportCard && !reportCard.capped ? 'hidden' : 'auto' }}
+  >
+    <div ref={reportContentRef} dangerouslySetInnerHTML={{ __html: finalText }} />
+  </div>
 </div>
             
           
@@ -2941,9 +3125,17 @@ for (const f of visibleFields) {
       // click-outside эффект на openQuickButtonGroupIdx, а pathNav закрывается
       // явно — по Ctrl+число/Escape/смене активного поля.
       onMouseMove={() => {
-        // Настоящее движение мыши (в отличие от mouseenter/mouseover, оно
-        // никогда не синтезируется браузером без реального движения — см.
-        // комментарий выше) передаёт управление списком от клавиатуры к
+        // Chrome всё же синтезирует mousemove без реального движения мыши —
+        // когда под неподвижным курсором прокручивается контент (как раз
+        // наш список при листании стрелками). Из-за этого, если курсор
+        // стоял над открывшимся списком, первое же пролистывание отбирало
+        // управление у клавиатуры, и подсветка возвращалась туда, где лежал
+        // курсор. У синтетического события координаты курсора те же, что у
+        // предыдущего, — такие события игнорируем.
+        // (Сравнение делает глобальный слушатель в фазе захвата — он видит
+        // и движения курсора до того, как тот оказался над списком.)
+        if (!mouseMoveIsRealRef.current) return;
+        // Настоящее движение мыши передаёт управление списком от клавиатуры к
         // курсору: сама группа остаётся открытой (теперь через
         // openQuickButtonGroupIdx), но подсветка стрелками пропадает и
         // стрелки/Enter перестают работать, пока список не переоткроют

@@ -50,4 +50,4 @@ export interface Template {
 // Форма записи, которую реально возвращает список шаблонов (index.tsx) —
 // запрос там намеренно не включает тяжёлое поле fields (см. getFullList
 // с параметром fields в pages/index.tsx).
-export type TemplateListItem = Pick<Template, 'id' | 'title' | 'user' | 'isPublic' | 'is_favorite' | 'created'>;
+export type TemplateListItem = Pick<Template, 'id' | 'title' | 'user' | 'isPublic' | 'created'>;

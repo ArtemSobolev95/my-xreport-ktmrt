@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import pb from '../../lib/pocketbase';
 pb.autoCancellation(false);
 import {
-  Trash2, ChevronUp, ChevronDown, ChevronRight, Paperclip, ClipboardCheck,
+  Trash2, ChevronRight, Paperclip, ClipboardCheck,
   Heading, Type, Hash, SquareCheck, List, ChartNoAxesColumnIncreasing, Calculator,
   Plus, Minus, ImagePlus, Link, Copy, Circle, CircleDot, ArrowLeft, ArrowRight, Save,
   LayoutList, MousePointerClick, Globe,
@@ -162,6 +162,56 @@ function SortableOption({
         }}
         className={`text-zinc-500 hover:text-red-400 cursor-pointer ml-1 ${ROW_ACTION_CLASS}`}
         aria-label="Удалить вариант"
+      >
+        <Minus className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
+// Одна перетаскиваемая ссылка в инструменте "Заметки" — та же строка, что
+// SortableOption в "Список" (ручка DragDot слева, удаление справа при
+// наведении), вместо прежних шевронов вверх/вниз.
+function SortableNoteLink({
+  id,
+  text,
+  url,
+  onRemove,
+}: {
+  id: string;
+  text: string;
+  url: string;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, transition: SORTABLE_TRANSITION });
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="group/row flex items-center gap-2">
+      <div {...attributes} {...listeners} className="w-4 h-4 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white transition-colors">
+        <DragDot />
+      </div>
+
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="min-w-0 truncate px-1 py-0.5 text-sm text-white hover:text-amber-400 underline underline-offset-2 decoration-white/30 transition-colors"
+      >
+        {text}
+      </a>
+
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className={`shrink-0 text-zinc-500 hover:text-red-400 cursor-pointer ml-1 ${ROW_ACTION_CLASS}`}
+        aria-label="Удалить ссылку"
       >
         <Minus className="w-4 h-4" />
       </button>
@@ -591,18 +641,30 @@ function SortableField({
     onUpdate(field.id, { notes: lines.join('\n') });
   };
 
-  const moveLinkUp = (index: number) => {
-    if (index <= 0) return;
-    const lines = (field.notes || '').split('\n').filter(Boolean);
-    [lines[index], lines[index - 1]] = [lines[index - 1], lines[index]];
-    onUpdate(field.id, { notes: lines.join('\n') });
-  };
+  // Ссылки заметок для drag-and-drop. id строится из самой строки (плюс
+  // номер повтора — одинаковые строки допустимы), а не хранится отдельно,
+  // как optionIds у "Список": ссылки добавляются снаружи (handleAddLink в
+  // TemplateBuilder), и отдельный массив id разъезжался бы с field.notes.
+  // При перестановке id строки не меняется — dnd-kit видит тот же элемент.
+  const noteLines = (field.notes || '').split('\n').filter(Boolean);
+  const noteLinks = (() => {
+    const seen = new Map<string, number>();
+    return noteLines.flatMap((line, index) => {
+      const n = seen.get(line) ?? 0;
+      seen.set(line, n + 1);
+      const match = line.match(/\[(.*?)\]\((.*?)\)/);
+      if (!match) return [];
+      return [{ id: `${n}:${line}`, index, text: match[1], url: match[2] }];
+    });
+  })();
 
-  const moveLinkDown = (index: number) => {
-    const lines = (field.notes || '').split('\n').filter(Boolean);
-    if (index >= lines.length - 1) return;
-    [lines[index], lines[index + 1]] = [lines[index + 1], lines[index]];
-    onUpdate(field.id, { notes: lines.join('\n') });
+  const handleLinkDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const from = noteLinks.find(l => l.id === active.id)?.index;
+    const to = noteLinks.find(l => l.id === over.id)?.index;
+    if (from === undefined || to === undefined) return;
+    onUpdate(field.id, { notes: arrayMove(noteLines, from, to).join('\n') });
   };
 
   return (
@@ -921,48 +983,34 @@ function SortableField({
               </button>
             </div>
 
-            {field.notes && (
-              <div className="space-y-0.5">
-                {field.notes.split('\n').filter(Boolean).map((line, index) => {
-                  const match = line.match(/\[(.*?)\]\((.*?)\)/);
-                  if (!match) return null;
-                  const [, text, url] = match;
-                  return (
-                    <div key={index} className="group/row flex items-center gap-1 py-0.5">
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-white hover:text-amber-400 underline underline-offset-2 decoration-white/30 text-sm flex-1 min-w-0 truncate transition-colors"
-                      >
-                        {text}
-                      </a>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); moveLinkUp(index); }}
-                        className={`text-zinc-500 hover:text-white cursor-pointer ${ROW_ACTION_CLASS}`}
-                        aria-label="Выше"
-                      >
-                        <ChevronUp className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); moveLinkDown(index); }}
-                        className={`text-zinc-500 hover:text-white cursor-pointer ${ROW_ACTION_CLASS}`}
-                        aria-label="Ниже"
-                      >
-                        <ChevronDown className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); deleteLink(index); }}
-                        className={`text-zinc-500 hover:text-red-400 cursor-pointer ml-1 ${ROW_ACTION_CLASS}`}
-                        aria-label="Удалить ссылку"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            {/* Перетаскивание — так же, как варианты в "Список": свой
+                DndContext, ручка DragDot, строки в CollapseRow (плавное
+                появление/удаление), отступы — py внутри строки. */}
+            <DndContext
+              sensors={optionSensors}
+              collisionDetection={closestCenter}
+              modifiers={[restrictToVerticalAxis]}
+              onDragEnd={handleLinkDragEnd}
+            >
+              <SortableContext items={noteLinks.map(l => l.id)} strategy={verticalListSortingStrategy}>
+                <div>
+                  <AnimatePresence initial={false}>
+                    {noteLinks.map(link => (
+                      <CollapseRow key={link.id}>
+                        <div className="py-1">
+                          <SortableNoteLink
+                            id={link.id}
+                            text={link.text}
+                            url={link.url}
+                            onRemove={() => deleteLink(link.index)}
+                          />
+                        </div>
+                      </CollapseRow>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              </SortableContext>
+            </DndContext>
           </div>
         ) : field.type === 'formula' ? (
           <div className="space-y-3">
@@ -1443,21 +1491,30 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
         <div style={{ width: FIELDS_COLUMN_WIDTH }} className="flex items-center justify-between mb-5">
           <button
             onClick={goToList}
-            className="h-8 -ml-2.5 px-2.5 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+            className="h-8 -ml-2.5 px-2.5 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4" />
             Шаблоны
           </button>
           <div className="flex items-center gap-2">
+            {/* Кнопки панели не сжимаются и не переносят текст: раньше при
+                появлении "Не сохранено" панель переставала помещаться в
+                ширину колонки, и "Сохранить копию" переносилась на две
+                строки, прижимаясь к краям кнопки. У чужого шаблона (там
+                кнопка длиннее) метка — только точка с подсказкой: что
+                правки сохранятся копией, и так объясняет плашка ниже. */}
             {isDirty && (
-              <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-500">
+              <span
+                className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-500"
+                title={isOwner ? undefined : 'Не сохранено'}
+              >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                Не сохранено
+                {isOwner && 'Не сохранено'}
               </span>
             )}
             <button
               onClick={goToFiller}
-              className="h-8 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+              className="h-8 px-3 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
             >
               Заполнить
               <ArrowRight className="w-4 h-4" />
@@ -1465,7 +1522,7 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
             <button
               onClick={handleSaveClick}
               disabled={isSaving}
-              className="h-8 px-3.5 inline-flex items-center gap-1.5 rounded-lg text-sm font-medium bg-amber-400 text-zinc-950 hover:bg-amber-300 disabled:opacity-50 transition-colors cursor-pointer"
+              className="h-8 px-3.5 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm font-medium bg-amber-400 text-zinc-950 hover:bg-amber-300 disabled:opacity-50 transition-colors cursor-pointer"
             >
               <Save className="w-4 h-4" />
               {isOwner ? 'Сохранить' : 'Сохранить копию'}

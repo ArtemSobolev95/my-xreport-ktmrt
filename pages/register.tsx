@@ -1,9 +1,9 @@
 'use client';
 import { useState, useRef } from 'react';
-import { useRouter } from 'next/router';
+import Link from 'next/link';
 import HCaptcha from '@hcaptcha/react-hcaptcha';
 import pb from '../lib/pocketbase';
-import { useDialog } from '../components/DialogProvider';
+import AuthLayout, { AuthAlert, AuthButton, AuthField, AuthStatusIcon, authErrorMessage, type AuthMessage } from '../components/AuthLayout';
 
 // Тестовый sitekey hCaptcha (всегда проходит без реального решения) —
 // используется, если явно не задан свой через переменную окружения, чтобы
@@ -12,52 +12,51 @@ const HCAPTCHA_SITE_KEY =
   process.env.NEXT_PUBLIC_HCAPTCHA_SITE_KEY || '10000000-ffff-ffff-ffff-000000000001';
 
 export default function Register() {
-  const router = useRouter();
-  const dialog = useDialog();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
-  const [error, setError] = useState('');
+  const [message, setMessage] = useState<AuthMessage | null>(null);
   const [loading, setLoading] = useState(false);
   const [captchaToken, setCaptchaToken] = useState('');
+  // Адрес, на который ушло письмо, — после успешной регистрации карточка
+  // переключается на "Проверьте почту" (раньше — системное окно и сразу
+  // переход на страницу входа, где письмо легко было не заметить).
+  const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
   const captchaRef = useRef<HCaptcha>(null);
 
-    const handleRegister = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleRegister = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setError('');
+    setMessage(null);
 
-    if (password !== passwordConfirm) {
-      setError('Пароли не совпадают');
+    if (password.length < 8) {
+      setMessage({ tone: 'error', text: 'Пароль должен быть не короче 8 символов.' });
       return;
     }
-
+    if (password !== passwordConfirm) {
+      setMessage({ tone: 'error', text: 'Пароли не совпадают.' });
+      return;
+    }
     if (!captchaToken) {
-      setError('Подтвердите, что вы не робот');
+      setMessage({ tone: 'error', text: 'Подтвердите, что вы не робот.' });
       return;
     }
 
     setLoading(true);
 
     try {
-      // 1. Создаём пользователя (h-captcha-response проверяется хуком на
-      // сервере в pb_hooks/main.pb.js — сам по себе полем коллекции не является)
+      // h-captcha-response проверяется хуком на сервере (pb_hooks/main.pb.js),
+      // полем коллекции он не является.
       await pb.collection('users').create({
         email,
         password,
         passwordConfirm,
         'h-captcha-response': captchaToken,
       });
-
-      // 2. Отправляем письмо для подтверждения
       await pb.collection('users').requestVerification(email);
-
-      await dialog.alert('Регистрация прошла успешно!\n\nНа вашу почту отправлено письмо с ссылкой для подтверждения.\n\nПосле подтверждения вы сможете войти.');
-
-      router.push('/login'); // сразу отправляем на страницу входа
-
-    } catch (err: any) {
-      setError(err?.message || 'Ошибка регистрации. Возможно, такой email уже используется.');
-      // Токен hCaptcha одноразовый — после неудачной попытки нужен новый
+      setRegisteredEmail(email);
+    } catch (err) {
+      setMessage({ tone: 'error', text: authErrorMessage(err, 'register') });
+      // Токен hCaptcha одноразовый — после неудачной попытки нужен новый.
       captchaRef.current?.resetCaptcha();
       setCaptchaToken('');
     } finally {
@@ -65,76 +64,104 @@ export default function Register() {
     }
   };
 
+  const resendVerification = async () => {
+    if (!registeredEmail) return;
+    try {
+      await pb.collection('users').requestVerification(registeredEmail);
+      setMessage({ tone: 'success', text: 'Письмо отправлено ещё раз.' });
+    } catch (err) {
+      setMessage({ tone: 'error', text: authErrorMessage(err, 'register') });
+    }
+  };
+
+  if (registeredEmail) {
+    return (
+      <AuthLayout>
+        <div className="text-center">
+          <AuthStatusIcon tone="mail" />
+          <h1 className="text-xl font-semibold tracking-tight">Проверьте почту</h1>
+          <p className="mt-1 mb-6 text-sm text-zinc-400 leading-relaxed">
+            Мы отправили ссылку для подтверждения на{' '}
+            <span className="text-white">{registeredEmail}</span>. Перейдите по ней, затем войдите.
+          </p>
+        </div>
+        <AuthAlert message={message} />
+        <div className="space-y-2">
+          <Link
+            href="/login"
+            className="w-full h-10 inline-flex items-center justify-center rounded-lg text-sm font-medium bg-amber-400 text-zinc-950 hover:bg-amber-300 transition-colors"
+          >
+            Перейти ко входу
+          </Link>
+          <AuthButton type="button" variant="secondary" onClick={resendVerification}>
+            Отправить письмо ещё раз
+          </AuthButton>
+        </div>
+      </AuthLayout>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-white px-4">
-      <div className="max-w-md w-full bg-zinc-900 p-8 rounded-3xl shadow-2xl">
-        <h1 className="text-3xl font-bold text-center mb-8">Регистрация</h1>
-        
-        <form onSubmit={handleRegister} className="space-y-6">
-          <div>
-            <label className="block text-sm mb-2 text-zinc-400">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 focus:border-amber-400 outline-none text-white"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm mb-2 text-zinc-400">Пароль (минимум 8 символов)</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 focus:border-amber-400 outline-none text-white"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm mb-2 text-zinc-400">Повторите пароль</label>
-            <input
-              type="password"
-              value={passwordConfirm}
-              onChange={(e) => setPasswordConfirm(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 focus:border-amber-400 outline-none text-white"
-              required
-            />
-          </div>
-
-          <div className="flex justify-center">
-            <HCaptcha
-              ref={captchaRef}
-              sitekey={HCAPTCHA_SITE_KEY}
-              onVerify={(token) => setCaptchaToken(token)}
-              onExpire={() => setCaptchaToken('')}
-              theme="dark"
-            />
-          </div>
-
-          {error && <p className="text-red-400 text-center text-sm">{error}</p>}
-
-          <button
-            type="submit"
-            disabled={loading || !captchaToken}
-            className="w-full py-4 bg-amber-400 hover:bg-amber-500 text-black font-semibold rounded-2xl transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-          >
-            {loading ? 'Регистрация...' : 'Зарегистрироваться'}
-          </button>
-        </form>
-
-        <p className="text-center mt-6 text-zinc-400">
+    <AuthLayout
+      title="Регистрация"
+      subtitle="Создайте новый аккаунт"
+      footer={
+        <>
           Уже есть аккаунт?{' '}
-          <button 
-            onClick={() => router.push('/login')} 
-            className="text-white hover:underline hover:text-amber-400 font-medium transition-all cursor-pointer"
-          >
+          <Link href="/login" className="font-medium text-white hover:text-amber-400 transition-colors">
             Войти
-          </button>
-        </p>
-      </div>
-    </div>
+          </Link>
+        </>
+      }
+    >
+      <AuthAlert message={message} />
+
+      <form onSubmit={handleRegister} className="space-y-4">
+        <AuthField
+          label="Email"
+          type="email"
+          autoComplete="email"
+          autoFocus
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+        <AuthField
+          label="Пароль"
+          hint="минимум 8 символов"
+          type="password"
+          autoComplete="new-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+        <AuthField
+          label="Повторите пароль"
+          type="password"
+          autoComplete="new-password"
+          value={passwordConfirm}
+          onChange={(e) => setPasswordConfirm(e.target.value)}
+          required
+        />
+
+        {/* Место под виджет зарезервировано заранее (его высота — 78px):
+            он подгружается с задержкой, и без этого карточка вытягивалась
+            уже после отрисовки — кнопка "прыгала" вниз. */}
+        <div className="flex justify-center min-h-[78px]">
+          <HCaptcha
+            ref={captchaRef}
+            sitekey={HCAPTCHA_SITE_KEY}
+            onVerify={(token) => setCaptchaToken(token)}
+            onExpire={() => setCaptchaToken('')}
+            theme="dark"
+            languageOverride="ru"
+          />
+        </div>
+
+        <AuthButton type="submit" loading={loading} disabled={!captchaToken}>
+          {loading ? 'Регистрация…' : 'Зарегистрироваться'}
+        </AuthButton>
+      </form>
+    </AuthLayout>
   );
 }

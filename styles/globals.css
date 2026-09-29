@@ -75,6 +75,25 @@ textarea:focus {
   appearance: none;
 }
 
+/* Автозаполнение Chrome/Safari (сохранённые email и пароль на страницах
+   входа) заливает поле своим светло-голубым фоном и тёмным текстом поверх
+   нашего — в тёмной теме это белые "дыры" в форме. Фон автозаполнения
+   нельзя перекрасить через background-color, только перекрыть внутренней
+   тенью; цвет #232326 — это bg-white/5 поверх карточки zinc-900. Для
+   фокуса с клавиатуры янтарное кольцо (правило выше) добавляется к этой же
+   тени — иначе оно бы её заменило, и голубой фон вернулся. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #fff;
+  caret-color: #fff;
+  -webkit-box-shadow: 0 0 0 1000px #232326 inset;
+  box-shadow: 0 0 0 1000px #232326 inset;
+}
+html:not(.js-focus-mouse) input:-webkit-autofill:focus-visible {
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.55) inset, 0 0 0 1000px #232326 inset !important;
+}
+
 /* Firefox отдельно рисует пунктирную рамку внутри button/input[type=button]
    при фокусе (через ::-moz-focus-inner) — она не outline и не box-shadow,
    поэтому тоже не перекрывается правилом выше и остаётся видна поверх

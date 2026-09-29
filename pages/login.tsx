@@ -1,124 +1,118 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
+import Link from 'next/link';
 import pb from '../lib/pocketbase';
-import { useDialog } from '../components/DialogProvider';
+import AuthLayout, { AuthAlert, AuthButton, AuthField, authErrorMessage, type AuthMessage } from '../components/AuthLayout';
 
 export default function Login() {
   const router = useRouter();
-  const dialog = useDialog();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [message, setMessage] = useState<AuthMessage | null>(null);
   const [loading, setLoading] = useState(false);
 
-        const { token: queryToken } = router.query;
+  const { token: queryToken } = router.query;
 
-  // Автоматическое подтверждение email при переходе по ссылке из письма
+  // Подтверждение email по ссылке из письма с ?token=... — вторая точка
+  // входа наряду с pages/verify.tsx (там #token=...); обе вызывают
+  // confirmVerification, держать их поведение одинаковым. Результат —
+  // сообщением в карточке, а не системным окном.
   useEffect(() => {
-    // Более надёжный способ получения токена
     let token = queryToken as string | undefined;
-
     if (!token && typeof window !== 'undefined') {
-      const urlParams = new URLSearchParams(window.location.search);
-      token = urlParams.get('token') || undefined;
+      token = new URLSearchParams(window.location.search).get('token') || undefined;
     }
-
-    console.log('🔍 [Login] useEffect → isReady:', router.isReady, 'token:', token ? token.substring(0, 30) + '...' : 'undefined');
-
-    if (!router.isReady || !token || typeof token !== 'string') {
-      return;
-    }
+    if (!router.isReady || !token || typeof token !== 'string') return;
 
     const confirmEmail = async () => {
       try {
-        console.log('🚀 Выполняем confirmVerification...');
         await pb.collection('users').confirmVerification(token);
-        console.log('Email успешно подтверждён');
-        await dialog.alert('Email успешно подтверждён! Теперь вы можете войти в аккаунт.');
-      } catch (err: any) {
-        console.error('Ошибка confirmVerification:', err);
-        await dialog.alert('Не удалось подтвердить email. Попробуйте войти вручную.');
+        setMessage({ tone: 'success', text: 'Email подтверждён. Теперь можно войти.' });
+      } catch (err) {
+        setMessage({ tone: 'error', text: authErrorMessage(err, 'verify') });
       }
     };
-
     confirmEmail();
-  }, [router.isReady, queryToken, dialog]);
+  }, [router.isReady, queryToken]);
 
-  
+  const resendVerification = async () => {
+    try {
+      await pb.collection('users').requestVerification(email);
+      setMessage({ tone: 'success', text: `Письмо отправлено на ${email}. Перейдите по ссылке из него, затем войдите.` });
+    } catch (err) {
+      setMessage({ tone: 'error', text: authErrorMessage(err, 'login') });
+    }
+  };
 
-    const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setError('');
+    setMessage(null);
     setLoading(true);
 
     try {
       await pb.collection('users').authWithPassword(email, password);
 
-      // ← НОВАЯ ПРОВЕРКА
+      // Без подтверждённого email не пускаем: выкидываем из сессии и
+      // предлагаем отправить письмо ещё раз (раньше — только текст, и если
+      // письмо потерялось, выхода не было).
       if (!pb.authStore.record?.verified) {
-        pb.authStore.clear(); // выкидываем из сессии
-        setError('Пожалуйста, подтвердите email по ссылке из письма перед входом.');
+        pb.authStore.clear();
+        setMessage({
+          tone: 'error',
+          text: 'Email ещё не подтверждён. Перейдите по ссылке из письма, которое пришло после регистрации.',
+          action: { label: 'Отправить письмо ещё раз', onClick: resendVerification },
+        });
         return;
       }
 
-      router.push('/'); // только если email подтверждён
-    } catch (err: any) {
-      setError(err?.message || 'Неверный email или пароль');
+      router.push('/');
+    } catch (err) {
+      setMessage({ tone: 'error', text: authErrorMessage(err, 'login') });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-white px-4">
-      <div className="max-w-md w-full bg-zinc-900 p-8 rounded-3xl shadow-2xl">
-        <h1 className="text-3xl font-bold text-center mb-8">Вход в аккаунт</h1>
-        
-        <form onSubmit={handleLogin} className="space-y-6">
-          <div>
-            <label className="block text-sm mb-2 text-zinc-400">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 focus:border-amber-400 outline-none text-white"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm mb-2 text-zinc-400">Пароль</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-5 py-4 focus:border-amber-400 outline-none text-white"
-              required
-            />
-          </div>
-
-          {error && <p className="text-red-400 text-center text-sm">{error}</p>}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-4 bg-amber-400 hover:bg-amber-500 text-black font-semibold rounded-2xl transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-          >
-            {loading ? 'Вход...' : 'Войти'}
-          </button>
-        </form>
-
-        <p className="text-center mt-6 text-zinc-400">
+    <AuthLayout
+      title="Вход"
+      subtitle="Войдите в свой аккаунт"
+      footer={
+        <>
           Нет аккаунта?{' '}
-          <button 
-            onClick={() => router.push('/register')} 
-            className="text-white hover:underline hover:text-amber-400 font-medium transition-all cursor-pointer"
-          >
+          <Link href="/register" className="font-medium text-white hover:text-amber-400 transition-colors">
             Зарегистрироваться
-          </button>
-        </p>
-      </div>
-    </div>
+          </Link>
+        </>
+      }
+    >
+      <AuthAlert message={message} />
+
+      <form onSubmit={handleLogin} className="space-y-4">
+        <AuthField
+          label="Email"
+          type="email"
+          autoComplete="email"
+          autoFocus
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+        <AuthField
+          label="Пароль"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+        <div className="pt-2">
+          <AuthButton type="submit" loading={loading}>
+            {loading ? 'Вход…' : 'Войти'}
+          </AuthButton>
+        </div>
+      </form>
+    </AuthLayout>
   );
 }

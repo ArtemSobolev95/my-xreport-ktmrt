@@ -1,10 +1,10 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../../lib/pocketbase';
 pb.autoCancellation(false);
 import {
-  Trash2, ChevronRight, Paperclip, ClipboardCheck,
+  Trash2, ChevronRight, ClipboardCheck,
   Heading, Type, Hash, SquareCheck, List, ChartNoAxesColumnIncreasing, Calculator,
   Plus, Minus, ImagePlus, Link, Copy, Circle, CircleDot, ArrowLeft, ArrowRight, Save,
   LayoutList, MousePointerClick, Globe,
@@ -79,7 +79,6 @@ const availableFields = [
   { type: 'checkbox' as FieldType, label: 'Чекбокс', icon: <SquareCheck className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
   { type: 'select' as FieldType, label: 'Список', icon: <List className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
   { type: 'rating' as FieldType, label: 'Шкала', icon: <ChartNoAxesColumnIncreasing className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
-  { type: 'notes' as FieldType, label: 'Заметки', icon: <Paperclip className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
   { type: 'formula' as FieldType, label: 'Формула', icon: <Calculator className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
   { type: 'conclusion' as FieldType, label: 'Заключение', icon: <ClipboardCheck className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
 ];
@@ -219,6 +218,115 @@ function SortableNoteLink({
   );
 }
 
+
+// Заметки шаблона — ссылки и изображения, общие для всего шаблона (на
+// странице заполнения они открываются одним окном по кнопке "Заметки").
+// Раньше это был отдельный тип поля в центральной колонке, хотя его
+// положение среди полей ничего не значило; теперь — постоянный блок внизу
+// правой панели. Формат хранения прежний: строки "[текст](url)".
+function NotesPanel({
+  notes,
+  onChange,
+  onAddLink,
+  onAddImage,
+}: {
+  notes: string;
+  onChange: (notes: string) => void;
+  onAddLink: () => void;
+  onAddImage: () => void;
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  // id для drag-and-drop строится из самой строки (плюс номер повтора —
+  // одинаковые строки допустимы), а не хранится отдельно: ссылки
+  // добавляются снаружи (окно "Добавить ссылку" в TemplateBuilder), и
+  // отдельный массив id разъезжался бы с notes. При перестановке id строки
+  // не меняется — dnd-kit видит тот же элемент.
+  const lines = notes.split('\n').filter(Boolean);
+  const links = (() => {
+    const seen = new Map<string, number>();
+    return lines.flatMap((line, index) => {
+      const n = seen.get(line) ?? 0;
+      seen.set(line, n + 1);
+      const match = line.match(/\[(.*?)\]\((.*?)\)/);
+      if (!match) return [];
+      return [{ id: `${n}:${line}`, index, text: match[1], url: match[2] }];
+    });
+  })();
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const from = links.find(l => l.id === active.id)?.index;
+    const to = links.find(l => l.id === over.id)?.index;
+    if (from === undefined || to === undefined) return;
+    onChange(arrayMove(lines, from, to).join('\n'));
+  };
+
+  const removeLine = (index: number) => {
+    onChange(lines.filter((_, i) => i !== index).join('\n'));
+  };
+
+  return (
+    <div className="shrink-0 max-h-[45%] flex flex-col border-t border-white/10">
+      <div className="px-6 pt-4 pb-3 flex items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="font-semibold tracking-tight">Заметки</h3>
+          <p className="text-xs text-zinc-500">Общие для шаблона — при заполнении откроются по кнопке «Заметки»</p>
+        </div>
+        <button onClick={onAddLink} className={`shrink-0 ${NOTES_ACTION_CLASS}`}>
+          <Link className="w-3.5 h-3.5" />
+          Ссылка
+        </button>
+        <button onClick={onAddImage} className={`shrink-0 ${NOTES_ACTION_CLASS}`}>
+          <ImagePlus className="w-3.5 h-3.5" />
+          Изображение
+        </button>
+      </div>
+
+      {/* Перетаскивание — так же, как варианты в "Список": ручка DragDot,
+          строки в CollapseRow (плавное появление/удаление), отступы — py
+          внутри строки. Своя прокрутка: список может быть длинным, а блок
+          ограничен по высоте, чтобы не вытеснять быстрые кнопки. */}
+      <div className="min-h-0 overflow-auto px-6 pb-4 [scrollbar-gutter:stable]">
+        {/* Список в разметке всегда, а подсказка — отдельно: иначе при
+            удалении последней ссылки список размонтировался бы вместе с
+            ней, и она пропадала без анимации. */}
+        {links.length === 0 && (
+          <p className="py-1 text-sm text-zinc-500">Ссылок и изображений пока нет.</p>
+        )}
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            modifiers={[restrictToVerticalAxis]}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={links.map(l => l.id)} strategy={verticalListSortingStrategy}>
+              <div>
+                <AnimatePresence initial={false}>
+                  {links.map(link => (
+                    <CollapseRow key={link.id}>
+                      <div className="py-1">
+                        <SortableNoteLink
+                          id={link.id}
+                          text={link.text}
+                          url={link.url}
+                          onRemove={() => removeLine(link.index)}
+                        />
+                      </div>
+                    </CollapseRow>
+                  ))}
+                </AnimatePresence>
+              </div>
+            </SortableContext>
+          </DndContext>
+      </div>
+    </div>
+  );
+}
 
 // Пустое состояние: иконка в плашке, заголовок и короткая подсказка,
 // что делать дальше — вместо одной строки серого текста.
@@ -454,18 +562,6 @@ function SortableField({
   onRemove,
   onUpdate,
   onDuplicate,
-  // Пропсы ниже используются ТОЛЬКО в блоке notes
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  showAddLinkModal,
-  setShowAddLinkModal,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  tempLinkText,
-  setTempLinkText,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  tempLinkUrl,
-  setTempLinkUrl,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  handleAddLink
 }: {
   field: BuilderField;
   isSelected: boolean;
@@ -474,13 +570,6 @@ function SortableField({
   onRemove: (id: string) => void;
   onUpdate: (id: string, updates: Partial<BuilderField>) => void;
   onDuplicate: (id: string) => void; 
-  showAddLinkModal: boolean;
-  setShowAddLinkModal: (open: boolean) => void;
-  tempLinkText: string;
-  setTempLinkText: (text: string) => void;
-  tempLinkUrl: string;
-  setTempLinkUrl: (url: string) => void;
-  handleAddLink: (fieldId: string) => void;
 }) {
   // Перетаскивается сама карточка (без DragOverlay-копии) — как группы
   // быстрых кнопок. animateLayoutChanges по умолчанию у dnd-kit срабатывает
@@ -501,7 +590,6 @@ function SortableField({
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
-  const dialog = useDialog();
 
   // Стабильные id вариантов "Список" для drag-and-drop — только для
   // useSortable, наружу (в БД/шаблон) не идут. field.options — обычный
@@ -606,66 +694,6 @@ function SortableField({
 
   
 
-  const handleAddImage = async () => {
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'image/*';
-  input.onchange = async (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('user', pb.authStore.record?.id || '');
-
-    try {
-      const record = await pb.collection('notes_images').create(formData);
-
-     
-      const publicUrl = pb.files.getURL(record, record.file);
-
-      setTempLinkText('Изображение');
-      setTempLinkUrl(publicUrl);
-      setShowAddLinkModal(true);
-    } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        dialog.alert('Ошибка загрузки изображения: ' + errorMessage);
-    }
-  };
-  input.click();
-};
-
-  const deleteLink = (index: number) => {
-    const lines = (field.notes || '').split('\n').filter(Boolean);
-    lines.splice(index, 1);
-    onUpdate(field.id, { notes: lines.join('\n') });
-  };
-
-  // Ссылки заметок для drag-and-drop. id строится из самой строки (плюс
-  // номер повтора — одинаковые строки допустимы), а не хранится отдельно,
-  // как optionIds у "Список": ссылки добавляются снаружи (handleAddLink в
-  // TemplateBuilder), и отдельный массив id разъезжался бы с field.notes.
-  // При перестановке id строки не меняется — dnd-kit видит тот же элемент.
-  const noteLines = (field.notes || '').split('\n').filter(Boolean);
-  const noteLinks = (() => {
-    const seen = new Map<string, number>();
-    return noteLines.flatMap((line, index) => {
-      const n = seen.get(line) ?? 0;
-      seen.set(line, n + 1);
-      const match = line.match(/\[(.*?)\]\((.*?)\)/);
-      if (!match) return [];
-      return [{ id: `${n}:${line}`, index, text: match[1], url: match[2] }];
-    });
-  })();
-
-  const handleLinkDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const from = noteLinks.find(l => l.id === active.id)?.index;
-    const to = noteLinks.find(l => l.id === over.id)?.index;
-    if (from === undefined || to === undefined) return;
-    onUpdate(field.id, { notes: arrayMove(noteLines, from, to).join('\n') });
-  };
 
   return (
     // Раньше исчезновение карточки и сдвиг соседей были двумя отдельными
@@ -765,14 +793,6 @@ function SortableField({
               style={{ width: `${Math.max((field.label || 'Название поля').length + 2, 10)}ch` }}
               className="max-w-full text-center bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-colors"
             />
-          </div>
-        )}
-        {field.type === 'notes' && (
-          <div className="flex justify-center mb-1">
-            <div className="flex items-center gap-1.5 bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white">
-              <Paperclip className="w-3.5 h-3.5" />
-              Заметки
-            </div>
           </div>
         )}
 
@@ -956,62 +976,6 @@ function SortableField({
     )}
     </AnimatePresence>
   </div>
-        ) : field.type === 'notes' ? (
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelect(field.id);           // ← важно!
-                  setShowAddLinkModal(true);
-                }}
-                className={NOTES_ACTION_CLASS}
-              >
-                <Link className="w-3.5 h-3.5" />
-                Ссылка
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelect(field.id);           // ← важно!
-                  handleAddImage();
-                }}
-                className={NOTES_ACTION_CLASS}
-              >
-                <ImagePlus className="w-3.5 h-3.5" />
-                Изображение
-              </button>
-            </div>
-
-            {/* Перетаскивание — так же, как варианты в "Список": свой
-                DndContext, ручка DragDot, строки в CollapseRow (плавное
-                появление/удаление), отступы — py внутри строки. */}
-            <DndContext
-              sensors={optionSensors}
-              collisionDetection={closestCenter}
-              modifiers={[restrictToVerticalAxis]}
-              onDragEnd={handleLinkDragEnd}
-            >
-              <SortableContext items={noteLinks.map(l => l.id)} strategy={verticalListSortingStrategy}>
-                <div>
-                  <AnimatePresence initial={false}>
-                    {noteLinks.map(link => (
-                      <CollapseRow key={link.id}>
-                        <div className="py-1">
-                          <SortableNoteLink
-                            id={link.id}
-                            text={link.text}
-                            url={link.url}
-                            onRemove={() => deleteLink(link.index)}
-                          />
-                        </div>
-                      </CollapseRow>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </SortableContext>
-            </DndContext>
-          </div>
         ) : field.type === 'formula' ? (
           <div className="space-y-3">
             <input type="text" value={field.formula || ''} onChange={e => onUpdate(field.id, { formula: e.target.value })} className="w-full bg-transparent rounded-md border-0 px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-sm" />
@@ -1129,10 +1093,20 @@ function TemplateBuilder() {
 
   // Снимок последнего загруженного/сохранённого состояния — для метки
   // "Не сохранено" рядом с кнопкой "Сохранить".
-  const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify({ title: 'Новый шаблон', fields: [], isPublic: false }));
+  const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify({ title: 'Новый шаблон', fields: [], isPublic: false, notes: '' }));
+
+  // Заметки шаблона (строки "[текст](url)"), см. NotesPanel. В БД по-прежнему
+  // хранятся полем type: 'notes' в fields — страница заполнения собирает
+  // ссылки из таких полей и сама их не рендерит, поэтому ей и старым
+  // шаблонам ничего менять не нужно. Здесь это поле из списка полей
+  // вынимается при загрузке (splitNotes) и добавляется обратно при
+  // сохранении (withNotesField). id сохраняется, чтобы не пересоздавать его.
+  const [templateNotes, setTemplateNotes] = useState('');
+  const notesFieldIdRef = useRef<string | null>(null);
+
   const isDirty = useMemo(
-    () => JSON.stringify({ title: templateTitle, fields, isPublic }) !== savedSnapshot,
-    [templateTitle, fields, isPublic, savedSnapshot]
+    () => JSON.stringify({ title: templateTitle, fields, isPublic, notes: templateNotes }) !== savedSnapshot,
+    [templateTitle, fields, isPublic, templateNotes, savedSnapshot]
   );
 
   const updateQuickButtons = (
@@ -1198,17 +1172,59 @@ function TemplateBuilder() {
   const [tempLinkText, setTempLinkText] = useState('');
   const [tempLinkUrl, setTempLinkUrl] = useState('');
 
-  const handleAddLink = (fieldId: string) => {
+  // Заметки шаблона — обратно одним полем type: 'notes' в конце списка
+  // полей (порядок для страницы заполнения значения не имеет). Без
+  // заметок поле не добавляется вовсе.
+  const withNotesField = (list: BuilderField[]): BuilderField[] => {
+    const notes = templateNotes.split('\n').filter(Boolean).join('\n');
+    if (!notes) return list;
+    if (!notesFieldIdRef.current) notesFieldIdRef.current = crypto.randomUUID();
+    return [...list, { id: notesFieldIdRef.current, type: 'notes', label: 'Заметки', notes }];
+  };
+
+  const handleAddLink = () => {
     if (!tempLinkUrl) {
       setShowAddLinkModal(false);
       return;
     }
-    const current = fields.find(f => f.id === fieldId)?.notes || '';
     const link = `[${tempLinkText || tempLinkUrl}](${tempLinkUrl})`;
-    updateField(fieldId, { notes: current ? current + '\n' + link : link });
+    setTemplateNotes(current => (current ? current + '\n' + link : link));
     setTempLinkText('');
     setTempLinkUrl('');
     setShowAddLinkModal(false);
+  };
+
+  const openAddLinkModal = () => {
+    setTempLinkText('');
+    setTempLinkUrl('');
+    setShowAddLinkModal(true);
+  };
+
+  // Изображение загружается в notes_images, а в заметки попадает ссылкой
+  // на файл — через то же окно "Добавить ссылку" (можно поменять подпись).
+  const handleAddImage = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('user', pb.authStore.record?.id || '');
+
+      try {
+        const record = await pb.collection('notes_images').create(formData);
+        setTempLinkText('Изображение');
+        setTempLinkUrl(pb.files.getURL(record, record.file));
+        setShowAddLinkModal(true);
+      } catch (err: unknown) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        dialog.alert('Ошибка загрузки изображения: ' + errorMessage);
+      }
+    };
+    input.click();
   };
 
   // Пока идёт перетаскивание поля (и в рендере drop) layout-анимация
@@ -1235,14 +1251,24 @@ const migratedFields = (record.fields || []).map((f: BuilderField) => ({
   quickButtons: migrateQuickButtons(f.quickButtons),
 }));
 
-setFields(migratedFields);
+// Поля "Заметки" (их могло быть несколько — раньше это был обычный
+// инструмент) вынимаем из списка полей и сливаем в заметки шаблона.
+const notesFields = migratedFields.filter((f: BuilderField) => f.type === 'notes');
+const regularFields = migratedFields.filter((f: BuilderField) => f.type !== 'notes');
+const loadedNotes = notesFields
+  .flatMap((f: BuilderField) => (f.notes || '').split('\n').filter(Boolean))
+  .join('\n');
+notesFieldIdRef.current = notesFields[0]?.id ?? null;
+
+setFields(regularFields);
+setTemplateNotes(loadedNotes);
 setFieldsLoadKey(k => k + 1);
 // Флаг публичности — только у своего шаблона: копия чужого публичного
 // сохраняется личной.
 const loadedIsPublic = record.user === user?.id ? !!record.isPublic : false;
 setOwnerId(record.user || null);
 setIsPublic(loadedIsPublic);
-setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шаблон", fields: migratedFields, isPublic: loadedIsPublic }));
+setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шаблон", fields: regularFields, isPublic: loadedIsPublic, notes: loadedNotes }));
       } catch (err) {
         console.error("Ошибка загрузки шаблона в Builder:", err);
       }
@@ -1262,7 +1288,9 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
       // карточки со сдвигом" и ломало анимацию именно того поля.
       id: crypto.randomUUID(),
       type,
-      label: '',
+      // У "Заключения" название почти всегда одно и то же — сразу
+      // подставляем его, остальные поля начинают с пустого названия.
+      label: type === 'conclusion' ? 'Заключение' : '',
       defaultValue: type === 'checkbox' ? false : type === 'rating' ? 0 : '',
       placeholder: '',
       required: false,
@@ -1273,7 +1301,6 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
       uncheckedPhrase: type === 'checkbox' ? 'Нет' : undefined,
       explanations: type === 'rating' ? Array(5).fill('') : undefined,
       showExplanations: false,
-      notes: type === 'notes' ? '' : undefined,
       formula: type === 'formula' ? 'a + b' : undefined,
       variables: type === 'formula' ? [{ name: 'a', value: '0' }, { name: 'b', value: '0' }] : undefined,
       
@@ -1409,7 +1436,7 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
 
       const payload = {
         title,
-        fields: JSON.parse(JSON.stringify(fields)),
+        fields: JSON.parse(JSON.stringify(withNotesField(fields))),
         user: user?.id,
         // Раньше здесь было жёстко isPublic: false — любое сохранение
         // молча снимало шаблон с публикации.
@@ -1426,7 +1453,7 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
         }
         setTemplateTitle(title);
         setIsPublic(willBePublic);
-        setSavedSnapshot(JSON.stringify({ title, fields, isPublic: willBePublic }));
+        setSavedSnapshot(JSON.stringify({ title, fields, isPublic: willBePublic, notes: templateNotes }));
         router.push('/');
       } catch (err: unknown) {
      console.error("Ошибка сохранения шаблона:", err);
@@ -1555,7 +1582,10 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
                 onClick={() => setIsPublic(v => !v)}
                 aria-pressed={isPublic}
                 aria-label={isPublic ? 'Публичный шаблон' : 'Личный шаблон'}
-                className={`tooltip tooltip-bottom w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                // tooltip-left, не bottom: кнопка стоит у правого края
+                // центральной колонки (overflow-auto), и подсказка снизу
+                // обрезалась её краем, уходя под правую панель.
+                className={`tooltip tooltip-left w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer ${
                   isPublic
                     ? 'text-amber-400 bg-amber-400/10 hover:bg-amber-400/15'
                     : 'text-zinc-400 hover:text-white hover:bg-white/5'
@@ -1608,13 +1638,6 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
     onRemove={removeField}
     onUpdate={updateField}
     onDuplicate={duplicateField}
-    showAddLinkModal={showAddLinkModal}
-    setShowAddLinkModal={setShowAddLinkModal}
-    tempLinkText={tempLinkText}
-    setTempLinkText={setTempLinkText}
-    tempLinkUrl={tempLinkUrl}
-    setTempLinkUrl={setTempLinkUrl}
-    handleAddLink={handleAddLink}
   />
                 ))}
               </AnimatePresence>
@@ -1714,6 +1737,15 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
     />
   </div>
 )}
+        {/* Заметки шаблона — всегда внизу правой панели, независимо от
+            выбранного поля; быстрые кнопки над ними занимают остальное
+            место (flex-1) и прокручиваются отдельно. */}
+        <NotesPanel
+          notes={templateNotes}
+          onChange={setTemplateNotes}
+          onAddLink={openAddLinkModal}
+          onAddImage={handleAddImage}
+        />
       </div>
       </div>
 
@@ -1758,7 +1790,7 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
         open={showAddLinkModal}
         onClose={() => setShowAddLinkModal(false)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') handleAddLink(selectedFieldId!);
+          if (e.key === 'Enter') handleAddLink();
           if (e.key === 'Escape') setShowAddLinkModal(false);
         }}
       >
@@ -1788,7 +1820,7 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
         </ModalBody>
         <ModalFooter>
           <ModalButton onClick={() => setShowAddLinkModal(false)}>Отмена</ModalButton>
-          <ModalButton variant="primary" onClick={() => handleAddLink(selectedFieldId!)} disabled={!tempLinkUrl.trim()}>
+          <ModalButton variant="primary" onClick={() => handleAddLink()} disabled={!tempLinkUrl.trim()}>
             Добавить
           </ModalButton>
         </ModalFooter>

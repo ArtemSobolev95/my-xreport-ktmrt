@@ -3099,8 +3099,8 @@ for (const f of visibleFields) {
   {/* Пока карточка не упёрлась в максимум (42vh), прокрутки нет —
       иначе во время плавного роста на мгновение мелькала бы полоса
       прокрутки: новый текст уже есть, а высота ещё догоняет. */}
-  <div className="flex-1 min-h-0 p-8 pt-14 text-zinc-100 text-[14px] leading-relaxed"
-       style={{ lineHeight: '1.65', overflowY: reportCard && !reportCard.capped ? 'hidden' : 'auto' }}
+  <div className="flex-1 min-h-0 px-7 pb-6 pt-14 text-zinc-100 text-[13px]"
+       style={{ lineHeight: '1.5', overflowY: reportCard && !reportCard.capped ? 'hidden' : 'auto' }}
   >
     <div ref={reportContentRef} dangerouslySetInnerHTML={{ __html: finalText }} />
   </div>

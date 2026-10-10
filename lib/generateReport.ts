@@ -20,6 +20,12 @@ const isFieldEmpty = (field: BuilderField, value: unknown): boolean => {
   return false;
 };
 
+// Каждая строка протокола — отдельный блок: в превью пары «Поле: значение»
+// идут столбиком, а не сливаются в один абзац. pre-line сохраняет переносы
+// внутри многострочных значений (например, «Заключение»).
+const row = (html: string): string =>
+  `<div class="mb-1.5 last:mb-0 whitespace-pre-line">${html}</div>`;
+
 export interface GenerateReportParams {
   template: Template | null;
   // Значения полей разнотипны по природе (текст/число/bool) в зависимости
@@ -53,11 +59,11 @@ export function generateReport({
       ? 'с предыдущим от'
       : 'с предыдущими от';
 
-    htmlText += `<span class="text-amber-400">Описание исследования в сравнении ${escapeHtml(label)} ${escapeHtml(datesStr)}:</span>\n\n`;
+    htmlText += row(`<span class="text-amber-400">Описание исследования в сравнении ${escapeHtml(label)} ${escapeHtml(datesStr)}:</span>`);
     plainText += `Описание исследования в сравнении ${label} ${datesStr}:\n\n`;
   }
   if (isStateAfterActive && stateAfterText) {
-    htmlText += `<span class="text-amber-400">${escapeHtml(stateAfterText)}</span>\n\n`;
+    htmlText += row(`<span class="text-amber-400">${escapeHtml(stateAfterText)}</span>`);
     plainText += `${stateAfterText}\n\n`;
   }
 
@@ -106,32 +112,32 @@ export function generateReport({
           : displayHtml;
       }
 
-      htmlText += `${label}: ${finalHtml}\n\n`;
+      htmlText += row(`${label}: ${finalHtml}`);
       plainText += `${f.label}: ${textValue}\n\n`;
     }
 
     else if (f.type === 'checkbox') {
       const isChecked = fieldsData[f.id] === true;
       const checkboxText = isChecked ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет');
-      htmlText += `${label}: <span class="text-amber-400">${escapeHtml(checkboxText)}</span>\n\n`;
+      htmlText += row(`${label}: <span class="text-amber-400">${escapeHtml(checkboxText)}</span>`);
       plainText += `${f.label}: ${checkboxText}\n\n`;
     }
     else if (f.type === 'number') {
       if (!val) return;
       const unitHtml = f.unit ? ` <span class="text-amber-400">${escapeHtml(f.unit)}</span>.` : '.';
       const unitPlain = f.unit ? ` ${f.unit}.` : '.';
-      htmlText += `${label}: <span class="text-amber-400">${escapeHtml(val)}</span>${unitHtml}\n\n`;
+      htmlText += row(`${label}: <span class="text-amber-400">${escapeHtml(val)}</span>${unitHtml}`);
       plainText += `${f.label}: ${val}${unitPlain}\n\n`;
     }
     else if (f.type === 'select') {
       if (!val) return;
-      htmlText += `${label}: ${coloredHtml}\n\n`;
+      htmlText += row(`${label}: ${coloredHtml}`);
       plainText += `${f.label}: ${val}\n\n`;
     }
     else if (f.type === 'rating') {
       if (!val || val === 0) return;
       const expl = f.showExplanations && f.explanations ? ` — ${f.explanations[val - 1] || ''}` : '';
-      htmlText += `${label}: <span class="text-amber-400">${escapeHtml(val)}${escapeHtml(expl)}</span>\n\n`;
+      htmlText += row(`${label}: <span class="text-amber-400">${escapeHtml(val)}${escapeHtml(expl)}</span>`);
       plainText += `${f.label}: ${val}${expl}\n\n`;
     }
     else if (f.type === 'formula') {
@@ -145,7 +151,7 @@ export function generateReport({
 
       const unitHtml = f.unit ? ` <span class="text-amber-400">${escapeHtml(f.unit)}</span>.` : '.';
       const unitPlain = f.unit ? ` ${f.unit}.` : '.';
-      htmlText += `${label}: <span class="text-amber-400">${escapeHtml(result)}</span>${unitHtml}\n\n`;
+      htmlText += row(`${label}: <span class="text-amber-400">${escapeHtml(result)}</span>${unitHtml}`);
       plainText += `${f.label}: ${result}${unitPlain}\n\n`;
     }
   });

@@ -19,7 +19,11 @@ COPY . .
 # NEXT_PUBLIC_* переменные "запекаются" в статическую сборку на этом шаге —
 # раньше адрес прод-бэкенда был зашит прямо в lib/pocketbase.ts как fallback,
 # теперь он должен быть явно задан здесь.
-ENV NEXT_PUBLIC_POCKETBASE_URL=https://smartreporting.ru
+# "/" — тот же origin, с которого открыта страница: фронтенд раздаёт сам
+# PocketBase (pb_public), и SDK достраивает "/" до window.location.origin.
+# Так один и тот же образ работает на любом домене (smartreporting.ru,
+# *.amvera.io, резервный проект в другом регионе) и не ходит в чужую базу.
+ENV NEXT_PUBLIC_POCKETBASE_URL=/
 
 # Site key hCaptcha — публичный по дизайну (в отличие от secret key), поэтому
 # безопасно хранить прямо в Dockerfile. Secret key задаётся ТОЛЬКО как

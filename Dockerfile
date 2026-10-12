@@ -50,4 +50,10 @@ EXPOSE 8090
 # (/pb) — из-за этого миграции (в т.ч. блокировка правил доступа) молча
 # не выполнялись ни разу, без единой ошибки в логах. Проверено локально:
 # с --dir, отличным от каталога бинарника, JS-миграции просто не находятся.
-CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/data", "--migrationsDir=/pb/pb_migrations", "--hooksDir=/pb/pb_hooks"]
+#
+# Если заданы PB_ADMIN_EMAIL/PB_ADMIN_PASSWORD, перед стартом создаём или
+# обновляем этого суперпользователя: так доступ в /_/ восстанавливается
+# сменой переменных и перезапуском, без доступа к shell контейнера.
+# Миграция 0001 срабатывает только один раз, на пустой базе. Когда доступ
+# не нужен, переменные лучше удалить.
+CMD ["/bin/sh", "-c", "if [ -n \"$PB_ADMIN_EMAIL\" ] && [ -n \"$PB_ADMIN_PASSWORD\" ]; then /pb/pocketbase superuser upsert \"$PB_ADMIN_EMAIL\" \"$PB_ADMIN_PASSWORD\" --dir=/data; fi; exec /pb/pocketbase serve --http=0.0.0.0:8090 --dir=/data --migrationsDir=/pb/pb_migrations --hooksDir=/pb/pb_hooks"]

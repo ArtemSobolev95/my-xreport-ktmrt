@@ -8,6 +8,17 @@
 // deleteRule не трогаем): чужой публичный шаблон можно заполнить или
 // сохранить копию — новую запись со своим user (createRule).
 migrate((app) => {
+  // На пустой базе (новый инстанс до восстановления бэкапа) коллекций
+  // ещё нет — коллекции создаются через админку/бэкап, не миграциями.
+  // Без этой проверки PocketBase падает при старте и уходит в цикл
+  // перезапусков. Бэкап прода уже содержит эту миграцию как применённую.
+  try {
+    app.findCollectionByNameOrId("templates");
+  } catch (_) {
+    console.log("0004_public_templates_auth_only.js: коллекции templates нет — миграция пропущена (пустая база)");
+    return;
+  }
+
   const collection = app.findCollectionByNameOrId("templates");
   unmarshal({
     "listRule": "@request.auth.id != \"\" && (user = @request.auth.id || isPublic = true)",

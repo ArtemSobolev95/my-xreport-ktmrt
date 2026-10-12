@@ -16,6 +16,17 @@
 // (у notes_images такие записи реально есть — баг загрузки без
 // владельца, отдельно исправлен в коде), потому что "" = "" тоже true.
 migrate((app) => {
+  // На пустой базе (новый инстанс до восстановления бэкапа) коллекций
+  // ещё нет — коллекции создаются через админку/бэкап, не миграциями.
+  // Без этой проверки PocketBase падает при старте и уходит в цикл
+  // перезапусков. Бэкап прода уже содержит эту миграцию как применённую.
+  try {
+    app.findCollectionByNameOrId("templates");
+  } catch (_) {
+    console.log("0002_lock_down_collection_rules.js: коллекции templates нет — миграция пропущена (пустая база)");
+    return;
+  }
+
   let collection = app.findCollectionByNameOrId("templates");
   unmarshal({
     "listRule": "(@request.auth.id != \"\" && user = @request.auth.id) || isPublic = true",

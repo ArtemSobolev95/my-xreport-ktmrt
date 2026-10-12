@@ -19,6 +19,17 @@ const readJson = (record, field, fallback) => {
 };
 
 migrate((app) => {
+  // На пустой базе (новый инстанс до восстановления бэкапа) коллекций
+  // ещё нет — коллекции создаются через админку/бэкап, не миграциями.
+  // Без этой проверки PocketBase падает при старте и уходит в цикл
+  // перезапусков. Бэкап прода уже содержит эту миграцию как применённую.
+  try {
+    app.findCollectionByNameOrId("abbreviations");
+  } catch (_) {
+    console.log("0003_dedupe_and_unique_index_user.js: коллекции abbreviations нет — миграция пропущена (пустая база)");
+    return;
+  }
+
   const findAllRecords = (collectionName) => {
     const pageSize = 200;
     let offset = 0;

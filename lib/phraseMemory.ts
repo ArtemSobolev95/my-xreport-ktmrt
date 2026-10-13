@@ -162,18 +162,32 @@ export function suggest(
     !present.has(key) && !options.dismissed?.has(key)
   );
 
-  // 1) Начата фраза — дописываем её.
+  // 1) Начата фраза — дописываем её. Сначала ищем совпадение с начала
+  // фразы, затем — с каждого следующего слова: перед запомненной фразой
+  // может стоять другой текст без разделителя («контуры ровные гор…»).
+  // Чем раньше начало совпадения, тем больше контекста — первое найденное
+  // и берём. Для хвоста — минимум 3 символа, чтобы короткое слово («в»,
+  // «на») не тянуло случайные подсказки.
   if (current.trim().length >= 2) {
-    let best: { key: string; score: number } | null = null;
-    for (const [key, e] of candidates) {
-      if (key.length <= currentKey.length || !key.startsWith(currentKey)) continue;
-      const context = e.p?.[prevKey] || 0;
-      const score = baseScore(e, now) * (1 + context);
-      if (!best || score > best.score) best = { key, score };
+    const starts = [0];
+    for (let i = 1; i < current.length; i++) {
+      if (current[i - 1] === ' ' && current[i] !== ' ') starts.push(i);
     }
-    if (!best) return null;
-    const ghost = cutAtSlot(mem[best.key].t.slice(current.length));
-    return ghost.trim() ? { key: best.key, ghost } : null;
+    for (const start of starts) {
+      const sub = currentKey.slice(start);
+      if (sub.trim().length < (start === 0 ? 2 : 3)) continue;
+      let best: { key: string; score: number } | null = null;
+      for (const [key, e] of candidates) {
+        if (key.length <= sub.length || !key.startsWith(sub)) continue;
+        const context = start === 0 ? (e.p?.[prevKey] || 0) : 0;
+        const score = baseScore(e, now) * (1 + context);
+        if (!best || score > best.score) best = { key, score };
+      }
+      if (!best) continue;
+      const ghost = cutAtSlot(mem[best.key].t.slice(sub.length));
+      if (ghost.trim()) return { key: best.key, ghost };
+    }
+    return null;
   }
 
   // 2) Фраза ещё не начата — предлагаем следующую целиком, если после

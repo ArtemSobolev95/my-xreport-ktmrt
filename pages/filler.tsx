@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, CornerDownRight } from 'lucide-react';
+import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, CornerDownRight, Sparkles } from 'lucide-react';
 import type { BuilderField, QuickButtonGroup, Template } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
@@ -13,6 +13,8 @@ import { migrateQuickButtons } from '../lib/migrateQuickButtons';
 import { evaluateFormula } from '../lib/evaluateFormula';
 import { generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
+import { usePhraseMemory } from '../hooks/usePhraseMemory';
+import { suggest as suggestPhrase, firstWord, rankedPhrases, SLOT, type Suggestion } from '../lib/phraseMemory';
 import { useDialog } from '../components/DialogProvider';
 import CollapseRow from '../components/CollapseRow';
 import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../components/AnimatedModal';
@@ -170,6 +172,15 @@ function FillerPage() {
     exportAbbreviations,
     importAbbreviations: importAbbreviationsFile,
   } = useAbbreviations();
+  // Подсказки фраз при наборе (ghost-text): память по полям этого шаблона,
+  // обучается на скопированных/сохранённых протоколах — см.
+  // lib/phraseMemory.ts. caret — позиция курсора в текстовом поле (только
+  // для расчёта подсказки; null — выделен фрагмент или фокуса нет).
+  const phraseMemory = usePhraseMemory(typeof id === 'string' ? id : undefined);
+  const [caret, setCaret] = useState<{ fieldId: string; pos: number } | null>(null);
+  // Подсказки, скрытые по Esc / забытые по Shift+Delete в этом протоколе.
+  const [dismissedPhrases, setDismissedPhrases] = useState<Record<string, Set<string>>>({});
+  const [phraseMemoryFieldId, setPhraseMemoryFieldId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Все');
   const [newAbbrText, setNewAbbrText] = useState('');
@@ -750,7 +761,11 @@ useEffect(() => {
   const autoResize = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 400) + 'px';
+    // Подсказка фраз (ghost-text) может переноситься на строку ниже текста —
+    // поле растягиваем и под неё, иначе она вылезала бы за его границы.
+    const ghostOverlay = el.parentElement?.querySelector<HTMLElement>('[data-ghost-overlay]');
+    const contentHeight = Math.max(el.scrollHeight, ghostOverlay?.scrollHeight ?? 0);
+    el.style.height = Math.min(contentHeight, 400) + 'px';
   };
 
   const addTextFieldAfter = (currentId: string) => {
@@ -843,6 +858,7 @@ useEffect(() => {
 
   setFieldsData(init);
   resetTextareaHeights(init);
+  startNewReportPhrases();
 
   // Сброс дополнительных состояний
   setIsComparisonActive(false);
@@ -884,6 +900,7 @@ const handleClearDraft = async () => {
 
   setFieldsData(init);
   resetTextareaHeights(init);
+  startNewReportPhrases();
   setIsComparisonActive(false);
   setComparisonDates([]);
   setIsMultipleComparison(false);
@@ -899,7 +916,118 @@ const handleClearDraft = async () => {
     showAddNotePhraseModal ||
     showAbbrModal ||
     showNotesModal ||
-    showSaveModal;
+    showSaveModal ||
+    phraseMemoryFieldId !== null;
+
+  // === ПОДСКАЗКИ ФРАЗ (ghost-text) ===
+  // Только в активном текстовом поле / «Заключении», курсор в конце текста
+  // (дальше — лишь пробелы) и без выделения. Скрыта, пока открыт выбор
+  // вариантов сокращения, список быстрых кнопок или модалка — у них свои
+  // стрелки/Enter/Esc, и подсказка не должна их перехватывать.
+  const ghost: (Suggestion & { fieldId: string; pos: number }) | null = useMemo(() => {
+    if (!caret || caret.fieldId !== activeFieldId) return null;
+    if (variantSelector || pathNav || openQuickButtonGroupIdx !== null || anyModalOpen) return null;
+    const field = template?.fields.find(f => f.id === caret.fieldId);
+    if (!field || (field.type !== 'text' && field.type !== 'conclusion')) return null;
+
+    const value: string = fieldsData[field.id] || '';
+    if (caret.pos > value.length || value.slice(caret.pos).trim() !== '') return null;
+    // В пустом поле с placeholder'ом тот и так подставится в протокол —
+    // подсказка поверх него только мешала бы.
+    if (!value.trim() && field.placeholder) return null;
+
+    const s = suggestPhrase(phraseMemory.memory[field.id], value.slice(0, caret.pos), {
+      capitalizeAtFieldStart: field.type === 'conclusion',
+      dismissed: dismissedPhrases[field.id],
+    });
+    return s ? { ...s, fieldId: field.id, pos: caret.pos } : null;
+  }, [caret, activeFieldId, variantSelector, pathNav, openQuickButtonGroupIdx, anyModalOpen, template, fieldsData, phraseMemory.memory, dismissedPhrases]);
+
+  // Подсказка появилась/исчезла — пересчитываем высоту поля (autoResize
+  // учитывает и строки подсказки).
+  const prevGhostFieldRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const ids = new Set([prevGhostFieldRef.current, ghost?.fieldId].filter(Boolean) as string[]);
+    prevGhostFieldRef.current = ghost?.fieldId ?? null;
+    ids.forEach(fieldId => {
+      const ta = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
+      if (ta?.tagName === 'TEXTAREA') autoResize(ta);
+    });
+  }, [ghost]);
+
+  const dismissPhrase = (fieldId: string, key: string) => {
+    setDismissedPhrases(prev => ({ ...prev, [fieldId]: new Set([...(prev[fieldId] || []), key]) }));
+  };
+
+  // Вставка подсказки (целиком или первым словом) в позицию курсора.
+  const acceptGhost = (wordOnly: boolean) => {
+    if (!ghost) return;
+    const { fieldId, pos, key } = ghost;
+    const insert = wordOnly ? firstWord(ghost.ghost) : ghost.ghost;
+    const value: string = fieldsData[fieldId] || '';
+    const newText = value.slice(0, pos) + insert + value.slice(pos);
+    const newPos = pos + insert.length;
+
+    updateField(fieldId, newText);
+    setCaret({ fieldId, pos: newPos });
+    if (!wordOnly || insert === ghost.ghost) phraseMemory.accept(fieldId, key);
+
+    requestAnimationFrame(() => {
+      const el = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
+      if (el) {
+        el.setSelectionRange(newPos, newPos);
+        autoResize(el);
+      }
+    });
+  };
+
+  // Клавиши подсказки. true — событие обработано (дальше не передаём).
+  // → — принять целиком, Ctrl/Alt+→ — одно слово (Tab занят переходом
+  // между полями), Esc — скрыть эту фразу до конца протокола,
+  // Shift+Delete — забыть фразу совсем.
+  const handleGhostKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: string): boolean => {
+    if (!ghost || ghost.fieldId !== fieldId || e.nativeEvent.isComposing) return false;
+
+    if (e.key === 'ArrowRight' && !e.shiftKey && !e.metaKey) {
+      e.preventDefault();
+      acceptGhost(e.ctrlKey || e.altKey);
+      return true;
+    }
+    if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      phraseMemory.reject(fieldId, ghost.key);
+      dismissPhrase(fieldId, ghost.key);
+      return true;
+    }
+    if (e.key === 'Delete' && e.shiftKey) {
+      e.preventDefault();
+      phraseMemory.forget(fieldId, ghost.key);
+      dismissPhrase(fieldId, ghost.key);
+      showToast('Фраза удалена из подсказок', 1500);
+      return true;
+    }
+    return false;
+  };
+
+  // Поля, на которых учатся подсказки: текстовые и «Заключение» шаблона —
+  // как он загружен (originalTemplate). Поля, добавленные прямо в этом
+  // протоколе, одноразовые: их id не повторится, учиться на них
+  // бессмысленно. По флагу isQuickText их не отличить — он остаётся и у
+  // полей, которые потом сохранили в шаблон насовсем.
+  const learnPhrasesFromReport = () => {
+    if (!template || !originalTemplate) return;
+    const templateFieldIds = new Set(originalTemplate.fields.map(f => f.id));
+    phraseMemory.learnFromReport(
+      template.fields
+        .filter(f => (f.type === 'text' || f.type === 'conclusion') && templateFieldIds.has(f.id) && !deletedFieldIds.includes(f.id))
+        .map(f => ({ id: f.id, text: typeof fieldsData[f.id] === 'string' ? fieldsData[f.id] : '' }))
+    );
+  };
+
+  const startNewReportPhrases = () => {
+    phraseMemory.startNewReport();
+    setDismissedPhrases({});
+  };
 
   // Возврат фокуса в поле, которое было активно до открытия модалки
   // (Заметки / Сравнение / Примечание / ...). Модалки — не нативный
@@ -957,6 +1085,7 @@ const handleClearDraft = async () => {
       if (showAbbrModal) setShowAbbrModal(false);
       if (showNotesModal) setShowNotesModal(false);
       if (showSaveModal) setShowSaveModal(false);
+      if (phraseMemoryFieldId !== null) setPhraseMemoryFieldId(null);
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -969,6 +1098,7 @@ const handleClearDraft = async () => {
     showAbbrModal,
     showNotesModal,
     showSaveModal,
+    phraseMemoryFieldId,
   ]);
   
   useEffect(() => {
@@ -2213,6 +2343,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
 };
 
   const copyToClipboard = () => {
+    learnPhrasesFromReport();
     navigator.clipboard.writeText(finalPlainText).then(
       () => showToast('Скопировано', 1300),
       () => showToast('Не удалось скопировать', 1300)
@@ -2227,6 +2358,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
       birthDate.trim(),
     ].filter(Boolean);
     const filename = [...nameParts, 'Протокол'].join('_') + '.txt';
+    learnPhrasesFromReport();
     const blob = new Blob([finalPlainText], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -2813,12 +2945,24 @@ for (const f of visibleFields) {
         
         {/* Все поля остаются без изменений */}
         {(f.type === 'text' || f.type === 'conclusion') && (
+  <div className="relative w-full">
   <textarea
     ref={el => { if (el) inputRefs.current[f.id] = el; }}
     data-custom-focus
     value={fieldsData[f.id] || ''}
-    onChange={e => { handleInputChange(f.id, e.target.value); autoResize(e.target); }}
+    onChange={e => {
+      handleInputChange(f.id, e.target.value);
+      autoResize(e.target);
+      // Курсор — вместе со значением, в том же рендере: иначе подсказка на
+      // кадр считалась бы по старой позиции и мигала.
+      setCaret(e.target.selectionStart === e.target.selectionEnd ? { fieldId: f.id, pos: e.target.selectionStart } : null);
+    }}
+    onSelect={e => {
+      const t = e.currentTarget;
+      setCaret(t.selectionStart === t.selectionEnd ? { fieldId: f.id, pos: t.selectionStart } : null);
+    }}
     onKeyDown={e => {
+      if (handleGhostKeyDown(e, f.id)) return;
       handleFieldTabNavigation(e, f.id);
       if (!e.defaultPrevented) handleKeyDown(e, f.id);
     }}
@@ -2827,8 +2971,22 @@ for (const f of visibleFields) {
     tabIndex={isSectionCollapsed ? -1 : 0}
     rows={1}
     className="w-full bg-transparent rounded-md border-0 px-1 py-0.5 leading-tight text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
-    placeholder={f.placeholder || 'Введите значение'}
+    placeholder={ghost?.fieldId === f.id ? '' : (f.placeholder || 'Введите значение')}
   />
+  {/* Подсказка: копия текста до курсора (прозрачная — только чтобы
+      подсказка встала ровно после него с теми же переносами строк) и
+      серое продолжение. Отступы/шрифт должны совпадать с textarea. */}
+  {ghost?.fieldId === f.id && (
+    <div
+      data-ghost-overlay
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-x-0 top-0 px-1 py-0.5 leading-tight text-sm whitespace-pre-wrap break-words text-transparent"
+    >
+      {(fieldsData[f.id] || '').slice(0, ghost.pos)}
+      <span className="text-zinc-500">{ghost.ghost}</span>
+    </div>
+  )}
+  </div>
 )}
 
         {f.type === 'number' && (
@@ -2981,6 +3139,17 @@ for (const f of visibleFields) {
                 }`}
               >
                 <CornerDownRight className="w-4 h-4" />
+              </button>
+            )}
+            {(f.type === 'text' || f.type === 'conclusion') && Object.keys(phraseMemory.memory[f.id] || {}).length > 0 && (
+              <button
+                onClick={() => setPhraseMemoryFieldId(f.id)}
+                onMouseDown={(e) => e.preventDefault()}
+                tabIndex={-1}
+                aria-label="Выученные фразы"
+                className={`w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-white hover:bg-white/10 transition-[color,background-color,opacity] cursor-pointer ${railVisibilityClass}`}
+              >
+                <Sparkles className="w-4 h-4" />
               </button>
             )}
             <button
@@ -3261,6 +3430,59 @@ for (const f of visibleFields) {
       </div>
 
       {/* МОДАЛКИ (полностью без изменений) */}
+
+      <AnimatedModal
+        open={phraseMemoryFieldId !== null}
+        onClose={() => setPhraseMemoryFieldId(null)}
+        size="lg"
+      >
+        {(() => {
+          const fieldId = phraseMemoryFieldId;
+          const field = template?.fields.find(f => f.id === fieldId);
+          const phrases = fieldId ? rankedPhrases(phraseMemory.memory[fieldId]) : [];
+          return (
+            <>
+              <ModalHeader
+                title="Выученные фразы"
+                subtitle={field?.type === 'conclusion' ? 'Заключение' : (field?.label || 'Текстовое поле')}
+                onClose={() => setPhraseMemoryFieldId(null)}
+              />
+              <ModalBody className="max-h-[60vh] py-3">
+                {phrases.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-zinc-500">Пока ничего не выучено</p>
+                ) : phrases.map(({ key, entry }) => (
+                  <div key={key} className="group flex items-center gap-3 -mx-3 px-3 py-1.5 rounded-lg hover:bg-white/5">
+                    <span className="flex-1 min-w-0 text-sm text-zinc-100 break-words">
+                      {entry.t.split(SLOT).map((part, i) => (
+                        <span key={i}>
+                          {i > 0 && <span className="text-zinc-500">…</span>}
+                          {part}
+                        </span>
+                      ))}
+                    </span>
+                    <span className="shrink-0 text-xs tabular-nums text-zinc-500" title="Сколько раз встречалась в протоколах">×{entry.c}</span>
+                    <button
+                      type="button"
+                      onClick={() => fieldId && phraseMemory.forget(fieldId, key)}
+                      aria-label="Забыть фразу"
+                      className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </ModalBody>
+              <div className="px-6 py-3 border-t border-white/10 text-xs text-zinc-500 leading-relaxed">
+                Подсказки учатся на скопированных и сохранённых протоколах.{' '}
+                <span className="text-zinc-400">→</span> — принять,{' '}
+                <span className="text-zinc-400">Ctrl/⌥+→</span> — одно слово,{' '}
+                <span className="text-zinc-400">Esc</span> — скрыть,{' '}
+                <span className="text-zinc-400">Shift+Delete</span> — забыть фразу.
+              </div>
+            </>
+          );
+        })()}
+      </AnimatedModal>
 
       <AnimatedModal
         open={showNotesModal}

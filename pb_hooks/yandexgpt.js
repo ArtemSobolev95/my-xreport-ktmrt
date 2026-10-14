@@ -10,12 +10,22 @@
 // Переменные окружения (Amvera → Переменные):
 //   YANDEX_API_KEY    — API-ключ сервисного аккаунта (роль ai.languageModels.user)
 //   YANDEX_FOLDER_ID  — id каталога Yandex Cloud
-//   YANDEX_GPT_MODEL  — необязательно, по умолчанию "yandexgpt-lite/latest"
+//   YANDEX_GPT_MODEL  — необязательно, модель для всех маршрутов, по умолчанию
+//                       "yandexgpt-lite/latest" (Pro — "yandexgpt/latest")
+//   YANDEX_GPT_MODEL_SUGGEST, YANDEX_GPT_MODEL_CORRECT — необязательно, модель
+//                       отдельно для подсказок / проверки (важнее YANDEX_GPT_MODEL):
+//                       проверке задержка не важна — ей можно Pro, подсказкам —
+//                       быструю Lite
 //   YANDEX_GPT_URL    — необязательно, адрес completion API (для прокси/тестов)
 
 module.exports = {
     isConfigured() {
         return !!($os.getenv("YANDEX_API_KEY") && $os.getenv("YANDEX_FOLDER_ID"));
+    },
+
+    // route — "SUGGEST" | "CORRECT".
+    modelFor(route) {
+        return $os.getenv("YANDEX_GPT_MODEL_" + route) || $os.getenv("YANDEX_GPT_MODEL") || "yandexgpt-lite/latest";
     },
 
     // true — лимит превышен. Окно — календарная минута, счётчик в памяти
@@ -29,11 +39,12 @@ module.exports = {
         return count > perMinute;
     },
 
+    // options: { model, temperature, maxTokens, timeout? }.
     // Возвращает { ok: true, text } или { ok: false }.
     complete(system, user, options) {
         const apiKey = $os.getenv("YANDEX_API_KEY");
         const folderId = $os.getenv("YANDEX_FOLDER_ID");
-        const model = $os.getenv("YANDEX_GPT_MODEL") || "yandexgpt-lite/latest";
+        const model = options.model;
         const url = $os.getenv("YANDEX_GPT_URL") || "https://ai.api.cloud.yandex.net/foundationModels/v1/completion";
 
         let res;

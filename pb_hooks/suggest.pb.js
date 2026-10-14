@@ -29,17 +29,23 @@ routerAdd("POST", "/api/suggest", (e) => {
     const templateTitle = clip(body.templateTitle, 200);
     const isConclusion = body.isConclusion === true;
     const findings = clip(body.findings, 4000);
-    const examples = (Array.isArray(body.examples) ? body.examples : [])
-        .slice(0, 40)
-        .map((x) => clip(x, 200).trim())
+    const list = (v, maxItems, maxLen) => (Array.isArray(v) ? v : [])
+        .slice(0, maxItems)
+        .map((x) => clip(x, maxLen).trim())
         .filter(Boolean);
+    // Фразы пользователя, отобранные под набранный текст (lib/phraseMemory.ts → selectExamples).
+    const examples = list(body.examples, 40, 200);
+    // Последние целые тексты этого поля — как пользователь строит описание.
+    const recent = list(body.recent, 6, 1500);
+    // Заготовки шаблона для поля: фразы быстрых кнопок и норма (placeholder).
+    const vocabulary = list(body.vocabulary, 60, 200);
 
     const system = [
         "Ты помогаешь врачу-рентгенологу быстрее писать протокол исследования: дописываешь текст поля, как подсказка при наборе.",
         "Верни ТОЛЬКО продолжение текста с места курсора: без кавычек, пояснений и без повторения уже написанного.",
         "Если курсор стоит внутри недописанного слова, начни ответ с этого слова целиком.",
         "Продолжение — не длиннее одной фразы, до ближайшей запятой или точки (сам знак не пиши).",
-        "Пиши терминологией и в стиле этого врача — его типичные формулировки для поля даны ниже; предпочитай их.",
+        "Пиши терминологией и в стиле этого врача: ниже — как он заполнял это поле раньше и его типичные формулировки; предпочитай их, а заготовки шаблона — как допустимый словарь.",
         "Не придумывай числа и размеры: если дальше должно идти число, оборви продолжение перед ним.",
         "Если уверенного продолжения нет, верни пустой ответ.",
     ].join("\n");
@@ -47,8 +53,14 @@ routerAdd("POST", "/api/suggest", (e) => {
     const parts = [];
     if (templateTitle) parts.push("Шаблон: " + templateTitle);
     parts.push("Поле: " + (fieldLabel || (isConclusion ? "Заключение" : "текстовое поле")));
+    if (recent.length) {
+        parts.push("Как врач заполнял это поле в прошлых протоколах (N — число):\n" + recent.map((x, i) => (i + 1) + ") " + x).join("\n"));
+    }
     if (examples.length) {
-        parts.push("Типичные формулировки врача для этого поля (N — число):\n" + examples.map((x) => "- " + x).join("\n"));
+        parts.push("Типичные формулировки врача для этого поля, самые подходящие — первыми (N — число):\n" + examples.map((x) => "- " + x).join("\n"));
+    }
+    if (vocabulary.length) {
+        parts.push("Заготовки шаблона для этого поля:\n" + vocabulary.map((x) => "- " + x).join("\n"));
     }
     if (isConclusion && findings) {
         parts.push("Описание исследования (заключение должно ему соответствовать):\n" + findings);
@@ -62,11 +74,12 @@ routerAdd("POST", "/api/suggest", (e) => {
         parts.push("Курсор стоит внутри недописанного слова «" + partial + "». Начни ответ с этого слова целиком (например: «" + partial + "…»), без пробела перед ним.");
     }
 
-    const res = ygpt.complete(system, parts.join("\n\n"), { temperature: 0.2, maxTokens: 60 });
+    const model = ygpt.modelFor("SUGGEST");
+    const res = ygpt.complete(system, parts.join("\n\n"), { model: model, temperature: 0.2, maxTokens: 60 });
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
     }
-    const text = res.text;
 
-    return e.json(200, { text: text.slice(0, 300) });
+    // model — для статистики на клиенте: точность Lite и Pro видна раздельно.
+    return e.json(200, { text: res.text.slice(0, 300), model: model });
 }, $apis.requireAuth("users"))

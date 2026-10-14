@@ -14,7 +14,7 @@ import { evaluateFormula } from '../lib/evaluateFormula';
 import { generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
 import { usePhraseMemory } from '../hooks/usePhraseMemory';
-import { firstWord, rankedPhrases, SLOT } from '../lib/phraseMemory';
+import { firstWord, rankedPhrases, selectExamples, sumStats, SLOT } from '../lib/phraseMemory';
 import { toGhost } from '../lib/aiSuggest';
 import { wordDiff } from '../lib/textDiff';
 import { useDialog } from '../components/DialogProvider';
@@ -186,7 +186,7 @@ function FillerPage() {
   const phraseMemory = usePhraseMemory(typeof id === 'string' ? id : undefined);
   const [caret, setCaret] = useState<{ fieldId: string; pos: number } | null>(null);
   // Ответ модели для конкретного текста до курсора.
-  const [aiGhost, setAiGhost] = useState<{ fieldId: string; textBefore: string; ghost: string } | null>(null);
+  const [aiGhost, setAiGhost] = useState<{ fieldId: string; textBefore: string; ghost: string; model: string } | null>(null);
   // Скрытые по Esc: id поля → тексты до курсора, где подсказку не показывать.
   const [dismissedGhosts, setDismissedGhosts] = useState<Record<string, Set<string>>>({});
   // ИИ-проверка поля (pb_hooks/correct.pb.js) при выходе из него: id поля →
@@ -980,9 +980,16 @@ const handleClearDraft = async () => {
   }, [ghost]);
 
   // Вставка подсказки (целиком или первым словом) в позицию курсора.
+  // Подсказка (ответ модели) засчитывается принятой один раз — даже если
+  // её принимали по слову несколькими нажатиями.
+  const acceptedAiGhostRef = useRef<typeof aiGhost>(null);
   const acceptGhost = (wordOnly: boolean) => {
     if (!ghost) return;
     const { fieldId, pos } = ghost;
+    if (aiGhost && acceptedAiGhostRef.current !== aiGhost) {
+      acceptedAiGhostRef.current = aiGhost;
+      phraseMemory.recordSuggestStat(fieldId, aiGhost.model, { accepted: 1 });
+    }
     const insert = wordOnly ? firstWord(ghost.ghost) : ghost.ghost;
     const value: string = fieldsData[fieldId] || '';
     const newText = value.slice(0, pos) + insert + value.slice(pos);
@@ -1840,7 +1847,7 @@ initializeCollapsedState(record.fields);
   // Запрос подсказки у модели: после паузы в наборе (AI_SUGGEST_DELAY_MS),
   // с кэшем по «поле + текст до курсора» и отбрасыванием устаревших ответов.
   // 503 (ключ не настроен на сервере) — выключаем подсказки до перезагрузки.
-  const aiCacheRef = useRef<Map<string, string>>(new Map());
+  const aiCacheRef = useRef<Map<string, { ghost: string; model: string }>>(new Map());
   const aiRequestSeqRef = useRef(0);
   const aiDisabledRef = useRef(false);
   useEffect(() => {
@@ -1850,33 +1857,48 @@ initializeCollapsedState(record.fields);
     const cacheKey = fieldId + '\u0000' + textBefore;
     const cached = aiCacheRef.current.get(cacheKey);
     if (cached !== undefined) {
-      setAiGhost({ fieldId, textBefore, ghost: cached });
+      setAiGhost({ fieldId, textBefore, ...cached });
+      if (cached.ghost) phraseMemory.recordSuggestStat(fieldId, cached.model, { shown: 1 });
       return;
     }
 
     const seq = ++aiRequestSeqRef.current;
     const timer = setTimeout(async () => {
-      const examples = rankedPhrases(phraseMemory.memory[fieldId])
-        .slice(0, 30)
-        .map(p => p.entry.t.split(SLOT).join('N'));
+      // Контекст для персонализации: фразы пользователя, отобранные под
+      // набранный текст; последние целые тексты поля; заготовки шаблона
+      // (фразы быстрых кнопок и норма-placeholder).
+      const vocabulary = [
+        ...(field.placeholder ? [field.placeholder] : []),
+        ...(field.quickButtons || []).flatMap(g => g.phrases || []),
+      ].filter(Boolean);
+      const startedAt = performance.now();
       try {
-        const res = await pb.send<{ text: string }>('/api/suggest', {
+        const res = await pb.send<{ text: string; model?: string }>('/api/suggest', {
           method: 'POST',
           body: {
             textBefore,
             fieldLabel: field.label || '',
             templateTitle: template?.title || '',
             isConclusion: field.type === 'conclusion',
-            examples,
+            examples: selectExamples(phraseMemory.memory[fieldId], textBefore, 30),
+            recent: (phraseMemory.recent[fieldId] || []).slice(0, 6),
+            vocabulary,
             findings: field.type === 'conclusion' ? finalPlainText : '',
           },
         });
+        const model = res.model || 'unknown';
         const ghostText = toGhost(textBefore, res.text || '');
-        aiCacheRef.current.set(cacheKey, ghostText);
+        aiCacheRef.current.set(cacheKey, { ghost: ghostText, model });
         if (aiCacheRef.current.size > 300) {
           aiCacheRef.current.delete(aiCacheRef.current.keys().next().value!);
         }
-        if (seq === aiRequestSeqRef.current) setAiGhost({ fieldId, textBefore, ghost: ghostText });
+        const isCurrent = seq === aiRequestSeqRef.current;
+        phraseMemory.recordSuggestStat(fieldId, model, {
+          requests: 1,
+          ms: Math.round(performance.now() - startedAt),
+          shown: isCurrent && ghostText ? 1 : 0,
+        });
+        if (isCurrent) setAiGhost({ fieldId, textBefore, ghost: ghostText, model });
       } catch (err: unknown) {
         if ((err as { status?: number })?.status === 503) aiDisabledRef.current = true;
         else console.warn('[suggest] подсказка не получена:', err);
@@ -3631,6 +3653,26 @@ for (const f of visibleFields) {
                 subtitle={field?.type === 'conclusion' ? 'Заключение' : (field?.label || 'Текстовое поле')}
                 onClose={() => setPhraseMemoryFieldId(null)}
               />
+              {fieldId && phraseMemory.stats[fieldId] && (() => {
+                const byModel = phraseMemory.stats[fieldId];
+                const rows = Object.entries(byModel).length > 1
+                  ? [['Всего', sumStats(byModel)] as const, ...Object.entries(byModel)]
+                  : Object.entries(byModel);
+                return (
+                  <div className="px-6 py-3 border-b border-white/10 text-xs text-zinc-400 space-y-1">
+                    {rows.map(([model, st]) => (
+                      <div key={model} className="flex items-baseline gap-3 tabular-nums">
+                        <span className="w-40 shrink-0 truncate text-zinc-500" title={model}>{model.replace(/\/latest$/, '')}</span>
+                        <span>
+                          принято <span className="text-amber-400 font-medium">{st.shown ? Math.round((st.accepted / st.shown) * 100) : 0}%</span>
+                          {' '}подсказок ({st.accepted} из {st.shown})
+                        </span>
+                        {st.requests > 0 && <span className="ml-auto text-zinc-500">ответ ~{Math.round(st.ms / st.requests)} мс</span>}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
               <ModalBody className="max-h-[60vh] py-3">
                 {phrases.length === 0 ? (
                   <p className="py-6 text-center text-sm text-zinc-500">Пока ничего не выучено</p>

@@ -147,3 +147,76 @@ export function rankedPhrases(mem: FieldMemory | undefined, now = Date.now()) {
     .map(([key, e]) => ({ key, entry: e, score: baseScore(e, now) }))
     .sort((a, b) => b.score - a.score);
 }
+
+// === Примеры для ИИ-подсказки ===
+
+const SLOT_FOR_MODEL = 'N';
+const toModelText = (t: string) => t.split(SLOT).join(SLOT_FOR_MODEL);
+// Значимые слова фразы — для поиска похожих (короткие предлоги не в счёт).
+const contentWords = (key: string) => key.split(/[^\p{L}\p{N}-]+/u).filter(w => w.length >= 4);
+
+// Фразы из памяти поля, подходящие к тому, что набрано сейчас: сначала —
+// начинающиеся так же, как текущая (недописанная) фраза; затем — обычно
+// идущие после предыдущей фразы; затем — с общими словами; остальное —
+// по частоте и свежести. Уже стоящие в поле фразы не повторяем.
+export function selectExamples(mem: FieldMemory | undefined, textBefore: string, limit: number, now = Date.now()): string[] {
+  if (!mem) return [];
+  const parts = textBefore.split(SEPARATOR);
+  const currentKey = toKey(normalizePhrase(parts[parts.length - 1] || ''));
+  const completed = parts.slice(0, -1).map(p => toKey(normalizePhrase(p))).filter(Boolean);
+  const present = new Set(completed);
+  const prevKey = completed.length ? completed[completed.length - 1] : '';
+  const currentWords = new Set(contentWords(currentKey));
+
+  return Object.entries(mem)
+    .filter(([key]) => !present.has(key))
+    .map(([key, e]) => {
+      let score = baseScore(e, now);
+      if (currentKey.length >= 2 && key.startsWith(currentKey)) score *= 10;
+      score *= 1 + 2 * (e.p?.[prevKey] || 0);
+      const shared = contentWords(key).filter(w => currentWords.has(w)).length;
+      score *= 1 + shared;
+      return { t: e.t, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(x => toModelText(x.t));
+}
+
+// === Последние целые тексты поля ===
+// Фразы теряют структуру описания (порядок, связки, типичную длину), поэтому
+// модели показываем и несколько последних текстов поля целиком.
+
+export type RecentTexts = Record<string, string[]>;   // id поля → тексты, новые первыми
+const MAX_RECENT_PER_FIELD = 12;
+const MAX_RECENT_LENGTH = 1500;
+
+export const normalizeRecentText = (text: string): string =>
+  text.replace(STANDALONE_NUMBER, SLOT_FOR_MODEL).replace(/[ \t]+/g, ' ').trim().slice(0, MAX_RECENT_LENGTH);
+
+// replaceFirst — текст из того же протокола уже сохранён первым (протокол
+// скопировали повторно после правки): заменяем его, а не добавляем дубль.
+export function rememberText(list: string[] | undefined, text: string, replaceFirst: boolean): string[] {
+  const normalized = normalizeRecentText(text);
+  if (!normalized) return list || [];
+  const rest = (list || []).slice(replaceFirst ? 1 : 0).filter(t => t !== normalized);
+  return [normalized, ...rest].slice(0, MAX_RECENT_PER_FIELD);
+}
+
+// === Статистика подсказок ===
+// По полю и модели: показано, принято, запросов к модели и их суммарное
+// время — чтобы точность (доля принятых) и задержку было видно цифрой.
+
+export interface SuggestStat { shown: number; accepted: number; requests: number; ms: number }
+export type SuggestStats = Record<string, Record<string, SuggestStat>>;   // id поля → модель → счётчики
+
+export const emptyStat = (): SuggestStat => ({ shown: 0, accepted: 0, requests: 0, ms: 0 });
+
+export function sumStats(byModel: Record<string, SuggestStat> | undefined): SuggestStat {
+  return Object.values(byModel || {}).reduce((acc, s) => ({
+    shown: acc.shown + s.shown,
+    accepted: acc.accepted + s.accepted,
+    requests: acc.requests + s.requests,
+    ms: acc.ms + s.ms,
+  }), emptyStat());
+}

@@ -42,6 +42,7 @@ routerAdd("POST", "/api/correct", (e) => {
     // Ответ — тот же текст: токенов нужно примерно столько же, сколько во входе
     // (для русского ~3 символа на токен), с запасом.
     const res = ygpt.complete(system, user, {
+        model: ygpt.modelFor("CORRECT"),
         temperature: 0,
         maxTokens: Math.min(2000, Math.ceil(text.length / 2) + 50),
         timeout: 15,

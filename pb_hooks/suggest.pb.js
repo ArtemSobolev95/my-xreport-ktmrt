@@ -7,32 +7,17 @@
 // продолжение. Запрос идёт с сервера, а не из браузера: ключ API не
 // попадает к пользователям, и им не нужен VPN.
 //
-// Переменные окружения (Amvera → Переменные):
-//   YANDEX_API_KEY    — API-ключ сервисного аккаунта (роль ai.languageModels.user)
-//   YANDEX_FOLDER_ID  — id каталога Yandex Cloud
-//   YANDEX_GPT_MODEL  — необязательно, по умолчанию "yandexgpt-lite/latest"
-//   YANDEX_GPT_URL    — необязательно, адрес completion API (для прокси/тестов)
-//
-// Без ключа маршрут отвечает 503 — фронтенд в этом случае просто не
-// показывает подсказки.
+// Вызов модели и лимит запросов — в pb_hooks/yandexgpt.js. Без ключа
+// маршрут отвечает 503 — фронтенд в этом случае просто не показывает
+// подсказки.
 routerAdd("POST", "/api/suggest", (e) => {
-    const apiKey = $os.getenv("YANDEX_API_KEY");
-    const folderId = $os.getenv("YANDEX_FOLDER_ID");
-    if (!apiKey || !folderId) {
+    const ygpt = require(`${__hooks}/yandexgpt.js`);
+    if (!ygpt.isConfigured()) {
         return e.json(503, { message: "ИИ-подсказки не настроены" });
     }
-
-    // Не больше RATE_LIMIT запросов в минуту на пользователя: фронтенд
-    // шлёт запрос только после паузы в наборе, так что живому человеку
-    // этого с запасом хватает, а скрипту — нет.
-    const RATE_LIMIT = 40;
-    const userId = e.auth.id;
-    const minute = Math.floor(Date.now() / 60000);
-    const rlKey = "suggest_rl:" + userId;
-    const [rlMinute, rlCount] = String($app.store().get(rlKey) || "0:0").split(":").map(Number);
-    const count = rlMinute === minute ? rlCount + 1 : 1;
-    $app.store().set(rlKey, minute + ":" + count);
-    if (count > RATE_LIMIT) {
+    // Фронтенд шлёт запрос только после паузы в наборе, так что живому
+    // человеку 40 в минуту хватает с запасом, а скрипту — нет.
+    if (ygpt.rateLimited("suggest", e.auth.id, 40)) {
         return e.json(429, { message: "Слишком много запросов" });
     }
 
@@ -69,46 +54,19 @@ routerAdd("POST", "/api/suggest", (e) => {
         parts.push("Описание исследования (заключение должно ему соответствовать):\n" + findings);
     }
     parts.push("Текст поля, курсор обозначен ⟨|⟩:\n" + textBefore + "⟨|⟩");
-
-    const model = $os.getenv("YANDEX_GPT_MODEL") || "yandexgpt-lite/latest";
-    const url = $os.getenv("YANDEX_GPT_URL") || "https://ai.api.cloud.yandex.net/foundationModels/v1/completion";
-
-    let res;
-    try {
-        res = $http.send({
-            method: "POST",
-            url: url,
-            timeout: 10,
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": "Api-Key " + apiKey,
-                "x-folder-id": folderId,
-            },
-            body: JSON.stringify({
-                modelUri: "gpt://" + folderId + "/" + model,
-                completionOptions: { stream: false, temperature: 0.2, maxTokens: "60" },
-                messages: [
-                    { role: "system", text: system },
-                    { role: "user", text: parts.join("\n\n") },
-                ],
-            }),
-        });
-    } catch (err) {
-        console.log("[suggest] запрос к YandexGPT не удался:", err);
-        return e.json(502, { message: "ИИ-сервис недоступен" });
+    // Курсор сразу после буквы — слово недописано. Без явного указания
+    // модель часто возвращает только окончание слова, и на стыке не понять,
+    // нужен ли пробел; с ним — начинает ответ со слова целиком.
+    const partial = (textBefore.match(/[^\s.,;:!?()«»"'\/]+$/) || [""])[0];
+    if (partial) {
+        parts.push("Курсор стоит внутри недописанного слова «" + partial + "». Начни ответ с этого слова целиком (например: «" + partial + "…»), без пробела перед ним.");
     }
 
-    if (res.statusCode !== 200 || !res.json) {
-        console.log("[suggest] YandexGPT ответил", res.statusCode, JSON.stringify(res.json));
+    const res = ygpt.complete(system, parts.join("\n\n"), { temperature: 0.2, maxTokens: 60 });
+    if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
     }
-
-    // REST-ответ обёрнут в result; на всякий случай поддерживаем и без обёртки.
-    const result = res.json.result || res.json;
-    const alt = result.alternatives && result.alternatives[0];
-    const text = alt && alt.status !== "ALTERNATIVE_STATUS_CONTENT_FILTER" && alt.message
-        ? String(alt.message.text || "")
-        : "";
+    const text = res.text;
 
     return e.json(200, { text: text.slice(0, 300) });
 }, $apis.requireAuth("users"))

@@ -12,7 +12,11 @@ const PHRASE_END = /[;!?…\n]|[.,](?!\d)/;
 const isWordChar = (ch: string | undefined) => !!ch && /[\p{L}\p{N}-]/u.test(ch);
 
 export function toGhost(textBefore: string, raw: string): string {
-  let text = raw.replace(/⟨\|⟩/g, '').replace(/^[\s"«»'`]+|["«»'`\s]+$/g, '');
+  const cleaned = raw.replace(/⟨\|⟩/g, '');
+  // Пробел в начале ответа — признак, что модель начала новое слово, а не
+  // дописывает текущее (см. стык ниже).
+  const startsNewWord = /^\s/.test(cleaned.replace(/^["«»'`]+/, ''));
+  let text = cleaned.replace(/^[\s"«»'`]+|["«»'`\s]+$/g, '');
   if (!text) return '';
 
   // Модель могла начать с текущего недописанного слова («Гор» →
@@ -37,14 +41,17 @@ export function toGhost(textBefore: string, raw: string): string {
   if (num !== -1) text = text.slice(0, num);
   if (!text.trim()) return '';
 
-  // Пробел на стыке: после пробела — не нужен; после знака препинания или
-  // законченного слова (совпадения не было, а модель начала новое слово) —
-  // нужен, но только перед словом, не перед «×», «%», «°» и т.п.
+  // Пробел на стыке. После пробела — не нужен. После знака препинания —
+  // нужен перед словом (не перед «×», «%», «°» и т.п.). Курсор сразу после
+  // буквы: если совпадения не было, ответ — это окончание недописанного
+  // слова («Гор» + «изонтальный»), пробел не нужен; новое слово — только
+  // если модель сама начала ответ с пробела.
   const last = textBefore.slice(-1);
   if (!textBefore || /\s/.test(last)) {
     text = text.replace(/^\s+/, '');
-  } else if (isWordChar(text[0]) && (overlap === 0 || !isWordChar(last))) {
-    text = ' ' + text;
+  } else if (isWordChar(text[0])) {
+    const needsSpace = isWordChar(last) ? overlap === 0 && startsNewWord : true;
+    if (needsSpace) text = ' ' + text;
   }
   return text.replace(/\s+$/, '') ? text : '';
 }

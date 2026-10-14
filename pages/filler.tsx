@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, CornerDownRight, Sparkles } from 'lucide-react';
+import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, CornerDownRight, Sparkles, SpellCheck, X } from 'lucide-react';
 import type { BuilderField, QuickButtonGroup, Template } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
@@ -16,6 +16,7 @@ import { useAbbreviations } from '../hooks/useAbbreviations';
 import { usePhraseMemory } from '../hooks/usePhraseMemory';
 import { firstWord, rankedPhrases, SLOT } from '../lib/phraseMemory';
 import { toGhost } from '../lib/aiSuggest';
+import { wordDiff } from '../lib/textDiff';
 import { useDialog } from '../components/DialogProvider';
 import CollapseRow from '../components/CollapseRow';
 import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../components/AnimatedModal';
@@ -188,6 +189,10 @@ function FillerPage() {
   const [aiGhost, setAiGhost] = useState<{ fieldId: string; textBefore: string; ghost: string } | null>(null);
   // Скрытые по Esc: id поля → тексты до курсора, где подсказку не показывать.
   const [dismissedGhosts, setDismissedGhosts] = useState<Record<string, Set<string>>>({});
+  // ИИ-проверка поля (pb_hooks/correct.pb.js) при выходе из него: id поля →
+  // исправленный вариант для конкретного текста. Показывается, пока текст
+  // поля не изменился.
+  const [corrections, setCorrections] = useState<Record<string, { original: string; corrected: string }>>({});
   const [phraseMemoryFieldId, setPhraseMemoryFieldId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Все');
@@ -1030,10 +1035,97 @@ const handleClearDraft = async () => {
     );
   };
 
+  // Окно «Выученные фразы» — для текстового поля, где последним стоял
+  // курсор (кнопка в нижней панели; в боковой панели поля она удлиняла
+  // карточки). lastFocusedFieldElRef, а не activeFieldRef: тот сбрасывается
+  // по таймеру после потери фокуса.
+  const openPhraseMemory = () => {
+    const fieldId = lastFocusedFieldElRef.current?.closest('[data-field-id]')?.getAttribute('data-field-id');
+    const field = fieldId ? template?.fields.find(f => f.id === fieldId) : null;
+    if (!field || (field.type !== 'text' && field.type !== 'conclusion')) {
+      dialog.alert('Поставьте курсор в текстовое поле или «Заключение», чтобы посмотреть его выученные фразы');
+      return;
+    }
+    setPhraseMemoryFieldId(field.id);
+  };
+
   const startNewReportPhrases = () => {
     phraseMemory.startNewReport();
     setDismissedGhosts({});
     setAiGhost(null);
+    setCorrections({});
+  };
+
+  // === ИИ-ПРОВЕРКА ПОЛЯ (опечатки, род/число/падеж) ===
+  // Запускается, когда курсор уходит из текстового поля / «Заключения».
+  // Ничего не заменяет сама: под полем появляется исправленный вариант с
+  // подсвеченными правками — «Исправить» или «×». Ответы кэшируются по
+  // тексту; отклонённая правка для того же текста больше не предлагается.
+  const correctionCacheRef = useRef<Map<string, string>>(new Map());
+  const dismissedCorrectionsRef = useRef<Set<string>>(new Set());
+  const correctionDisabledRef = useRef(false);
+
+  const setCorrection = (fieldId: string, original: string, corrected: string) => {
+    setCorrections(prev => {
+      const next = { ...prev };
+      if (corrected !== original && !dismissedCorrectionsRef.current.has(fieldId + '\u0000' + original)) {
+        next[fieldId] = { original, corrected };
+      } else {
+        delete next[fieldId];
+      }
+      return next;
+    });
+  };
+
+  const checkFieldGrammar = async (fieldId: string) => {
+    if (correctionDisabledRef.current) return;
+    const field = template?.fields.find(f => f.id === fieldId);
+    if (!field || (field.type !== 'text' && field.type !== 'conclusion')) return;
+    const text: string = typeof fieldsDataRef.current[fieldId] === 'string' ? fieldsDataRef.current[fieldId] : '';
+    if (!text.trim()) return;
+
+    const cached = correctionCacheRef.current.get(text);
+    if (cached !== undefined) {
+      setCorrection(fieldId, text, cached);
+      return;
+    }
+    try {
+      const res = await pb.send<{ corrected: string }>('/api/correct', {
+        method: 'POST',
+        body: { text, fieldLabel: field.label || (field.type === 'conclusion' ? 'Заключение' : '') },
+      });
+      const corrected = typeof res.corrected === 'string' ? res.corrected : text;
+      correctionCacheRef.current.set(text, corrected);
+      if (correctionCacheRef.current.size > 200) {
+        correctionCacheRef.current.delete(correctionCacheRef.current.keys().next().value!);
+      }
+      setCorrection(fieldId, text, corrected);
+    } catch (err: unknown) {
+      if ((err as { status?: number })?.status === 503) correctionDisabledRef.current = true;
+      else console.warn('[correct] проверка не выполнена:', err);
+    }
+  };
+
+  const applyCorrection = (fieldId: string) => {
+    const c = corrections[fieldId];
+    if (!c || (fieldsData[fieldId] || '') !== c.original) return;
+    updateField(fieldId, c.corrected);
+    setCorrections(prev => {
+      const next = { ...prev };
+      delete next[fieldId];
+      return next;
+    });
+    requestAnimationFrame(() => autoResize(inputRefs.current[fieldId] as HTMLTextAreaElement | null));
+  };
+
+  const dismissCorrection = (fieldId: string) => {
+    const c = corrections[fieldId];
+    if (c) dismissedCorrectionsRef.current.add(fieldId + '\u0000' + c.original);
+    setCorrections(prev => {
+      const next = { ...prev };
+      delete next[fieldId];
+      return next;
+    });
   };
 
   // Возврат фокуса в поле, которое было активно до открытия модалки
@@ -3026,7 +3118,7 @@ for (const f of visibleFields) {
       if (!e.defaultPrevented) handleKeyDown(e, f.id);
     }}
     onFocus={(e) => handleFocus(f.id, e.target)}
-    onBlur={handleBlur}
+    onBlur={() => { handleBlur(); checkFieldGrammar(f.id); }}
     tabIndex={isSectionCollapsed ? -1 : 0}
     rows={1}
     className="w-full bg-transparent rounded-md border-0 px-1 py-0.5 leading-tight text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
@@ -3043,6 +3135,49 @@ for (const f of visibleFields) {
     >
       {(fieldsData[f.id] || '').slice(0, ghost.pos)}
       <span className="text-zinc-500">{ghost.ghost}</span>
+    </div>
+  )}
+  {/* ИИ-проверка: исправленный вариант с подсвеченными правками (при
+      наведении — что было). Только пока текст поля тот же, что проверяли. */}
+  {corrections[f.id] && (fieldsData[f.id] || '') === corrections[f.id].original && (
+    <div className="mt-1.5 flex items-start gap-2 rounded-md bg-amber-400/5 border border-amber-400/15 px-2 py-1.5 text-xs leading-snug">
+      <SpellCheck className="w-3.5 h-3.5 mt-px shrink-0 text-amber-400" aria-hidden="true" />
+      <span className="flex-1 min-w-0 text-zinc-300 whitespace-pre-wrap break-words">
+        {wordDiff(corrections[f.id].original, corrections[f.id].corrected).map((seg, i) => (
+          <span key={i}>
+            {seg.deleted && (
+              <><span className="line-through text-red-400/80" title="будет удалено">{seg.deleted}</span>{seg.text ? ' ' : ''}</>
+            )}
+            {seg.changed ? (
+              <span
+                className="text-amber-400 underline decoration-dotted underline-offset-2"
+                title={seg.was ? `было: ${seg.was}` : 'добавлено'}
+              >
+                {seg.text}
+              </span>
+            ) : seg.text}
+          </span>
+        ))}
+      </span>
+      <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => applyCorrection(f.id)}
+        className="shrink-0 font-medium text-amber-400 hover:text-amber-300 cursor-pointer"
+      >
+        Исправить
+      </button>
+      <button
+        type="button"
+        tabIndex={-1}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={() => dismissCorrection(f.id)}
+        aria-label="Не исправлять"
+        className="shrink-0 -mr-0.5 text-zinc-500 hover:text-white cursor-pointer"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
     </div>
   )}
   </div>
@@ -3198,17 +3333,6 @@ for (const f of visibleFields) {
                 }`}
               >
                 <CornerDownRight className="w-4 h-4" />
-              </button>
-            )}
-            {(f.type === 'text' || f.type === 'conclusion') && Object.keys(phraseMemory.memory[f.id] || {}).length > 0 && (
-              <button
-                onClick={() => setPhraseMemoryFieldId(f.id)}
-                onMouseDown={(e) => e.preventDefault()}
-                tabIndex={-1}
-                aria-label="Выученные фразы"
-                className={`w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-white hover:bg-white/10 transition-[color,background-color,opacity] cursor-pointer ${railVisibilityClass}`}
-              >
-                <Sparkles className="w-4 h-4" />
               </button>
             )}
             <button
@@ -3481,6 +3605,7 @@ for (const f of visibleFields) {
               <div className="w-px h-5 bg-white/10 mx-1" aria-hidden="true" />
               <button onClick={resetToDefault} tabIndex={-1} className={`${TOOLBAR_BUTTON_CLASS} text-zinc-400 hover:text-red-400 hover:bg-white/10`} data-tip="Сбросить протокол (Ctrl+Shift+R)"><RotateCcw className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
               <button onClick={() => setShowAbbrModal(true)} tabIndex={-1} className={`${TOOLBAR_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Автокоррекции"><Settings className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
+              <button onClick={openPhraseMemory} onMouseDown={(e) => e.preventDefault()} tabIndex={-1} className={`${TOOLBAR_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Выученные фразы поля"><Sparkles className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
               <div className="w-px h-5 bg-white/10 mx-1" aria-hidden="true" />
               <button onClick={goToTemplateList} tabIndex={-1} className={`${TOOLBAR_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="К списку шаблонов (Ctrl+Shift+H)"><Home className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             </div>

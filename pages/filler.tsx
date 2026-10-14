@@ -14,7 +14,8 @@ import { evaluateFormula } from '../lib/evaluateFormula';
 import { generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
 import { usePhraseMemory } from '../hooks/usePhraseMemory';
-import { suggest as suggestPhrase, firstWord, rankedPhrases, SLOT, type Suggestion } from '../lib/phraseMemory';
+import { firstWord, rankedPhrases, SLOT } from '../lib/phraseMemory';
+import { toGhost } from '../lib/aiSuggest';
 import { useDialog } from '../components/DialogProvider';
 import CollapseRow from '../components/CollapseRow';
 import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../components/AnimatedModal';
@@ -88,6 +89,10 @@ const RatingField = ({
 // по одной вертикали, название шаблона и заголовки получают такой же
 // "фантомный" отступ справа той же ширины.
 const FIELD_ACTIONS_RAIL_WIDTH = 46;
+
+// Пауза в наборе перед запросом ИИ-подсказки: меньше — чаще запросы на
+// каждую букву, больше — подсказка заметно «опаздывает».
+const AI_SUGGEST_DELAY_MS = 350;
 
 // Кнопка нижней панели действий (копировать/сохранить/сброс/…). Подсказки
 // (tooltip) на странице заполнения остались только у этого ряда.
@@ -172,14 +177,17 @@ function FillerPage() {
     exportAbbreviations,
     importAbbreviations: importAbbreviationsFile,
   } = useAbbreviations();
-  // Подсказки фраз при наборе (ghost-text): память по полям этого шаблона,
-  // обучается на скопированных/сохранённых протоколах — см.
-  // lib/phraseMemory.ts. caret — позиция курсора в текстовом поле (только
-  // для расчёта подсказки; null — выделен фрагмент или фокуса нет).
+  // ИИ-подсказки при наборе (ghost-text, pb_hooks/suggest.pb.js). Память
+  // фраз (lib/phraseMemory.ts) обучается на скопированных/сохранённых
+  // протоколах и уходит в запрос как примеры формулировок пользователя —
+  // так подсказки персонализируются. caret — позиция курсора в текстовом
+  // поле (null — выделен фрагмент или фокуса нет).
   const phraseMemory = usePhraseMemory(typeof id === 'string' ? id : undefined);
   const [caret, setCaret] = useState<{ fieldId: string; pos: number } | null>(null);
-  // Подсказки, скрытые по Esc / забытые по Shift+Delete в этом протоколе.
-  const [dismissedPhrases, setDismissedPhrases] = useState<Record<string, Set<string>>>({});
+  // Ответ модели для конкретного текста до курсора.
+  const [aiGhost, setAiGhost] = useState<{ fieldId: string; textBefore: string; ghost: string } | null>(null);
+  // Скрытые по Esc: id поля → тексты до курсора, где подсказку не показывать.
+  const [dismissedGhosts, setDismissedGhosts] = useState<Record<string, Set<string>>>({});
   const [phraseMemoryFieldId, setPhraseMemoryFieldId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Все');
@@ -919,12 +927,12 @@ const handleClearDraft = async () => {
     showSaveModal ||
     phraseMemoryFieldId !== null;
 
-  // === ПОДСКАЗКИ ФРАЗ (ghost-text) ===
-  // Только в активном текстовом поле / «Заключении», курсор в конце текста
-  // (дальше — лишь пробелы) и без выделения. Скрыта, пока открыт выбор
-  // вариантов сокращения, список быстрых кнопок или модалка — у них свои
-  // стрелки/Enter/Esc, и подсказка не должна их перехватывать.
-  const ghost: (Suggestion & { fieldId: string; pos: number }) | null = useMemo(() => {
+  // === ИИ-ПОДСКАЗКИ (ghost-text) ===
+  // Где подсказка уместна: активное текстовое поле / «Заключение», курсор в
+  // конце текста (дальше — лишь пробелы), без выделения. Не показываем,
+  // пока открыт выбор вариантов сокращения, список быстрых кнопок или
+  // модалка — у них свои стрелки/Enter/Esc.
+  const ghostContext = useMemo(() => {
     if (!caret || caret.fieldId !== activeFieldId) return null;
     if (variantSelector || pathNav || openQuickButtonGroupIdx !== null || anyModalOpen) return null;
     const field = template?.fields.find(f => f.id === caret.fieldId);
@@ -936,12 +944,23 @@ const handleClearDraft = async () => {
     // подсказка поверх него только мешала бы.
     if (!value.trim() && field.placeholder) return null;
 
-    const s = suggestPhrase(phraseMemory.memory[field.id], value.slice(0, caret.pos), {
-      capitalizeAtFieldStart: field.type === 'conclusion',
-      dismissed: dismissedPhrases[field.id],
-    });
-    return s ? { ...s, fieldId: field.id, pos: caret.pos } : null;
-  }, [caret, activeFieldId, variantSelector, pathNav, openQuickButtonGroupIdx, anyModalOpen, template, fieldsData, phraseMemory.memory, dismissedPhrases]);
+    const textBefore = value.slice(0, caret.pos);
+    if (dismissedGhosts[field.id]?.has(textBefore)) return null;
+    return { field, fieldId: field.id, pos: caret.pos, textBefore };
+  }, [caret, activeFieldId, variantSelector, pathNav, openQuickButtonGroupIdx, anyModalOpen, template, fieldsData, dismissedGhosts]);
+
+  // Показываем ответ модели, только если он получен ровно для текущего
+  // текста до курсора. Если пользователь печатает то, что подсказано,
+  // подсказка «сужается» без нового запроса — как в Google.
+  const ghost = useMemo(() => {
+    if (!ghostContext || !aiGhost || aiGhost.fieldId !== ghostContext.fieldId) return null;
+    const { textBefore } = ghostContext;
+    if (!textBefore.startsWith(aiGhost.textBefore)) return null;
+    const typed = textBefore.slice(aiGhost.textBefore.length);
+    if (!aiGhost.ghost.toLowerCase().startsWith(typed.toLowerCase())) return null;
+    const rest = aiGhost.ghost.slice(typed.length);
+    return rest.trim() ? { fieldId: ghostContext.fieldId, pos: ghostContext.pos, ghost: rest } : null;
+  }, [ghostContext, aiGhost]);
 
   // Подсказка появилась/исчезла — пересчитываем высоту поля (autoResize
   // учитывает и строки подсказки).
@@ -955,14 +974,10 @@ const handleClearDraft = async () => {
     });
   }, [ghost]);
 
-  const dismissPhrase = (fieldId: string, key: string) => {
-    setDismissedPhrases(prev => ({ ...prev, [fieldId]: new Set([...(prev[fieldId] || []), key]) }));
-  };
-
   // Вставка подсказки (целиком или первым словом) в позицию курсора.
   const acceptGhost = (wordOnly: boolean) => {
     if (!ghost) return;
-    const { fieldId, pos, key } = ghost;
+    const { fieldId, pos } = ghost;
     const insert = wordOnly ? firstWord(ghost.ghost) : ghost.ghost;
     const value: string = fieldsData[fieldId] || '';
     const newText = value.slice(0, pos) + insert + value.slice(pos);
@@ -970,7 +985,6 @@ const handleClearDraft = async () => {
 
     updateField(fieldId, newText);
     setCaret({ fieldId, pos: newPos });
-    if (!wordOnly || insert === ghost.ghost) phraseMemory.accept(fieldId, key);
 
     requestAnimationFrame(() => {
       const el = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
@@ -983,8 +997,7 @@ const handleClearDraft = async () => {
 
   // Клавиши подсказки. true — событие обработано (дальше не передаём).
   // → — принять целиком, Ctrl/Alt+→ — одно слово (Tab занят переходом
-  // между полями), Esc — скрыть эту фразу до конца протокола,
-  // Shift+Delete — забыть фразу совсем.
+  // между полями), Esc — скрыть подсказку для этого места.
   const handleGhostKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: string): boolean => {
     if (!ghost || ghost.fieldId !== fieldId || e.nativeEvent.isComposing) return false;
 
@@ -993,17 +1006,10 @@ const handleClearDraft = async () => {
       acceptGhost(e.ctrlKey || e.altKey);
       return true;
     }
-    if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+    if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && ghostContext) {
       e.preventDefault();
-      phraseMemory.reject(fieldId, ghost.key);
-      dismissPhrase(fieldId, ghost.key);
-      return true;
-    }
-    if (e.key === 'Delete' && e.shiftKey) {
-      e.preventDefault();
-      phraseMemory.forget(fieldId, ghost.key);
-      dismissPhrase(fieldId, ghost.key);
-      showToast('Фраза удалена из подсказок', 1500);
+      const { textBefore } = ghostContext;
+      setDismissedGhosts(prev => ({ ...prev, [fieldId]: new Set([...(prev[fieldId] || []), textBefore]) }));
       return true;
     }
     return false;
@@ -1026,7 +1032,8 @@ const handleClearDraft = async () => {
 
   const startNewReportPhrases = () => {
     phraseMemory.startNewReport();
-    setDismissedPhrases({});
+    setDismissedGhosts({});
+    setAiGhost(null);
   };
 
   // Возврат фокуса в поле, которое было активно до открытия модалки
@@ -1737,6 +1744,58 @@ initializeCollapsedState(record.fields);
       stateAfterText
     ]
   );
+
+  // Запрос подсказки у модели: после паузы в наборе (AI_SUGGEST_DELAY_MS),
+  // с кэшем по «поле + текст до курсора» и отбрасыванием устаревших ответов.
+  // 503 (ключ не настроен на сервере) — выключаем подсказки до перезагрузки.
+  const aiCacheRef = useRef<Map<string, string>>(new Map());
+  const aiRequestSeqRef = useRef(0);
+  const aiDisabledRef = useRef(false);
+  useEffect(() => {
+    if (!ghostContext || aiDisabledRef.current || ghost) return;
+    const { field, fieldId, textBefore } = ghostContext;
+
+    const cacheKey = fieldId + '\u0000' + textBefore;
+    const cached = aiCacheRef.current.get(cacheKey);
+    if (cached !== undefined) {
+      setAiGhost({ fieldId, textBefore, ghost: cached });
+      return;
+    }
+
+    const seq = ++aiRequestSeqRef.current;
+    const timer = setTimeout(async () => {
+      const examples = rankedPhrases(phraseMemory.memory[fieldId])
+        .slice(0, 30)
+        .map(p => p.entry.t.split(SLOT).join('N'));
+      try {
+        const res = await pb.send<{ text: string }>('/api/suggest', {
+          method: 'POST',
+          body: {
+            textBefore,
+            fieldLabel: field.label || '',
+            templateTitle: template?.title || '',
+            isConclusion: field.type === 'conclusion',
+            examples,
+            findings: field.type === 'conclusion' ? finalPlainText : '',
+          },
+        });
+        const ghostText = toGhost(textBefore, res.text || '');
+        aiCacheRef.current.set(cacheKey, ghostText);
+        if (aiCacheRef.current.size > 300) {
+          aiCacheRef.current.delete(aiCacheRef.current.keys().next().value!);
+        }
+        if (seq === aiRequestSeqRef.current) setAiGhost({ fieldId, textBefore, ghost: ghostText });
+      } catch (err: unknown) {
+        if ((err as { status?: number })?.status === 503) aiDisabledRef.current = true;
+        else console.warn('[suggest] подсказка не получена:', err);
+      }
+    }, AI_SUGGEST_DELAY_MS);
+
+    return () => clearTimeout(timer);
+    // phraseMemory.memory/finalPlainText читаются в момент запроса, но
+    // перезапускать ожидание из-за их изменения не нужно.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ghostContext, ghost === null]);
 
   const updateField = (
   fieldId: string,
@@ -3473,11 +3532,10 @@ for (const f of visibleFields) {
                 ))}
               </ModalBody>
               <div className="px-6 py-3 border-t border-white/10 text-xs text-zinc-500 leading-relaxed">
-                Подсказки учатся на скопированных и сохранённых протоколах.{' '}
+                ИИ-подсказки пишут в вашем стиле по этим фразам — они собираются из скопированных и сохранённых протоколов.{' '}
                 <span className="text-zinc-400">→</span> — принять,{' '}
                 <span className="text-zinc-400">Ctrl/⌥+→</span> — одно слово,{' '}
-                <span className="text-zinc-400">Esc</span> — скрыть,{' '}
-                <span className="text-zinc-400">Shift+Delete</span> — забыть фразу.
+                <span className="text-zinc-400">Esc</span> — скрыть.
               </div>
             </>
           );

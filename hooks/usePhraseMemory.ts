@@ -3,21 +3,19 @@ import pb from '../lib/pocketbase';
 import {
   forget as forgetPhrase,
   learnField,
-  markAccepted,
-  markRejected,
   type FieldMemory,
   type TemplateMemory,
 } from '../lib/phraseMemory';
 
 // Память фраз пользователя для одного шаблона (коллекция phrase_memory,
 // одна запись на пару user+template — см. миграцию
-// 0005_create_phrase_memory.js). Логика обучения/подсказок — в
-// lib/phraseMemory.ts, UI — в pages/filler.tsx.
+// 0005_create_phrase_memory.js). Логика обучения — в lib/phraseMemory.ts,
+// UI и запрос ИИ-подсказок — в pages/filler.tsx.
 //
 // Запись создаётся лениво, при первом сохранении: просто открыть шаблон —
-// не повод заводить пустую запись. Сохранение отложенное (SAVE_DELAY_MS):
-// принятия подсказок идут пачками во время набора, а писать в базу на
-// каждое — лишняя нагрузка.
+// не повод заводить пустую запись. Удаления из окна «Выученные фразы»
+// сохраняются с задержкой (SAVE_DELAY_MS) — несколько подряд уходят одной
+// записью; обучение после копирования протокола — сразу.
 const SAVE_DELAY_MS = 1500;
 
 export function usePhraseMemory(templateId: string | undefined) {
@@ -138,17 +136,9 @@ export function usePhraseMemory(templateId: string | undefined) {
     learnedThisReportRef.current = {};
   }, []);
 
-  const accept = useCallback((fieldId: string, key: string) => {
-    updateFieldMemory(fieldId, m => markAccepted(m, key));
-  }, [updateFieldMemory]);
-
-  const reject = useCallback((fieldId: string, key: string) => {
-    updateFieldMemory(fieldId, m => markRejected(m, key));
-  }, [updateFieldMemory]);
-
   const forget = useCallback((fieldId: string, key: string) => {
     updateFieldMemory(fieldId, m => forgetPhrase(m, key));
   }, [updateFieldMemory]);
 
-  return { memory, learnFromReport, startNewReport, accept, reject, forget };
+  return { memory, learnFromReport, startNewReport, forget };
 }

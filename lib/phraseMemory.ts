@@ -1,6 +1,6 @@
-// Память фраз для подсказок при наборе (ghost-text, как Google/Gmail Smart
-// Compose) — чистая логика без React и PocketBase, хранение см. в
-// hooks/usePhraseMemory.ts.
+// Память фраз пользователя — примеры его формулировок для ИИ-подсказок
+// (pb_hooks/suggest.pb.js): чистая логика без React и PocketBase, хранение
+// см. в hooks/usePhraseMemory.ts.
 //
 // Единица обучения — «фраза»: кусок текста поля между знаками-разделителями
 // (. , ; ! ? … и перевод строки). Не целые предложения: в описаниях одни и
@@ -8,8 +8,8 @@
 // разных сочетаниях, и на уровне предложений они бы не обобщались.
 //
 // Числа, стоящие отдельно («12×8 мм», «1,5 см»), при обучении заменяются на
-// слот SLOT: фраза запоминается как «размерами #×# мм», и подсказка доходит
-// только до числа, не навязывая размеры прошлого пациента. Числа, слитые с
+// слот SLOT: фраза запоминается как «размерами #×# мм» — в примеры для
+// модели не попадают размеры конкретных пациентов. Числа, слитые с
 // буквами (T2, С1-С7), — часть термина и остаются как есть.
 
 export const SLOT = '#';
@@ -20,10 +20,12 @@ export interface PhraseEntry {
   t: string;
   c: number;          // сколько раз фраза попала в скопированный/сохранённый протокол
   u: number;          // когда использовалась последний раз (ms)
-  a?: number;         // сколько раз подсказку с этой фразой приняли (→)
-  r?: number;         // сколько раз подсказку явно отклонили (Esc)
+  // Остались в записях от статистических подсказок (до ИИ): учитываются
+  // в ранжировании, но больше не пополняются.
+  a?: number;
+  r?: number;
   // Какие фразы стояли перед этой в том же поле: ключ предыдущей фразы
-  // ('' — начало поля) → сколько раз. Для подсказки следующей фразы.
+  // ('' — начало поля) → сколько раз.
   p?: Record<string, number>;
 }
 
@@ -125,120 +127,11 @@ export function learnField(
   return { mem: learned.length ? prune(next, now) : mem, learned };
 }
 
-export interface Suggestion {
-  key: string;     // ключ фразы в памяти поля
-  ghost: string;   // что дописать после курсора
-}
-
-// Подсказка для текста до курсора. isSentenceStartCapital — писать ли
-// фразу с большой буквы в самом начале поля (для «Заключения» — да, для
-// остальных полей — нет: в протоколе они идут после «Название поля:»,
-// та же логика, что у быстрых кнопок в insertPhrase).
-export function suggest(
-  mem: FieldMemory | undefined,
-  textBeforeCaret: string,
-  options: { capitalizeAtFieldStart: boolean; dismissed?: Set<string>; now?: number },
-): Suggestion | null {
-  if (!mem) return null;
-  const now = options.now ?? Date.now();
-
-  // Текущая (недописанная) фраза — после последнего разделителя.
-  let lastSep = -1;
-  let lastSepChar = '';
-  for (const m of textBeforeCaret.matchAll(SEPARATOR)) {
-    lastSep = m.index!;
-    lastSepChar = m[0];
-  }
-  const rawCurrent = textBeforeCaret.slice(lastSep + 1);
-  const current = normalizePhrase(rawCurrent);
-  const currentKey = current.toLowerCase();
-
-  // Фразы, уже стоящие в поле, повторно не предлагаем.
-  const completed = splitPhrases(textBeforeCaret.slice(0, lastSep + 1)).map(toKey);
-  const present = new Set(completed);
-  const prevKey = completed.length ? completed[completed.length - 1] : '';
-
-  const candidates = Object.entries(mem).filter(([key]) =>
-    !present.has(key) && !options.dismissed?.has(key)
-  );
-
-  // 1) Начата фраза — дописываем её. Сначала ищем совпадение с начала
-  // фразы, затем — с каждого следующего слова: перед запомненной фразой
-  // может стоять другой текст без разделителя («контуры ровные гор…»).
-  // Чем раньше начало совпадения, тем больше контекста — первое найденное
-  // и берём. Для хвоста — минимум 3 символа, чтобы короткое слово («в»,
-  // «на») не тянуло случайные подсказки.
-  if (current.trim().length >= 2) {
-    const starts = [0];
-    for (let i = 1; i < current.length; i++) {
-      if (current[i - 1] === ' ' && current[i] !== ' ') starts.push(i);
-    }
-    for (const start of starts) {
-      const sub = currentKey.slice(start);
-      if (sub.trim().length < (start === 0 ? 2 : 3)) continue;
-      let best: { key: string; score: number } | null = null;
-      for (const [key, e] of candidates) {
-        if (key.length <= sub.length || !key.startsWith(sub)) continue;
-        const context = start === 0 ? (e.p?.[prevKey] || 0) : 0;
-        const score = baseScore(e, now) * (1 + context);
-        if (!best || score > best.score) best = { key, score };
-      }
-      if (!best) continue;
-      const ghost = cutAtSlot(mem[best.key].t.slice(sub.length));
-      if (ghost.trim()) return { key: best.key, ghost };
-    }
-    return null;
-  }
-
-  // 2) Фраза ещё не начата — предлагаем следующую целиком, если после
-  // предыдущей фразы (или в начале поля) что-то уже встречалось. Только
-  // сразу после пробела/перевода строки: после «.» без пробела курсор ещё
-  // «внутри» набора знака, а в пустом поле — в самом начале.
-  const atFieldStart = textBeforeCaret.trim() === '';
-  if (!atFieldStart && !/\s$/.test(textBeforeCaret)) return null;
-  if (current.trim() !== '') return null;
-
-  let best: { key: string; score: number } | null = null;
-  for (const [key, e] of candidates) {
-    const context = e.p?.[atFieldStart ? '' : prevKey] || 0;
-    if (!context) continue;
-    const score = context * baseScore(e, now);
-    if (!best || score > best.score) best = { key, score };
-  }
-  if (!best) return null;
-
-  const capitalize = atFieldStart
-    ? options.capitalizeAtFieldStart
-    : /[.!?…\n]/.test(lastSepChar);
-  let text = mem[best.key].t;
-  if (capitalize) text = text.charAt(0).toUpperCase() + text.slice(1);
-  const ghost = cutAtSlot(text);
-  return ghost.trim() ? { key: best.key, ghost } : null;
-}
-
-// Подсказка обрывается перед числовым слотом — число пользователь вводит сам.
-const cutAtSlot = (text: string): string => {
-  const i = text.indexOf(SLOT);
-  return i === -1 ? text : text.slice(0, i);
-};
-
 // Первое слово подсказки (для Ctrl/Alt+→) — вместе с пробелом перед ним.
 export const firstWord = (ghost: string): string => {
   const m = ghost.match(/^\s*\S+/);
   return m ? m[0] : ghost;
 };
-
-export function markAccepted(mem: FieldMemory, key: string, now = Date.now()): FieldMemory {
-  const e = mem[key];
-  if (!e) return mem;
-  return { ...mem, [key]: { ...e, a: (e.a || 0) + 1, u: now } };
-}
-
-export function markRejected(mem: FieldMemory, key: string): FieldMemory {
-  const e = mem[key];
-  if (!e) return mem;
-  return { ...mem, [key]: { ...e, r: (e.r || 0) + 1 } };
-}
 
 export function forget(mem: FieldMemory, key: string): FieldMemory {
   if (!mem[key]) return mem;

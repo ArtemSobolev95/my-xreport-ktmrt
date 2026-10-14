@@ -19,6 +19,7 @@ import { toGhost } from '../lib/aiSuggest';
 import { wordDiff } from '../lib/textDiff';
 import { useDialog } from '../components/DialogProvider';
 import CollapseRow from '../components/CollapseRow';
+import SmoothHeight from '../components/SmoothHeight';
 import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../components/AnimatedModal';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
@@ -3118,6 +3119,8 @@ for (const f of visibleFields) {
         
         {/* Все поля остаются без изменений */}
         {(f.type === 'text' || f.type === 'conclusion') && (
+  // Карточка растёт плавно вслед за полем (и строкой ИИ-проверки под ним).
+  <SmoothHeight className="w-full">
   <div className="relative w-full">
   <textarea
     ref={el => { if (el) inputRefs.current[f.id] = el; }}
@@ -3203,6 +3206,7 @@ for (const f of visibleFields) {
     </div>
   )}
   </div>
+  </SmoothHeight>
 )}
 
         {f.type === 'number' && (

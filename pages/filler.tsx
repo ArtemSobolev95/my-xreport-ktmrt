@@ -3229,6 +3229,11 @@ for (const f of visibleFields) {
       className="pointer-events-none absolute inset-x-0 top-0 px-1 py-0.5 leading-tight text-sm whitespace-pre-wrap break-words text-transparent"
     >
       {(fieldsData[f.id] || '').slice(0, ghost.pos)}
+      {/* Разрешённый перенос на стыке: иначе недописанное слово вместе с
+          подсказкой («гор» + «изонтальный») переносилось в слое целиком на
+          следующую строку, а в самом поле «гор» оставалось на прежней —
+          подсказка съезжала с пустым отступом. */}
+      <wbr />
       <span className="text-zinc-500">{ghost.ghost}</span>
     </div>
   )}

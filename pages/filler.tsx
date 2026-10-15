@@ -14,7 +14,7 @@ import { evaluateFormula } from '../lib/evaluateFormula';
 import { generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
 import { usePhraseMemory } from '../hooks/usePhraseMemory';
-import { firstWord, rankedPhrases, selectExamples, sumStats, SLOT } from '../lib/phraseMemory';
+import { firstWord, rankedPhrases, selectExamples, selectVocabulary, suggestedPhrase, sumStats, SLOT } from '../lib/phraseMemory';
 import { toGhost } from '../lib/aiSuggest';
 import { wordDiff } from '../lib/textDiff';
 import { useDialog } from '../components/DialogProvider';
@@ -95,6 +95,9 @@ const FIELD_ACTIONS_RAIL_WIDTH = 46;
 // Пауза в наборе перед запросом ИИ-подсказки: меньше — чаще запросы на
 // каждую букву, больше — подсказка заметно «опаздывает».
 const AI_SUGGEST_DELAY_MS = 350;
+// Сколько выученных фраз поля нужно, чтобы перестать подмешивать в запрос
+// модели фразы быстрых кнопок (см. запрос подсказки).
+const COLD_START_PHRASES = 10;
 
 // Кнопка нижней панели действий (копировать/сохранить/сброс/…). Подсказки
 // (tooltip) на странице заполнения остались только у этого ряда.
@@ -981,12 +984,44 @@ const handleClearDraft = async () => {
   }, [ghost]);
 
   // Вставка подсказки (целиком или первым словом) в позицию курсора.
+  // Неявный отказ: подсказка была видна, а пользователь напечатал другое
+  // (текст продлился, но не так, как предлагалось). Не считается отказом:
+  // удаление текста, уход из поля, напечатанная вручную та же подсказка.
+  const rejectedAiGhostRef = useRef<typeof aiGhost>(null);
+  const visibleGhostRef = useRef<{ fieldId: string; textBefore: string; ghost: string; source: typeof aiGhost } | null>(null);
+  useEffect(() => {
+    const prev = visibleGhostRef.current;
+    if (ghost && ghostContext) {
+      if (!prev || prev.source !== aiGhost) {
+        visibleGhostRef.current = { fieldId: ghost.fieldId, textBefore: ghostContext.textBefore, ghost: ghost.ghost, source: aiGhost };
+      }
+      return;
+    }
+    visibleGhostRef.current = null;
+    if (!prev || !ghostContext || ghostContext.fieldId !== prev.fieldId) return;
+    if (prev.source === acceptedAiGhostRef.current || prev.source === rejectedAiGhostRef.current) return;
+    const now = ghostContext.textBefore.toLowerCase();
+    const before = prev.textBefore.toLowerCase();
+    if (now.length <= before.length || !now.startsWith(before)) return;
+    if (now.startsWith(before + prev.ghost.toLowerCase().trimEnd())) return;
+    if (prev.ghost.trim().length < 3) return;
+    rejectedAiGhostRef.current = prev.source;
+    phraseMemory.recordRejected(prev.fieldId, suggestedPhrase(prev.textBefore, prev.ghost));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ghost, ghostContext]);
+
   // Подсказка (ответ модели) засчитывается принятой один раз — даже если
   // её принимали по слову несколькими нажатиями.
   const acceptedAiGhostRef = useRef<typeof aiGhost>(null);
+  // После принятия продолжение запрашивается сразу, без паузы в наборе.
+  // Окно по времени, а не флаг «один раз»: сразу после вставки браузер
+  // переставляет курсор, эффект запроса перезапускается — флаг успевал
+  // сброситься, и запрос уходил с обычной паузой.
+  const justAcceptedAtRef = useRef(0);
   const acceptGhost = (wordOnly: boolean) => {
     if (!ghost) return;
     const { fieldId, pos } = ghost;
+    justAcceptedAtRef.current = performance.now();
     if (aiGhost && acceptedAiGhostRef.current !== aiGhost) {
       acceptedAiGhostRef.current = aiGhost;
       phraseMemory.recordSuggestStat(fieldId, aiGhost.model, { accepted: 1 });
@@ -1022,6 +1057,8 @@ const handleClearDraft = async () => {
     if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && ghostContext) {
       e.preventDefault();
       const { textBefore } = ghostContext;
+      if (aiGhost) rejectedAiGhostRef.current = aiGhost;
+      phraseMemory.recordRejected(fieldId, suggestedPhrase(textBefore, ghost.ghost));
       setDismissedGhosts(prev => ({ ...prev, [fieldId]: new Set([...(prev[fieldId] || []), textBefore]) }));
       return true;
     }
@@ -1845,6 +1882,27 @@ initializeCollapsedState(record.fields);
     ]
   );
 
+  // Уже заполненные пользователем поля протокола (кроме fieldId) — контекст
+  // для ИИ-подсказки. Только введённые значения: нормы-placeholder'ы в
+  // пустых полях модель только запутали бы.
+  const reportContextFor = (fieldId: string): string => {
+    if (!template) return '';
+    const lines: string[] = [];
+    for (const f of template.fields) {
+      if (f.id === fieldId || deletedFieldIds.includes(f.id)) continue;
+      const v = fieldsData[f.id];
+      const label = f.label || '';
+      if ((f.type === 'text' || f.type === 'conclusion' || f.type === 'select') && typeof v === 'string' && v.trim()) {
+        lines.push(`${label}: ${v.trim()}`);
+      } else if (f.type === 'number' && v !== undefined && v !== null && String(v).trim()) {
+        lines.push(`${label}: ${v}${f.unit ? ' ' + f.unit : ''}`);
+      } else if (f.type === 'checkbox' && v === true && f.checkedPhrase) {
+        lines.push(`${label}: ${f.checkedPhrase}`);
+      }
+    }
+    return lines.join('\n');
+  };
+
   // Запрос подсказки у модели: после паузы в наборе (AI_SUGGEST_DELAY_MS),
   // с кэшем по «поле + текст до курсора» и отбрасыванием устаревших ответов.
   // 503 (ключ не настроен на сервере) — выключаем подсказки до перезагрузки.
@@ -1852,6 +1910,7 @@ initializeCollapsedState(record.fields);
   const aiRequestSeqRef = useRef(0);
   const aiDisabledRef = useRef(false);
   useEffect(() => {
+    const immediate = performance.now() - justAcceptedAtRef.current < 300;
     if (!ghostContext || aiDisabledRef.current || ghost) return;
     const { field, fieldId, textBefore } = ghostContext;
 
@@ -1865,13 +1924,20 @@ initializeCollapsedState(record.fields);
 
     const seq = ++aiRequestSeqRef.current;
     const timer = setTimeout(async () => {
+      justAcceptedAtRef.current = 0;
       // Контекст для персонализации: фразы пользователя, отобранные под
-      // набранный текст; последние целые тексты поля; заготовки шаблона
-      // (фразы быстрых кнопок и норма-placeholder).
+      // набранный текст; последние целые тексты поля; заготовки шаблона.
+      // Норма (placeholder) — всегда. Фразы быстрых кнопок — только пока у
+      // поля мало выученных фраз (холодный старт): потом это дублирование —
+      // кнопки быстрее вставить хоткеем, чем ждать их в подсказке, а те,
+      // что пользователь реально вставляет, и так попадают в память фраз.
+      const isColdStart = Object.keys(phraseMemory.memory[fieldId] || {}).length < COLD_START_PHRASES;
       const vocabulary = [
         ...(field.placeholder ? [field.placeholder] : []),
-        ...(field.quickButtons || []).flatMap(g => g.phrases || []),
-      ].filter(Boolean);
+        ...(isColdStart
+          ? selectVocabulary((field.quickButtons || []).flatMap(g => g.phrases || []).filter(Boolean), textBefore, 15)
+          : []),
+      ];
       const startedAt = performance.now();
       try {
         const res = await pb.send<{ text: string; model?: string }>('/api/suggest', {
@@ -1884,6 +1950,10 @@ initializeCollapsedState(record.fields);
             examples: selectExamples(phraseMemory.memory[fieldId], textBefore, 30),
             recent: (phraseMemory.recent[fieldId] || []).slice(0, 6),
             vocabulary,
+            avoid: (phraseMemory.rejected[fieldId] || []).slice(0, 10),
+            // «Заключению» нужен весь протокол (findings), остальным — уже
+            // заполненные соседние поля, чтобы им не противоречить.
+            context: field.type === 'conclusion' ? '' : reportContextFor(fieldId),
             findings: field.type === 'conclusion' ? finalPlainText : '',
           },
         });
@@ -1904,7 +1974,7 @@ initializeCollapsedState(record.fields);
         if ((err as { status?: number })?.status === 503) aiDisabledRef.current = true;
         else console.warn('[suggest] подсказка не получена:', err);
       }
-    }, AI_SUGGEST_DELAY_MS);
+    }, immediate ? 0 : AI_SUGGEST_DELAY_MS);
 
     return () => clearTimeout(timer);
     // phraseMemory.memory/finalPlainText читаются в момент запроса, но

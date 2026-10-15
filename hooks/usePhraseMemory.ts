@@ -3,10 +3,13 @@ import pb from '../lib/pocketbase';
 import {
   emptyStat,
   forget as forgetPhrase,
+  forgiveRejected,
   learnField,
+  rememberRejected,
   rememberText,
   type FieldMemory,
   type RecentTexts,
+  type RejectedTexts,
   type SuggestStat,
   type SuggestStats,
   type TemplateMemory,
@@ -16,7 +19,8 @@ import {
 // запись на пару user+template — см. миграции 0005/0006):
 //   data   — выученные фразы по полям (примеры формулировок для модели);
 //   recent — последние целые тексты полей;
-//   stats  — статистика ИИ-подсказок (показано/принято/время ответа).
+//   stats  — статистика ИИ-подсказок (показано/принято/время ответа);
+//   rejected — отклонённые/проигнорированные подсказки (миграция 0007).
 // Логика — в lib/phraseMemory.ts, UI и запрос ИИ-подсказок — в pages/filler.tsx.
 //
 // Запись создаётся лениво, при первом сохранении: просто открыть шаблон —
@@ -29,8 +33,9 @@ interface MemoryState {
   data: TemplateMemory;
   recent: RecentTexts;
   stats: SuggestStats;
+  rejected: RejectedTexts;
 }
-const EMPTY: MemoryState = { data: {}, recent: {}, stats: {} };
+const EMPTY: MemoryState = { data: {}, recent: {}, stats: {}, rejected: {} };
 
 export function usePhraseMemory(templateId: string | undefined) {
   const [state, setState] = useState<MemoryState>(EMPTY);
@@ -49,8 +54,8 @@ export function usePhraseMemory(templateId: string | undefined) {
     const userId = pb.authStore.record?.id;
     if (!userId) return;
     dirtyRef.current = false;
-    const { data, recent, stats } = stateRef.current;
-    const payload = { data, recent, stats };
+    const { data, recent, stats, rejected } = stateRef.current;
+    const payload = { data, recent, stats, rejected };
 
     try {
       if (recordIdRef.current) {
@@ -96,6 +101,7 @@ export function usePhraseMemory(templateId: string | undefined) {
           data: (rec?.data as TemplateMemory) || {},
           recent: (rec?.recent as RecentTexts) || {},
           stats: (rec?.stats as SuggestStats) || {},
+          rejected: (rec?.rejected as RejectedTexts) || {},
         };
         stateRef.current = loaded;
         setState(loaded);
@@ -128,7 +134,7 @@ export function usePhraseMemory(templateId: string | undefined) {
   // целые тексты полей.
   const learnFromReport = useCallback((fields: { id: string; text: string }[]) => {
     const now = Date.now();
-    let { data, recent } = stateRef.current;
+    let { data, recent, rejected } = stateRef.current;
     let changed = false;
     for (const { id, text } of fields) {
       if (!text?.trim()) continue;
@@ -148,9 +154,17 @@ export function usePhraseMemory(templateId: string | undefined) {
         recentThisReportRef.current.add(id);
         changed = true;
       }
+
+      // Отклонённую раньше фразу пользователь в итоге написал сам — она
+      // ему подходит, «так не пиши» для неё больше не нужно.
+      const nextRejected = forgiveRejected(rejected[id], text);
+      if (nextRejected !== rejected[id]) {
+        rejected = { ...rejected, [id]: nextRejected || [] };
+        changed = true;
+      }
     }
     // Сразу, без задержки: протокол часто копируют и тут же закрывают вкладку.
-    if (changed) commit({ ...stateRef.current, data, recent }, true);
+    if (changed) commit({ ...stateRef.current, data, recent, rejected }, true);
   }, [commit]);
 
   const startNewReport = useCallback(() => {
@@ -181,13 +195,23 @@ export function usePhraseMemory(templateId: string | undefined) {
     });
   }, [commit]);
 
+  // ИИ-подсказку отклонили (Esc) или проигнорировали (напечатали другое).
+  const recordRejected = useCallback((fieldId: string, phrase: string) => {
+    const list = stateRef.current.rejected[fieldId];
+    const next = rememberRejected(list, phrase);
+    if (next === list) return;
+    commit({ ...stateRef.current, rejected: { ...stateRef.current.rejected, [fieldId]: next } });
+  }, [commit]);
+
   return {
     memory: state.data,
     recent: state.recent,
     stats: state.stats,
+    rejected: state.rejected,
     learnFromReport,
     startNewReport,
     forget,
     recordSuggestStat,
+    recordRejected,
   };
 }

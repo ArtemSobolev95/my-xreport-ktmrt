@@ -220,3 +220,56 @@ export function sumStats(byModel: Record<string, SuggestStat> | undefined): Sugg
     ms: acc.ms + s.ms,
   }), emptyStat());
 }
+
+// === Отклонённые ИИ-подсказки ===
+// По полю — последние продолжения, которые пользователь отклонил (Esc) или
+// проигнорировал (напечатал другое): уходят в запрос как «так не пиши».
+
+export type RejectedTexts = Record<string, string[]>;   // id поля → фразы, новые первыми
+const MAX_REJECTED_PER_FIELD = 20;
+
+// Фраза, которую предлагала подсказка: начало текущей фразы (до курсора) +
+// само продолжение. Числа — N, как в остальных примерах для модели.
+export function suggestedPhrase(textBefore: string, ghost: string): string {
+  const parts = textBefore.split(SEPARATOR);
+  return normalizeRecentText((parts[parts.length - 1] || '') + ghost);
+}
+
+export function rememberRejected(list: string[] | undefined, phrase: string): string[] {
+  const key = phrase.toLowerCase();
+  if (phrase.length < 3) return list || [];
+  return [phrase, ...(list || []).filter(p => p.toLowerCase() !== key)].slice(0, MAX_REJECTED_PER_FIELD);
+}
+
+// Убирает из отклонённых то, что пользователь в итоге написал сам: значит,
+// фраза ему всё-таки подходит.
+export function forgiveRejected(list: string[] | undefined, finalText: string): string[] | undefined {
+  if (!list?.length) return list;
+  const text = normalizeRecentText(finalText).toLowerCase();
+  const next = list.filter(p => !text.includes(p.toLowerCase()));
+  return next.length === list.length ? list : next;
+}
+
+// === Заготовки шаблона под набранный текст ===
+// Фразы быстрых кнопок поля: в запрос — только подходящие к текущей фразе
+// (то же начало, общие слова), а не все подряд: короче запрос — быстрее и
+// дешевле ответ. При равенстве — в порядке шаблона.
+export function selectVocabulary(items: string[], textBefore: string, limit: number): string[] {
+  const parts = textBefore.split(SEPARATOR);
+  const currentKey = toKey(normalizePhrase(parts[parts.length - 1] || ''));
+  const currentWords = new Set(contentWords(currentKey));
+  const allTextWords = new Set(contentWords(toKey(normalizePhrase(textBefore))));
+  return items
+    .map((t, i) => {
+      const key = toKey(t);
+      let score = 0;
+      if (currentKey.length >= 2 && key.startsWith(currentKey)) score += 10;
+      const words = contentWords(key);
+      score += 3 * words.filter(w => currentWords.has(w)).length;
+      score += words.filter(w => allTextWords.has(w)).length;
+      return { t, score, i };
+    })
+    .sort((a, b) => b.score - a.score || a.i - b.i)
+    .slice(0, limit)
+    .map(x => x.t);
+}

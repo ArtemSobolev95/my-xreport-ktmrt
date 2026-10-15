@@ -37,8 +37,14 @@ routerAdd("POST", "/api/suggest", (e) => {
     const examples = list(body.examples, 40, 200);
     // Последние целые тексты этого поля — как пользователь строит описание.
     const recent = list(body.recent, 6, 1500);
-    // Заготовки шаблона для поля: фразы быстрых кнопок и норма (placeholder).
-    const vocabulary = list(body.vocabulary, 60, 200);
+    // Заготовки шаблона для поля: норма (placeholder) и — только пока у поля
+    // мало выученных фраз — подходящие к набранному фразы быстрых кнопок
+    // (отбор — на клиенте).
+    const vocabulary = list(body.vocabulary, 30, 200);
+    // Подсказки, которые врач в этом поле отклонил или проигнорировал.
+    const avoid = list(body.avoid, 10, 300);
+    // Уже заполненные другие поля протокола — чтобы не противоречить им.
+    const context = clip(body.context, 3000);
 
     const system = [
         "Ты помогаешь врачу-рентгенологу быстрее писать протокол исследования: дописываешь текст поля, как подсказка при наборе.",
@@ -61,6 +67,12 @@ routerAdd("POST", "/api/suggest", (e) => {
     }
     if (vocabulary.length) {
         parts.push("Заготовки шаблона для этого поля:\n" + vocabulary.map((x) => "- " + x).join("\n"));
+    }
+    if (context) {
+        parts.push("Уже заполнено в других полях протокола (продолжение не должно этому противоречить):\n" + context);
+    }
+    if (avoid.length) {
+        parts.push("Эти варианты врач для этого поля отклонил — не предлагай их и близкие к ним:\n" + avoid.map((x) => "- " + x).join("\n"));
     }
     if (isConclusion && findings) {
         parts.push("Описание исследования (заключение должно ему соответствовать):\n" + findings);

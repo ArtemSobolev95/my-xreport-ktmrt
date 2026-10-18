@@ -103,3 +103,25 @@ button::-moz-focus-inner {
   border: 0;
 }
 
+
+/* Подсказки daisyUI (.tooltip + data-tip) — в цветах интерфейса: по
+   умолчанию фон берётся из --color-neutral темы daisyUI, который на нашем
+   тёмном фоне читался как полупрозрачный, и подсказка сливалась с текстом
+   под ней. Непрозрачный zinc-800, светлый текст, тонкая рамка и тень, как
+   у остальных всплывающих элементов. z-index выше строк страницы; сам
+   контейнер-док (липкий — свой контекст наложения) поднят в
+   lib/pageLayout.ts → DOCK_PANEL_CLASS. */
+.tooltip {
+  --tt-bg: #27272a;
+}
+.tooltip[data-tip]::before {
+  color: #fafafa;
+  font-size: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6);
+  z-index: 60;
+}
+.tooltip::after {
+  z-index: 60;
+}

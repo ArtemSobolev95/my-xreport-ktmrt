@@ -2405,6 +2405,21 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   router.push('/');
 };
 
+  // Перейти к редактированию этого шаблона — чтобы улучшать его прямо по
+  // ходу заполнения (в конструкторе «Заполнить» ведёт обратно). Черновик
+  // протокола сохраняется сразу, не дожидаясь отложенного автосохранения:
+  // после правки шаблона введённое подхватится. Чужой публичный шаблон
+  // конструктор сохранит копией.
+  const goToTemplateEditor = () => {
+    if (typeof id !== 'string') return;
+    saveDraft(id, fieldsData, deletedFieldIds, isComparisonActive, comparisonDates, isMultipleComparison, isStateAfterActive, stateAfterText);
+    router.push(`/builder?edit=${id}`);
+  };
+  // Для горячей клавиши: обработчик клавиатуры регистрируется один раз и
+  // видел бы устаревшие значения протокола.
+  const goToTemplateEditorRef = useRef(goToTemplateEditor);
+  goToTemplateEditorRef.current = goToTemplateEditor;
+
   const importAbbreviations = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2536,8 +2551,9 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
         return;
       }
 
-      // Ctrl+E — свернуть/развернуть все разделы
-      if (isCtrl && e.code === 'KeyE') {
+      // Ctrl+E — свернуть/развернуть все разделы (без Shift: Ctrl+Shift+E —
+      // редактировать шаблон, см. ниже)
+      if (isCtrl && !e.shiftKey && e.code === 'KeyE') {
         e.preventDefault();
         toggleAllSections();
         return;
@@ -2561,6 +2577,13 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
       if (isCtrl && e.shiftKey && e.code === 'KeyH') {
         e.preventDefault();
         goToTemplateList();
+        return;
+      }
+
+      // Ctrl+Shift+E — редактировать этот шаблон
+      if (isCtrl && e.shiftKey && e.code === 'KeyE') {
+        e.preventDefault();
+        goToTemplateEditorRef.current();
         return;
       }
     };
@@ -2849,6 +2872,7 @@ for (const f of visibleFields) {
             <button onClick={() => setShowAbbrModal(true)} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Автокоррекции"><Settings className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <button onClick={openPhraseMemory} onMouseDown={(e) => e.preventDefault()} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Выученные фразы поля"><Sparkles className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <div className="h-px w-5 bg-white/10 my-1" aria-hidden="true" />
+            <button onClick={goToTemplateEditor} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Редактировать шаблон (Ctrl+Shift+E)"><Pencil className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <button onClick={goToTemplateList} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="К списку шаблонов (Ctrl+Shift+H)"><Home className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
           </div>
         </aside>

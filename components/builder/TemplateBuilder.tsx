@@ -1,10 +1,10 @@
 'use client';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../../lib/pocketbase';
 pb.autoCancellation(false);
 import {
-  Trash2, ChevronRight, ClipboardCheck,
+  Trash2, ChevronRight, ChevronDown, ClipboardCheck,
   Heading, Type, List, Calculator,
   Plus, Minus, ImagePlus, Link, Copy, Circle, CircleDot, ArrowLeft, ArrowRight, Save,
   LayoutList, MousePointerClick, Globe,
@@ -38,12 +38,18 @@ import UserHeader from '../../components/UserHeader';
 import dynamic from 'next/dynamic';
 import { migrateQuickButtons } from '../../lib/migrateQuickButtons';
 import { migrateLegacyField } from '../../lib/migrateFieldTypes';
+import { LABELS_UPPERCASE_KEY, LABEL_CHIP_PADDING_PX, labelColumnWidth, measureLabelPx, measureTextPx, sectionLabelWidths } from '../../lib/fieldLabels';
+import { DOCK_BUTTON_CLASS, DOCK_COLUMN_CLASS, DOCK_PANEL_CLASS, PAGE_COLUMNS_CLASS, SIDE_PANEL_TOP_CLASS } from '../../lib/pageLayout';
 import { evaluateFormula } from '../../lib/evaluateFormula';
 import { useDialog } from '../DialogProvider';
 import CollapseRow from '../CollapseRow';
 import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../AnimatedModal';
 
 
+
+// Правая панель конструктора шире, чем на странице заполнения: здесь
+// группы быстрых кнопок редактируются, а не только выбираются.
+const RIGHT_COLUMN_CLASS = 'w-96 shrink-0';
 
 // Должен создаваться один раз на уровне модуля, а не внутри тела
 // компонента: dynamic() возвращает НОВЫЙ компонент при каждом вызове, и
@@ -56,17 +62,8 @@ import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_
 // себе никак не связанная с высотой списка полей) — то самое "моргание
 // всей страницы". Подтверждено через PerformanceObserver({type:
 // 'layout-shift'}): source-элементом сдвига оказывался именно
-// .flex.flex-1.overflow-hidden — контейнер, оборачивающий обе панели.
-// Ширина боковой панели кнопок у карточек полей (разделитель + колонка
-// кнопок) — та же, что FIELD_ACTIONS_RAIL_WIDTH в pages/filler.tsx. Название
-// шаблона и заголовки разделов получают "фантомный" отступ такой ширины,
-// чтобы центрироваться по той же оси, что и названия полей.
-const FIELD_ACTIONS_RAIL_WIDTH = 46;
-
-// Ширина карточек полей — как у колонки полей на странице заполнения
-// (col-span-5 из 12 в max-w-7xl с lg:px-12 и gap-8 = 475px).
-const FIELDS_COLUMN_WIDTH = 475;
-
+// .flex.flex-1.overflow-hidden — контейнер, оборачивавший обе панели (в
+// прежней раскладке).
 const DynamicUserHeader = dynamic(() => import('../../components/UserHeader'), { ssr: false });
 
 // Иконки — один набор (lucide), один размер и толщина линий. Раньше здесь
@@ -97,6 +94,11 @@ const NOTES_ACTION_CLASS = 'inline-flex items-center gap-1.5 h-7 px-2.5 rounded-
 
 // Кнопки-иконки, которые видны только при наведении/фокусе на свою строку
 // (группа Tailwind "row") — вместо постоянных +/− у каждой строки.
+// Шрифт и отступы содержимого строки — как у строк страницы заполнения
+// (CONTENT_TEXT_CLASS в pages/filler.tsx); общие у поля и его прозрачного
+// зеркала, иначе разойдутся переносы и «]» встанет не туда.
+const ROW_TEXT_BASE_CLASS = 'py-0.5 text-sm leading-tight';
+const ROW_TEXT_CLASS = `pl-[8px] pr-1 ${ROW_TEXT_BASE_CLASS}`;
 const ROW_ACTION_CLASS = 'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 transition-[opacity,color]';
 
 // Одна перетаскиваемая строка варианта в инструменте "Список" — своя ручка
@@ -143,14 +145,12 @@ function SortableOption({
         {isDefault ? <CircleDot className="w-4 h-4" /> : <Circle className="w-4 h-4" />}
       </button>
 
-      {/* Ширина по содержимому, а не w-full — иначе кнопка удаления
-          утыкается в правый край карточки, далеко от текста. */}
+      {/* На всю ширину редактора — длинные варианты не обрезаются. */}
       <input
         type="text"
         value={option}
         onChange={e => onChange(e.target.value)}
-        style={{ width: `${Math.max((option || 'Введите значение').length + 2, 12)}ch` }}
-        className="max-w-full bg-transparent border-0 rounded-md px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-sm"
+        className="flex-1 min-w-0 bg-transparent border-0 rounded-md px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-sm"
         placeholder="Введите значение"
       />
 
@@ -272,26 +272,26 @@ function NotesPanel({
 
   return (
     <div className="shrink-0 max-h-[45%] flex flex-col border-t border-white/10">
-      <div className="px-6 pt-4 pb-3 flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <h3 className="font-semibold tracking-tight">Заметки</h3>
-          <p className="text-xs text-zinc-500">Общие для шаблона — при заполнении откроются по кнопке «Заметки»</p>
+      <div className="px-4 pt-4 pb-3">
+        <h3 className="font-semibold tracking-tight">Заметки</h3>
+        <p className="text-xs text-zinc-500">Общие для шаблона — при заполнении откроются по кнопке «Заметки»</p>
+        <div className="mt-2 flex items-center gap-2">
+          <button onClick={onAddLink} className={`shrink-0 ${NOTES_ACTION_CLASS}`}>
+            <Link className="w-3.5 h-3.5" />
+            Ссылка
+          </button>
+          <button onClick={onAddImage} className={`shrink-0 ${NOTES_ACTION_CLASS}`}>
+            <ImagePlus className="w-3.5 h-3.5" />
+            Изображение
+          </button>
         </div>
-        <button onClick={onAddLink} className={`shrink-0 ${NOTES_ACTION_CLASS}`}>
-          <Link className="w-3.5 h-3.5" />
-          Ссылка
-        </button>
-        <button onClick={onAddImage} className={`shrink-0 ${NOTES_ACTION_CLASS}`}>
-          <ImagePlus className="w-3.5 h-3.5" />
-          Изображение
-        </button>
       </div>
 
       {/* Перетаскивание — так же, как варианты в "Список": ручка DragDot,
           строки в CollapseRow (плавное появление/удаление), отступы — py
           внутри строки. Своя прокрутка: список может быть длинным, а блок
           ограничен по высоте, чтобы не вытеснять быстрые кнопки. */}
-      <div className="min-h-0 overflow-auto px-6 pb-4 [scrollbar-gutter:stable]">
+      <div className="min-h-0 overflow-auto px-4 pb-4 [scrollbar-gutter:stable]">
         {/* Список в разметке всегда, а подсказка — отдельно: иначе при
             удалении последней ссылки список размонтировался бы вместе с
             ней, и она пропадала без анимации. */}
@@ -554,9 +554,57 @@ function SortableQuickButtonGroup({
   );
 }
 
+// Норма текстового поля в конструкторе — так же, как содержимое строки на
+// странице заполнения: в [ ], растёт по тексту, закрывающая «]» сразу после
+// последнего символа (прозрачное зеркало текста с теми же отступами).
+function BracketTextarea({
+  value,
+  onChange,
+  placeholder,
+  unit,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  unit?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+  return (
+    <div className="relative">
+      <span aria-hidden="true" className={`pointer-events-none select-none absolute left-0 top-0 ${ROW_TEXT_BASE_CLASS} text-zinc-500`}>[</span>
+      <textarea
+        ref={ref}
+        rows={1}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`block w-full bg-transparent border-0 resize-none overflow-hidden focus:outline-none ${ROW_TEXT_CLASS} text-zinc-400 placeholder:text-zinc-600`}
+      />
+      <div aria-hidden="true" className={`pointer-events-none absolute inset-x-0 top-0 ${ROW_TEXT_CLASS} whitespace-pre-wrap break-words text-transparent`}>
+        {value || placeholder}
+        <span className="ml-[2px] text-zinc-500">]</span>
+        {unit && <span className="ml-1.5 text-zinc-500">{unit}</span>}
+      </div>
+    </div>
+  );
+}
+
+// Строка поля конструктора — как строка страницы заполнения (pages/filler.tsx):
+// «Название: [норма]», колонка названий общая в разделе, заголовок раздела —
+// строка с линией. Кнопки (перетащить / дублировать / удалить) — в конце
+// строки при наведении или у выбранной. Варианты «Списка» и переменные
+// «Формулы» редактируются под строкой, пока она выбрана.
 function SortableField({
   field,
   isSelected,
+  labelColumnPx,
+  uppercase,
   disableLayoutAnimation,
   onSelect,
   onRemove,
@@ -565,15 +613,17 @@ function SortableField({
 }: {
   field: BuilderField;
   isSelected: boolean;
+  labelColumnPx: number;
+  uppercase: boolean;
   disableLayoutAnimation: boolean;
   onSelect: (id: string) => void;
   onRemove: (id: string) => void;
   onUpdate: (id: string, updates: Partial<BuilderField>) => void;
-  onDuplicate: (id: string) => void; 
+  onDuplicate: (id: string) => void;
 }) {
-  // Перетаскивается сама карточка (без DragOverlay-копии) — как группы
+  // Перетаскивается сама строка (без DragOverlay-копии) — как группы
   // быстрых кнопок. animateLayoutChanges по умолчанию у dnd-kit срабатывает
-  // только сразу после drop (доводит брошенную карточку до нового места);
+  // только сразу после drop (доводит брошенную строку до нового места);
   // layout-анимацию framer на это время выключает disableLayoutAnimation
   // (см. isDraggingField в TemplateBuilder), чтобы сдвиг не шёл дважды.
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -582,9 +632,9 @@ function SortableField({
   });
   // Инлайн, не className: opacity/transition у dnd-kit приходят как
   // инлайн-стиль (transform — для drag), а инлайн-стиль всегда побеждает
-  // className по каскаду. Translate, не Transform: у карточек разная
-  // высота, и scaleY из CSS.Transform растягивал бы перетаскиваемую
-  // карточку под размер той, на место которой она встаёт.
+  // className по каскаду. Translate, не Transform: у строк разная высота, и
+  // scaleY из CSS.Transform растягивал бы перетаскиваемую строку под размер
+  // той, на место которой она встаёт.
   const style = {
     transform: CSS.Translate.toString(transform),
     transition,
@@ -632,10 +682,6 @@ function SortableField({
     setOptionIds(prev => arrayMove(prev, oldIndex, newIndex));
   };
 
-  const [checked, setChecked] = useState(false);
-  const [selectedRating, setSelectedRating] = useState<number | null>(null);
-
-  
   const formulaValues = useMemo(() => {
     const values: Record<string, number> = {};
     (field.variables || []).forEach(v => {
@@ -648,7 +694,8 @@ function SortableField({
     if (!expr) return '—';
     try {
       const result = evaluateFormula(expr, formulaValues);
-      return isNaN(result) ? 'Ошибка' : Number(result).toFixed(2);
+      // NaN/∞ обычно значит «примеры значений не заданы» (0/0) — не ошибка.
+      return Number.isFinite(result) ? Number(result).toFixed(2) : '—';
     } catch {
       return 'Ошибка';
     }
@@ -692,38 +739,68 @@ function SortableField({
     onUpdate(field.id, { variables: newVars });
   };
 
-  
+  // Кнопки в конце строки: видны при наведении, фокусе внутри строки или у
+  // выбранной — постоянно видимые у каждой строки были бы визуальным шумом.
+  const actions = (
+    <div className={`shrink-0 flex items-center gap-0.5 transition-opacity ${
+      isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
+    }`}>
+      <div
+        {...listeners}
+        className="w-6 h-6 flex items-center justify-center cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white rounded-md hover:bg-white/10 transition-colors"
+        aria-label="Перетащить"
+      >
+        <DragDot />
+      </div>
+      {field.type === 'text' && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDuplicate(field.id);
+          }}
+          className="w-6 h-6 flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/10 rounded-md transition-colors cursor-pointer"
+          aria-label="Дублировать"
+        >
+          <Copy className="w-3.5 h-3.5" />
+        </button>
+      )}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove(field.id);
+        }}
+        className="w-6 h-6 flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-white/10 rounded-md transition-colors cursor-pointer"
+        aria-label="Удалить"
+      >
+        <Trash2 size={15} />
+      </button>
+    </div>
+  );
 
+  const labelWidth = labelColumnWidth(labelColumnPx);
 
   return (
-    // Раньше исчезновение карточки и сдвиг соседей были двумя отдельными
-    // React-рендерами (сначала CSS collapse через grid-template-rows,
-    // потом — через 220мс в setTimeout — реальный filter() из fields), и
-    // layout="position" пересчитывал FLIP дважды, на каждом рендере отдельно
-    // — читалось как "два этапа, две маленькие остановки", сколько ни
-    // подгоняй тайминги CSS. AnimatePresence с mode="popLayout" (см. список
-    // ниже) убирает саму причину: удаление карточки из fields происходит
-    // сразу, одним рендером.
+    // Раньше исчезновение строки и сдвиг соседей были двумя отдельными
+    // React-рендерами, и layout="position" пересчитывал FLIP дважды —
+    // «два этапа, две маленькие остановки». AnimatePresence с
+    // mode="popLayout" (см. список в TemplateBuilder) убирает саму причину:
+    // удаление из fields происходит сразу, одним рендером.
     //
     // Два вложенных motion.div, а не один — намеренно: если явный
     // animate={{opacity, scale}} и layout="position" висят на ОДНОМ и том же
-    // motion.div, framer иногда не может согласовать layout-проекцию
-    // (transform под FLIP) с ручной scale/opacity-анимацией — на практике
-    // это приводило к тому, что exit молча зависал на полпути (opacity уже
-    // 1, scale так и остаётся 0.95 — ни enter, ни exit не доигрывают до
-    // конца, карточка-призрак не убирается из DOM). Внешний motion.div
-    // отвечает только за layout="position" (сдвиг соседей, transform),
-    // внутренний — только за initial/animate/exit (fade + scale-95), у
-    // каждого своя, не пересекающаяся часть transform.
+    // motion.div, framer иногда не может согласовать layout-проекцию с
+    // ручной scale/opacity-анимацией — exit молча зависал на полпути.
+    // Внешний отвечает только за layout="position" (сдвиг соседей),
+    // внутренний — только за initial/animate/exit.
     <motion.div
       layout={disableLayoutAnimation ? false : 'position'}
       transition={{ duration: 0.22, ease: 'easeOut' }}
       className={isDragging ? 'relative z-10' : ''}
     >
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
+        initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        exit={{ opacity: 0, scale: 0.95 }}
+        exit={{ opacity: 0, scale: 0.98 }}
         transition={{ duration: 0.22, ease: 'easeOut' }}
       >
       <div
@@ -731,333 +808,177 @@ function SortableField({
         style={style}
         {...attributes}
         onClick={() => onSelect(field.id)}
-        className={`card transition-[border-color,box-shadow,background-color] duration-200 ease-out relative group mb-4 ${
-          field.type === 'header'
-            ? `border-0 shadow-none rounded-xl ${isSelected ? 'bg-white/10 ring-2 ring-amber-400/40 ring-inset' : 'bg-transparent'}`
-            : `bg-zinc-900/75 border border-white/10 shadow-2xl rounded-3xl ${
-                isSelected ? 'border-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.3)]' : 'hover:border-white/20'
-              }`
-        } ${isDragging ? 'shadow-2xl' : ''}`}
+        className={`group relative rounded-lg px-2 transition-colors ${
+          field.type === 'header' ? 'mt-5 mb-1 py-1.5' : 'py-1'
+        } ${
+          isSelected ? 'bg-white/[0.05] ring-1 ring-inset ring-amber-400/40' : 'hover:bg-white/[0.02]'
+        } ${isDragging ? 'bg-zinc-900 shadow-2xl' : ''}`}
       >
-      {/* Раскладка повторяет карточки страницы заполнения (pages/filler.tsx):
-          заголовок раздела — прозрачная строка с крупным текстом по центру,
-          поля — колонка контента + боковая панель кнопок за вертикальным
-          разделителем. У заголовка вместо разделителя — панель той же
-          ширины (FIELD_ACTIONS_RAIL_WIDTH), видимая по наведению, чтобы
-          текст центрировался по той же оси, что и названия полей. */}
       {field.type === 'header' ? (
-        <div className="py-2 px-2 flex items-center">
+        // Заголовок раздела — как на странице заполнения: шеврон, название,
+        // линия до конца строки.
+        <div className="flex items-center gap-2">
+          <ChevronDown size={18} className="shrink-0 text-zinc-500" aria-hidden="true" />
           <input
             type="text"
             value={field.label || ''}
             onChange={e => onUpdate(field.id, { label: e.target.value })}
-            className={`flex-1 min-w-0 bg-transparent outline-none text-2xl font-bold tracking-tight text-center placeholder:text-zinc-500 transition-colors ${
+            // Ширина по тексту (16px полужирный ≈ 14px × 16/14), чтобы линия
+            // раздела начиналась сразу после названия.
+            style={{ width: Math.ceil(measureTextPx(field.label || 'Заголовок раздела', 600) * 16 / 14) + 8 }}
+            className={`min-w-0 max-w-[70%] bg-transparent outline-none text-base font-semibold tracking-wide placeholder:text-zinc-500 transition-colors ${
               isSelected ? 'text-amber-400' : 'text-white'
             }`}
-            placeholder="Заголовок"
+            placeholder="Заголовок раздела"
           />
-          <div
-            style={{ width: FIELD_ACTIONS_RAIL_WIDTH }}
-            className={`shrink-0 flex items-center justify-end gap-1 transition-opacity ${
-              isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
-            }`}
-          >
-            <div {...listeners} className="w-6 h-6 flex items-center justify-center cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white transition-colors">
-              <DragDot />
-            </div>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onRemove(field.id);
-              }}
-              className="text-zinc-500 hover:text-red-400 transition-colors cursor-pointer"
-              aria-label="Удалить"
-            >
-              <Trash2 size={16} />
-            </button>
-          </div>
+          <div className="flex-1 h-px bg-white/10" aria-hidden="true" />
+          {actions}
         </div>
       ) : (
-      <div className="flex min-w-0">
-      <div className="flex-1 min-w-0 flex flex-col">
-      <div className="card-body justify-center px-4 pt-3 pb-3">
-        {/* Название поля — чипом по центру, как на странице заполнения.
-            У "Заметки" своего label нет — статичный чип с иконкой. */}
-        {(field.type === 'text' || field.type === 'number' || field.type === 'checkbox' || field.type === 'select' || field.type === 'rating' || field.type === 'formula' || field.type === 'conclusion') && (
-          <div className="flex justify-center mb-1">
+        <>
+        <div className="flex items-start gap-2">
+          {/* Название поля — редактируемая плашка; колонка общая в разделе */}
+          <div className="shrink-0 flex items-start gap-1 pt-px" style={{ width: labelWidth }}>
             <input
               type="text"
               value={field.label || ''}
               onChange={e => onUpdate(field.id, { label: e.target.value })}
               placeholder="Название поля"
-              style={{ width: `${Math.max((field.label || 'Название поля').length + 2, 10)}ch` }}
-              className="max-w-full text-center bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-colors"
+              title={field.label || ''}
+              style={{ width: measureLabelPx(field.label || 'Название поля', uppercase) + LABEL_CHIP_PADDING_PX }}
+              className={`min-w-0 max-w-full bg-white/10 rounded-md px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none focus:bg-white/15 transition-colors ${
+                uppercase ? 'uppercase tracking-wide' : ''
+              }`}
             />
+            <span className="py-0.5 text-sm text-zinc-500 select-none">:</span>
           </div>
-        )}
 
-      <div>
-        {field.type === 'text' || field.type === 'conclusion' ? (
-          <div>
-            {/* Placeholder — редактируется прямо внутри карточки. Без mb-4
-                (лишний хвостовой отступ снизу карточки, которого нет у
-                остальных типов — только у своего инпута свой py-0.5). */}
-            <input
-              type="text"
-              value={field.placeholder || ''}
-              onChange={e => onUpdate(field.id, { placeholder: e.target.value })}
-              className="w-full bg-transparent rounded-md border-0 px-1 py-0.5 leading-tight text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-sm"
-              placeholder="Введите значение"
-            />
-          </div>
-        ) : field.type === 'number' ? (
-  <div className="space-y-2">
+          <div className="flex-1 min-w-0">
+            {(field.type === 'text' || field.type === 'conclusion') && (
+              <BracketTextarea
+                value={field.placeholder || ''}
+                onChange={value => onUpdate(field.id, { placeholder: value })}
+                placeholder={field.type === 'conclusion' ? 'заключение по умолчанию не задано' : 'норма не задана'}
+                unit={field.unit}
+              />
+            )}
 
-    {/* Значение + единица измерения */}
-    <div className="flex gap-4">
-      <div className="flex-none">
-        
-        <input 
-          type="number" 
-          step="any" 
-          value={field.defaultValue || ''} 
-          onChange={e => onUpdate(field.id, { defaultValue: e.target.value })} 
-          className="w-10 text-center text-sm bg-transparent rounded-md border-0 px-0 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors" 
-          placeholder="0" 
-        />
-      </div>
-
-      <div className="w-28">
-      
-        <input 
-          type="text" 
-          value={field.unit || ''} 
-          onChange={e => onUpdate(field.id, { unit: e.target.value })} 
-          className="w-10 text-sm bg-transparent rounded-md border-0 px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-center" 
-          placeholder="ед" 
-        />
-      </div>
-    </div>
-
-  </div>
-
-        ) : field.type === 'checkbox' ? (
-          <div>
-            <div className="flex items-center gap-3">
-              <label className="relative inline-flex shrink-0 cursor-pointer">
-                <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="peer sr-only" />
-                <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-colors flex items-center justify-center">
-                  {checked && (
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-black">
-                      <path d="M5 13l4 4L19 7" />
-                    </svg>
-                  )}
-                </span>
-              </label>
-              <input type="text" value={field.checkedPhrase || ''} onChange={e => onUpdate(field.id, { checkedPhrase: e.target.value })} className="flex-1 bg-transparent outline-none text-white text-sm" placeholder="Введите значение при галочке" />
-            </div>
-            <div className="flex items-center gap-3 mt-2">
-              <span className="relative inline-flex shrink-0 opacity-40">
-                <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent flex items-center justify-center" />
-              </span>
-              <input type="text" value={field.uncheckedPhrase || ''} onChange={e => onUpdate(field.id, { uncheckedPhrase: e.target.value })} className="flex-1 bg-transparent outline-none text-white text-sm" placeholder="Введите значение при пустом чекбоксе" />
-            </div>
-          </div>
-        ) : field.type === 'select' ? (
-          <div>
-            <DndContext
-              sensors={optionSensors}
-              collisionDetection={closestCenter}
-              modifiers={[restrictToVerticalAxis]}
-              onDragEnd={handleOptionDragEnd}
-            >
-              <SortableContext items={optionIds} strategy={verticalListSortingStrategy}>
-                <div>
-                  {/* Отступы между строками — py внутри строки, а не
-                      space-y: margin у анимируемой по высоте строки прыгал
-                      бы скачком в начале/конце анимации. */}
-                  <AnimatePresence initial={false}>
-                    {(field.options || []).map((option, index) => (
-                      <CollapseRow key={optionIds[index] ?? index}>
-                        <div className="py-1">
-                          <SortableOption
-                            id={optionIds[index] ?? String(index)}
-                            option={option}
-                            isDefault={field.defaultValue === option}
-                            onToggleDefault={() => onUpdate(field.id, { defaultValue: field.defaultValue === option ? '' : option })}
-                            onChange={value => handleOptionChange(index, value)}
-                            onRemove={() => handleRemoveOption(index)}
-                          />
-                        </div>
-                      </CollapseRow>
-                    ))}
-                  </AnimatePresence>
-
-                  {/* Кнопка добавления — не на всю ширину строки: иначе
-                      клик по пустому месту рядом с "+" тоже добавляет
-                      вариант. */}
-                  <div className="flex justify-center pt-1 pb-0.5">
-                    <button onClick={handleAddOption} className="text-zinc-400 hover:text-amber-400 transition-colors cursor-pointer" aria-label="Добавить вариант">
-                      <Plus className="w-5 h-5" />
-                    </button>
-                  </div>
-                </div>
-              </SortableContext>
-            </DndContext>
-          </div>
-        ) : field.type === 'rating' ? (
-  <div>
-
-    {/* Количество баллов */}
-    <div className="flex items-center gap-3">
-      <label className="text-sm font-medium text-zinc-400">Количество категорий</label>
-      <input
-        type="number"
-        value={field.max || 5}
-        onChange={e => onUpdate(field.id, { max: parseInt(e.target.value) || 5 })}
-        min={2}
-        max={10}
-        className="w-20 px-4 py-1 bg-white/5 border border-white/10 rounded-2xl text-white text-center focus:outline-none transition-colors"
-      />
-    </div>
-
-    {/* Включить пояснения — тот же чекбокс, что у поля "Чекбокс" (peer
-        + sr-only + своя SVG-галочка), чтобы оба выглядели одинаково —
-        нативный checkbox с accent-amber-400 визуально отличается. */}
-    <label className="flex items-center gap-3 cursor-pointer text-sm text-zinc-300 mt-2">
-      <span className="relative inline-flex shrink-0">
-        <input
-          type="checkbox"
-          checked={field.showExplanations || false}
-          onChange={e => onUpdate(field.id, { showExplanations: e.target.checked })}
-          className="peer sr-only"
-        />
-        <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-colors flex items-center justify-center">
-          {field.showExplanations && (
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5 text-black">
-              <path d="M5 13l4 4L19 7" />
-            </svg>
-          )}
-        </span>
-      </span>
-      <span className="font-medium">Текст для каждой категории</span>
-    </label>
-
-    {/* Пояснения — отступы (gap-2) и размер шрифта цифры (text-sm) как в
-        "Список", чтобы строки в обоих инструментах выглядели одинаково;
-        цифра в колонке шириной w-6 (как иконка в "Список") и text-left —
-        иначе при right-align короткие "1-9" смещались правее иконки. */}
-    <AnimatePresence initial={false}>
-    {field.showExplanations && (
-      <CollapseRow key="explanations">
-      <div className="pt-1">
-        <AnimatePresence initial={false}>
-        {Array.from({ length: field.max || 5 }, (_, i) => (
-          <CollapseRow key={i}>
-          <div className="flex items-center gap-2 py-1">
-            <div className="w-6 text-left text-sm text-white">{i + 1}</div>
-            <input
-              type="text"
-              value={field.explanations?.[i] || ''}
-              onChange={e => {
-  const newExps = [...(field.explanations || Array(field.max || 5).fill(''))];
-  newExps[i] = e.target.value;
-  onUpdate(field.id, { explanations: newExps });
-              }}
-              className="flex-1 bg-transparent rounded-md border-0 px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-sm"
-              placeholder={`Введите значение`}
-            />
-          </div>
-          </CollapseRow>
-        ))}
-        </AnimatePresence>
-      </div>
-      </CollapseRow>
-    )}
-    </AnimatePresence>
-  </div>
-        ) : field.type === 'formula' ? (
-          <div className="space-y-3">
-            <input type="text" value={field.formula || ''} onChange={e => onUpdate(field.id, { formula: e.target.value })} className="w-full bg-transparent rounded-md border-0 px-1 py-0.5 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-colors text-sm" />
-            <div className="flex items-center justify-between text-sm text-white">
-              <span>Переменные</span>
-            </div>
-            <div>
-              <AnimatePresence initial={false}>
-              {(field.variables || []).map((v, i) => (
-              <CollapseRow key={variableIds[i] ?? i}>
-              <div className="group/row flex items-center gap-2 w-full bg-transparent px-0 py-0.5 text-white text-sm">
-                  <input type="text" value={v.name} onChange={e => updateVariableName(i, e.target.value)} className="w-9 text-center bg-transparent rounded-md border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-colors" />
-                  <span className="text-zinc-400 font-medium">=</span>
-                  <input type="text" value={v.value || ''} onChange={e => updateVariableValue(i, e.target.value)} className="w-9 text-center bg-transparent rounded-md border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-colors" />
-                  {/* Кнопка удаления — тот же Minus, что в "Список" */}
-                  <button onClick={() => removeVariable(i)} className={`text-zinc-500 hover:text-red-400 cursor-pointer ml-1 ${ROW_ACTION_CLASS}`} aria-label="Удалить переменную">
-                    <Minus className="w-4 h-4" />
-                  </button>
-                </div>
-              </CollapseRow>
-              ))}
-              </AnimatePresence>
-
-              {/* Кнопка добавления — тот же Plus, что в "Список".
-                  Не на всю ширину строки: иначе клик по пустому месту
-                  рядом с "+" тоже добавляет переменную. */}
-              <div className="flex justify-center py-0.5">
-                <button onClick={addVariable} className="text-zinc-400 hover:text-amber-400 transition-colors cursor-pointer" aria-label="Добавить переменную">
-                  <Plus className="w-5 h-5" />
-                </button>
+            {field.type === 'select' && (
+              <div className={`${ROW_TEXT_BASE_CLASS} text-zinc-400`}>
+                <span className="text-zinc-500">[</span>
+                {(field.options || []).filter(o => o.trim()).length > 0
+                  ? (field.options || []).filter(o => o.trim()).map((o, i, arr) => (
+                    <span key={i}>
+                      <span className={field.defaultValue === o ? 'text-amber-400' : ''}>{o}</span>
+                      {i < arr.length - 1 && <span className="text-zinc-600"> / </span>}
+                    </span>
+                  ))
+                  : <span className="text-zinc-600">варианты не заданы</span>}
+                <span className="ml-[2px] text-zinc-500">]</span>
               </div>
-            </div>
-            <div className="flex items-center gap-3 mt-1">
-              <span className="text-white text-sm mt-1">Результат:</span>
-              <span className="text-white text-sm mt-1">{field.formula ? evaluateFormulaPreview(field.formula) : '—'}</span>
-              <input type="text" value={field.unit || ''} onChange={e => onUpdate(field.id, { unit: e.target.value })} className="w-9 text-center mt-1 bg-transparent rounded-md border-0 px-0 py-0.5 text-white text-sm focus:outline-none focus:bg-white/5 transition-colors" />
-            </div>
+            )}
+
+            {field.type === 'formula' && (
+              <div className={`flex flex-wrap items-baseline gap-x-2 gap-y-1 ${ROW_TEXT_BASE_CLASS}`}>
+                <span className="inline-flex items-baseline">
+                  <span className="text-zinc-500">[</span>
+                  <input
+                    type="text"
+                    value={field.formula || ''}
+                    onChange={e => onUpdate(field.id, { formula: e.target.value })}
+                    placeholder="формула, например a / b"
+                    style={{ width: measureTextPx(field.formula || 'формула, например a / b', 400) + 2 }}
+                    className="max-w-[60vw] bg-transparent border-0 p-0 text-zinc-300 placeholder:text-zinc-600 focus:outline-none"
+                  />
+                  <span className="ml-[2px] text-zinc-500">]</span>
+                </span>
+                <span className="text-zinc-500">→</span>
+                <span className="text-zinc-300">{field.formula ? evaluateFormulaPreview(field.formula) : '—'}</span>
+                {field.unit && <span className="text-zinc-500">{field.unit}</span>}
+              </div>
+            )}
           </div>
-        
-          ) : null}
 
-      </div>
-      </div>
-      </div>
-
-      <div className="w-px bg-white/10 my-3 shrink-0" />
-      {/* Кнопки видны при наведении на карточку, фокусе внутри неё или
-          когда она выбрана — постоянно видимые у каждой карточки они
-          забивали колонку визуальным шумом. */}
-      <div className={`flex flex-col items-center gap-1 pt-3 pb-3 pl-2 pr-3 shrink-0 transition-opacity ${
-        isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100'
-      }`}>
-        <div
-          {...listeners}
-          className="w-6 h-6 flex items-center justify-center cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white rounded-md hover:bg-white/10 transition-colors"
-        >
-          <DragDot />
+          {actions}
         </div>
-        {field.type === 'text' && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDuplicate(field.id);
-            }}
-            className="w-6 h-6 flex items-center justify-center text-zinc-500 hover:text-white hover:bg-white/10 rounded-md transition-colors cursor-pointer"
-            aria-label="Дублировать"
-          >
-            <Copy className="w-4 h-4" />
-          </button>
-        )}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove(field.id);
-          }}
-          className="w-6 h-6 flex items-center justify-center text-zinc-500 hover:text-red-400 hover:bg-white/10 rounded-md transition-colors cursor-pointer"
-          aria-label="Удалить"
-        >
-          <Trash2 size={16} />
-        </button>
-      </div>
-      </div>
+
+        {/* Редактор «Списка» / «Формулы» — под строкой, пока она выбрана. */}
+        <AnimatePresence initial={false}>
+          {isSelected && (field.type === 'select' || field.type === 'formula') && (
+            <CollapseRow key="editor">
+              <div className="pt-1.5 pb-1" style={{ paddingLeft: labelWidth }}>
+                <div className="ml-2 rounded-xl bg-white/[0.03] border border-white/10 px-3 py-2">
+                  {field.type === 'select' ? (
+                    <DndContext
+                      sensors={optionSensors}
+                      collisionDetection={closestCenter}
+                      modifiers={[restrictToVerticalAxis]}
+                      onDragEnd={handleOptionDragEnd}
+                    >
+                      <SortableContext items={optionIds} strategy={verticalListSortingStrategy}>
+                        <div>
+                          <div className="pb-1 text-[11px] text-zinc-500">Варианты · <CircleDot className="inline w-3 h-3 -mt-px" /> — по умолчанию</div>
+                          {/* Отступы между строками — py внутри строки, а не
+                              space-y: margin у анимируемой по высоте строки
+                              прыгал бы скачком в начале/конце анимации. */}
+                          <AnimatePresence initial={false}>
+                            {(field.options || []).map((option, index) => (
+                              <CollapseRow key={optionIds[index] ?? index}>
+                                <div className="py-0.5">
+                                  <SortableOption
+                                    id={optionIds[index] ?? String(index)}
+                                    option={option}
+                                    isDefault={field.defaultValue === option}
+                                    onToggleDefault={() => onUpdate(field.id, { defaultValue: field.defaultValue === option ? '' : option })}
+                                    onChange={value => handleOptionChange(index, value)}
+                                    onRemove={() => handleRemoveOption(index)}
+                                  />
+                                </div>
+                              </CollapseRow>
+                            ))}
+                          </AnimatePresence>
+                          <button onClick={handleAddOption} className="mt-1 inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-amber-400 transition-colors cursor-pointer">
+                            <Plus className="w-3.5 h-3.5" />
+                            Вариант
+                          </button>
+                        </div>
+                      </SortableContext>
+                    </DndContext>
+                  ) : (
+                    <div>
+                      <div className="pb-1 text-[11px] text-zinc-500">Переменные и пример значений для предпросмотра</div>
+                      <AnimatePresence initial={false}>
+                        {(field.variables || []).map((v, i) => (
+                          <CollapseRow key={variableIds[i] ?? i}>
+                            <div className="group/row flex items-center gap-2 py-0.5 text-sm">
+                              <input type="text" value={v.name} onChange={e => updateVariableName(i, e.target.value)} className="w-10 text-center bg-white/5 rounded-md border-0 px-0 py-0.5 text-white focus:outline-none focus:bg-white/10 transition-colors" aria-label="Имя переменной" />
+                              <span className="text-zinc-500">=</span>
+                              <input type="text" value={v.value || ''} onChange={e => updateVariableValue(i, e.target.value)} className="w-14 text-center bg-transparent rounded-md border-0 px-0 py-0.5 text-zinc-300 focus:outline-none focus:bg-white/5 transition-colors" aria-label="Пример значения" />
+                              <button onClick={() => removeVariable(i)} className={`text-zinc-500 hover:text-red-400 cursor-pointer ${ROW_ACTION_CLASS}`} aria-label="Удалить переменную">
+                                <Minus className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </CollapseRow>
+                        ))}
+                      </AnimatePresence>
+                      <div className="mt-1 flex items-center gap-4">
+                        <button onClick={addVariable} className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-amber-400 transition-colors cursor-pointer">
+                          <Plus className="w-3.5 h-3.5" />
+                          Переменная
+                        </button>
+                        <label className="inline-flex items-center gap-1.5 text-xs text-zinc-500">
+                          Единица
+                          <input type="text" value={field.unit || ''} onChange={e => onUpdate(field.id, { unit: e.target.value })} placeholder="мм" className="w-14 bg-white/5 rounded-md border-0 px-1.5 py-0.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:bg-white/10 transition-colors" />
+                        </label>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CollapseRow>
+          )}
+        </AnimatePresence>
+        </>
       )}
       </div>
       </motion.div>
@@ -1478,198 +1399,177 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
 
   const goToList = () => router.push('/');
 
+  // Названия ЗАГЛАВНЫМИ — как настроено на странице заполнения (там
+  // переключатель), чтобы строки выглядели так же.
+  const [labelsUppercase, setLabelsUppercase] = useState(false);
+  useEffect(() => {
+    try {
+      setLabelsUppercase(localStorage.getItem(LABELS_UPPERCASE_KEY) === '1');
+    } catch {}
+  }, []);
+  // Колонка названий — общая в разделе (lib/fieldLabels.ts).
+  const labelWidths = sectionLabelWidths(fields, labelsUppercase);
+
   return (
-    <div className="flex flex-col h-screen bg-zinc-950 text-white">
-
-      <div className="sticky top-0 z-50 bg-zinc-900 border-b border-white/10">
-  <DynamicUserHeader />
-</div>
-
-      <div className="flex flex-1 overflow-hidden">
-
-
-      {/* ЛЕВАЯ ПАНЕЛЬ — инструменты. Фон и рамки панелей одни на всю
-          страницу: zinc-900 + border-white/10 (центр — zinc-950). */}
-      <div className="w-60 bg-zinc-900 border-r border-white/10 px-3 pt-6 pb-4 overflow-auto flex flex-col">
-        <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-          Добавить поле
-        </div>
-        <div className="space-y-0.5">
-          {availableFields.map(item => (
+    // Раскладка — как у страницы заполнения (lib/pageLayout.ts): липкая шапка
+    // со строкой действий, док инструментов слева, строки полей по центру,
+    // справа — быстрые кнопки выбранного поля и заметки шаблона.
+    <div className="min-h-screen bg-zinc-950 text-white">
+      <div className="sticky top-0 z-50 bg-zinc-950 border-b border-white/10">
+        <DynamicUserHeader />
+        <div className={PAGE_COLUMNS_CLASS}>
+          <div className={DOCK_COLUMN_CLASS} aria-hidden="true" />
+          <div className="flex-1 min-w-0 flex items-center gap-2 py-2">
             <button
-              key={item.type}
-              onClick={() => addField(item.type)}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-zinc-300 hover:text-amber-400 hover:bg-white/5 transition-colors cursor-pointer"
+              onClick={goToList}
+              className="h-8 -ml-2.5 px-2.5 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
             >
-              {item.icon}
-              <span className="text-sm font-medium tracking-tight text-white">{item.label}</span>
+              <ArrowLeft className="w-4 h-4" />
+              Шаблоны
             </button>
-          ))}
+            <div className="ml-auto flex items-center gap-2">
+              {isDirty && (
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-500">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                  Не сохранено
+                </span>
+              )}
+              {/* Публичность — свойство шаблона; применяется при сохранении,
+                  как и остальные правки. Только у своего шаблона. */}
+              {isOwner && (
+                <button
+                  onClick={() => setIsPublic(v => !v)}
+                  aria-pressed={isPublic}
+                  className={`h-8 px-3 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
+                    isPublic
+                      ? 'bg-amber-400/10 border-amber-400 text-amber-400'
+                      : 'bg-white/5 border-white/10 text-zinc-300 hover:bg-white/10 hover:text-white'
+                  }`}
+                  title={isPublic ? 'Виден всем пользователям. Нажмите, чтобы сделать личным' : 'Виден только вам. Нажмите, чтобы сделать публичным'}
+                >
+                  <Globe className="w-3.5 h-3.5" strokeWidth={1.75} />
+                  {isPublic ? 'Публичный' : 'Личный'}
+                </button>
+              )}
+              <button
+                onClick={goToFiller}
+                className="h-8 px-3 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+              >
+                Заполнить
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={handleSaveClick}
+                disabled={isSaving}
+                className="h-8 px-3.5 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm font-medium bg-amber-400 text-zinc-950 hover:bg-amber-300 disabled:opacity-50 transition-colors cursor-pointer"
+              >
+                <Save className="w-4 h-4" />
+                {isOwner ? 'Сохранить' : 'Сохранить копию'}
+              </button>
+            </div>
+          </div>
+          <div className={RIGHT_COLUMN_CLASS} aria-hidden="true" />
         </div>
-        <p className="mt-auto px-3 pt-6 text-xs leading-relaxed text-zinc-500">
-          Новое поле появится сразу после выбранного, а если ничего не выбрано — в конце шаблона.
-        </p>
       </div>
 
-      {/* Центральная колонка по ширине контента — FIELDS_COLUMN_WIDTH, как
-          колонка полей на странице заполнения, чтобы карточки выглядели так
-          же. Всё оставшееся место — правой панели быстрых кнопок (flex-1). */}
-      <div className="shrink-0 px-8 pt-5 pb-40 overflow-auto [scrollbar-gutter:stable]">
-        {/* Действия с подписями вместо трёх иконок без подсказок внизу
-            правой панели. "Сохранить" — единственная заметная кнопка. */}
-        <div style={{ width: FIELDS_COLUMN_WIDTH }} className="flex items-center justify-between mb-5">
-          <button
-            onClick={goToList}
-            className="h-8 -ml-2.5 px-2.5 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Шаблоны
-          </button>
-          <div className="flex items-center gap-2">
-            {/* Кнопки панели не сжимаются и не переносят текст: раньше при
-                появлении "Не сохранено" панель переставала помещаться в
-                ширину колонки, и "Сохранить копию" переносилась на две
-                строки, прижимаясь к краям кнопки. У чужого шаблона (там
-                кнопка длиннее) метка — только точка с подсказкой: что
-                правки сохранятся копией, и так объясняет плашка ниже. */}
-            {isDirty && (
-              <span
-                className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-500"
-                title={isOwner ? undefined : 'Не сохранено'}
+      <div className={`${PAGE_COLUMNS_CLASS} pt-6 pb-40`}>
+        {/* Док слева — добавление полей: новое поле встаёт сразу после
+            выбранного, а если ничего не выбрано — в конец шаблона. */}
+        <aside className={DOCK_COLUMN_CLASS}>
+          <div className={`sticky ${SIDE_PANEL_TOP_CLASS} ${DOCK_PANEL_CLASS}`}>
+            {availableFields.map(item => (
+              <button
+                key={item.type}
+                onClick={() => addField(item.type)}
+                className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-amber-400 hover:bg-white/10`}
+                data-tip={`${item.label} — добавить`}
+                aria-label={`Добавить: ${item.label}`}
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                {isOwner && 'Не сохранено'}
-              </span>
-            )}
-            <button
-              onClick={goToFiller}
-              className="h-8 px-3 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
-            >
-              Заполнить
-              <ArrowRight className="w-4 h-4" />
-            </button>
-            <button
-              onClick={handleSaveClick}
-              disabled={isSaving}
-              className="h-8 px-3.5 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm font-medium bg-amber-400 text-zinc-950 hover:bg-amber-300 disabled:opacity-50 transition-colors cursor-pointer"
-            >
-              <Save className="w-4 h-4" />
-              {isOwner ? 'Сохранить' : 'Сохранить копию'}
-            </button>
+                {item.icon}
+              </button>
+            ))}
           </div>
-        </div>
-        {!isOwner && (
-          <div style={{ width: FIELDS_COLUMN_WIDTH }} className="mb-5 px-3 py-2 flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 text-xs text-zinc-400">
-            <Globe className="w-4 h-4 shrink-0 text-zinc-500" strokeWidth={1.75} />
-            Публичный шаблон другого автора — изменения можно сохранить только как новый шаблон в вашем списке.
-          </div>
-        )}
-        <div style={{ width: FIELDS_COLUMN_WIDTH }} className="flex items-center mb-6">
+        </aside>
+
+        <main className="flex-1 min-w-0">
+          {!isOwner && (
+            <div className="mb-5 px-3 py-2 flex items-center gap-2 rounded-xl bg-white/5 border border-white/10 text-xs text-zinc-400">
+              <Globe className="w-4 h-4 shrink-0 text-zinc-500" strokeWidth={1.75} />
+              Публичный шаблон другого автора — изменения можно сохранить только как новый шаблон в вашем списке.
+            </div>
+          )}
           <input
             type="text"
             value={templateTitle}
             onChange={(e) => setTemplateTitle(e.target.value)}
-            className="flex-1 min-w-0 text-3xl font-bold bg-transparent outline-none text-center tracking-tight transition-colors"
+            className="mb-6 w-full px-2 text-2xl font-bold bg-transparent outline-none tracking-tight placeholder:text-zinc-600"
             placeholder="Название шаблона"
           />
-          {/* Переключатель публичности — в колонке справа от названия (та же
-              ширина, что у боковой панели кнопок полей, поэтому название
-              по-прежнему по центру): это свойство самого шаблона, а в
-              верхней панели действий он уже не помещался в ширину колонки.
-              Только у своего шаблона; применяется при сохранении, как и
-              остальные правки. */}
-          <div style={{ width: FIELD_ACTIONS_RAIL_WIDTH }} className="shrink-0 flex justify-end">
-            {isOwner && (
-              <button
-                onClick={() => setIsPublic(v => !v)}
-                aria-pressed={isPublic}
-                aria-label={isPublic ? 'Публичный шаблон' : 'Личный шаблон'}
-                // tooltip-left, не bottom: кнопка стоит у правого края
-                // центральной колонки (overflow-auto), и подсказка снизу
-                // обрезалась её краем, уходя под правую панель.
-                className={`tooltip tooltip-left w-8 h-8 inline-flex items-center justify-center rounded-lg transition-colors cursor-pointer ${
-                  isPublic
-                    ? 'text-amber-400 bg-amber-400/10 hover:bg-amber-400/15'
-                    : 'text-zinc-400 hover:text-white hover:bg-white/5'
-                }`}
-                data-tip={isPublic ? 'Публичный — виден всем. Нажмите, чтобы сделать личным' : 'Личный — виден только вам. Нажмите, чтобы сделать публичным'}
-              >
-                <Globe className="w-4 h-4" strokeWidth={1.75} />
-              </button>
-            )}
-          </div>
-        </div>
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          modifiers={[restrictToVerticalAxis]}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-          onDragCancel={() => setIsDraggingField(false)}
-        >
-          <SortableContext items={fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
-            <div style={{ width: FIELDS_COLUMN_WIDTH }} className="flex flex-col">
-              {fields.length === 0 && (
-                // Отступ справа — та же ось центрирования, что у названия
-                // шаблона (фантомная колонка FIELD_ACTIONS_RAIL_WIDTH).
-                <div style={{ paddingRight: FIELD_ACTIONS_RAIL_WIDTH }}>
-                <EmptyState
-                  icon={<LayoutList className="w-5 h-5" />}
-                  title="Шаблон пока пуст"
-                  text="Добавьте первое поле из панели слева — например, «Заголовок» раздела или «Текст»."
-                />
-                </div>
-              )}
-              {/* mode="popLayout": уходящая карточка сразу вынимается из
-                  потока (position: absolute) и доигрывает exit сама по себе
-                  вместо того, чтобы держать соседей на месте до своего
-                  исчезновения — иначе сдвиг соседей стартует отдельным,
-                  рассинхронизированным рендером. См. комментарий в
-                  SortableField. */}
-              {/* initial={false} — при открытии шаблона карточки не
-                  "проявляются" все разом, анимируются только добавленные. */}
-              <AnimatePresence key={fieldsLoadKey} mode="popLayout" initial={false}>
-                {fields.map(field => (
-                  <SortableField
-    key={field.id}
-    field={field}
-    isSelected={selectedFieldId === field.id}
-    disableLayoutAnimation={isDraggingField}
-    onSelect={setSelectedFieldId}
-    onRemove={removeField}
-    onUpdate={updateField}
-    onDuplicate={duplicateField}
-  />
-                ))}
-              </AnimatePresence>
-            </div>
-          </SortableContext>
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            modifiers={[restrictToVerticalAxis]}
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
+            onDragCancel={() => setIsDraggingField(false)}
+          >
+            <SortableContext items={fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
+              <div className="flex flex-col">
+                {fields.length === 0 && (
+                  <EmptyState
+                    icon={<LayoutList className="w-5 h-5" />}
+                    title="Шаблон пока пуст"
+                    text="Добавьте первое поле из панели слева — например, «Заголовок» раздела или «Текст»."
+                  />
+                )}
+                {/* mode="popLayout": уходящая строка сразу вынимается из
+                    потока (position: absolute) и доигрывает exit сама по
+                    себе вместо того, чтобы держать соседей на месте до своего
+                    исчезновения. initial={false} — при открытии шаблона
+                    строки не «проявляются» все разом. */}
+                <AnimatePresence key={fieldsLoadKey} mode="popLayout" initial={false}>
+                  {fields.map(field => (
+                    <SortableField
+                      key={field.id}
+                      field={field}
+                      isSelected={selectedFieldId === field.id}
+                      labelColumnPx={labelWidths.widths.get(labelWidths.sectionOf.get(field.id) ?? null) || 0}
+                      uppercase={labelsUppercase}
+                      disableLayoutAnimation={isDraggingField}
+                      onSelect={setSelectedFieldId}
+                      onRemove={removeField}
+                      onUpdate={updateField}
+                      onDuplicate={duplicateField}
+                    />
+                  ))}
+                </AnimatePresence>
+              </div>
+            </SortableContext>
+          </DndContext>
+        </main>
 
-        </DndContext>
-      </div>
-
-      {/* ПРАВАЯ ПАНЕЛЬ */}
-      <div className="flex-1 min-w-[360px] bg-zinc-900 border-l border-white/10 flex flex-col">
+        {/* Справа: быстрые кнопки выбранного поля и заметки шаблона. Своя
+            прокрутка — панель липкая и не выше экрана. */}
+        <aside className={RIGHT_COLUMN_CLASS}>
+          <div className={`sticky ${SIDE_PANEL_TOP_CLASS} max-h-[calc(100vh-8.5rem)] flex flex-col rounded-2xl bg-zinc-900/75 border border-white/10 shadow-2xl overflow-hidden`}>
         {selectedFieldId && ['text', 'conclusion'].includes(fields.find(f => f.id === selectedFieldId)?.type || '') ? (
-  <div className="flex-1 overflow-auto p-6 [scrollbar-gutter:stable]">
+  <div className="flex-1 min-h-0 overflow-auto p-4 [scrollbar-gutter:stable]">
     {(() => {
       const selectedField = fields.find(f => f.id === selectedFieldId);
       const groups = selectedField?.quickButtons || [];
       const limitReached = groups.length >= MAX_QUICK_BUTTON_GROUPS;
       return (
         <>
-    {/* Заголовок по центру панели; "+" — справа, абсолютно, чтобы не
-        сдвигать центр. */}
-    <div className="relative flex flex-col items-center mb-5 px-36">
-      <h3 className="font-semibold text-lg tracking-tight">Быстрые кнопки</h3>
-      <span className="text-sm text-zinc-400 truncate max-w-full">
-        {selectedField?.label || 'Без названия'}
-      </span>
+    <div className="flex items-center gap-3 mb-3">
+      <div className="min-w-0 flex-1">
+        <h3 className="font-semibold tracking-tight">Быстрые кнопки</h3>
+        <p className="text-xs text-zinc-500 truncate">{selectedField?.label || 'Без названия'} · в заполнении — Ctrl+номер</p>
+      </div>
       <button
         onClick={addQuickButtonGroup}
         disabled={limitReached}
-        className="absolute right-0 top-0 h-8 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 bg-white/5 hover:bg-white/10 hover:text-white disabled:opacity-40 disabled:hover:bg-white/5 disabled:hover:text-zinc-300 disabled:cursor-not-allowed cursor-pointer transition-colors"
+        className="shrink-0 h-8 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 bg-white/5 hover:bg-white/10 hover:text-white disabled:opacity-40 disabled:hover:bg-white/5 disabled:hover:text-zinc-300 disabled:cursor-not-allowed cursor-pointer transition-colors"
       >
         <Plus className="w-4 h-4" />
         Группа
@@ -1677,7 +1577,7 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
       </button>
     </div>
 
-    {/* Группы — карточками в адаптивной сетке. Порядок меняется
+    {/* Группы — карточками одна под другой. Порядок меняется
         перетаскиванием за точку слева от номера; номер — позиция группы,
         он же горячая клавиша Ctrl+1..9 на странице заполнения. */}
     {groups.length === 0 && (
@@ -1697,7 +1597,7 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
       <SortableContext items={groups.map(g => g.id)} strategy={rectSortingStrategy}>
         {/* relative — для AnimatePresence popLayout: уходящая карточка
             вынимается из сетки (position: absolute) относительно неё. */}
-        <div className="relative grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 items-start">
+        <div className="relative grid grid-cols-1 gap-3 items-start">
           {/* initial={false} — анимация появления только у добавленных
               групп, а не у всех разом при выборе поля. */}
           <AnimatePresence mode="popLayout" initial={false}>
@@ -1728,10 +1628,9 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
         </>
       );
     })()}
-  <div className="h-[300px] flex-shrink-0"></div>
   </div>
 ) : (
-  <div className="flex-1 flex items-center justify-center px-6">
+  <div className="flex-1 min-h-0 flex items-center justify-center px-4">
     <EmptyState
       icon={<MousePointerClick className="w-5 h-5" />}
       title="Быстрые кнопки"
@@ -1739,21 +1638,17 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
     />
   </div>
 )}
-        {/* Заметки шаблона — всегда внизу правой панели, независимо от
-            выбранного поля; быстрые кнопки над ними занимают остальное
-            место (flex-1) и прокручиваются отдельно. */}
+        {/* Заметки шаблона — всегда внизу панели, независимо от выбранного
+            поля; быстрые кнопки над ними прокручиваются отдельно. */}
         <NotesPanel
           notes={templateNotes}
           onChange={setTemplateNotes}
           onAddLink={openAddLinkModal}
           onAddImage={handleAddImage}
         />
+          </div>
+        </aside>
       </div>
-      </div>
-
-    
-      
-      
 
       <AnimatedModal
         open={showSaveModal}

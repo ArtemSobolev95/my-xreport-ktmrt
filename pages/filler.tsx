@@ -10,6 +10,8 @@ import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
 import { migrateQuickButtons } from '../lib/migrateQuickButtons';
 import { convertLegacyValue, isLegacyFieldType, migrateLegacyField } from '../lib/migrateFieldTypes';
+import { DOCK_BUTTON_CLASS, DOCK_COLUMN_CLASS, DOCK_PANEL_CLASS, PAGE_COLUMNS_CLASS, SIDE_PANEL_TOP_CLASS } from '../lib/pageLayout';
+import { LABELS_UPPERCASE_KEY, LABEL_CHIP_PADDING_PX, LABEL_COLON_PX, measureLabelPx, measureTextPx } from '../lib/fieldLabels';
 import { evaluateFormula } from '../lib/evaluateFormula';
 import { comparisonLine, formulaCommentKey, generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
@@ -87,7 +89,6 @@ const RatingField = ({
 // три уровня (название шаблона, заголовки, названия полей) были выровнены
 // по одной вертикали, название шаблона и заголовки получают такой же
 // "фантомный" отступ справа той же ширины.
-const LABELS_UPPERCASE_KEY = 'filler_labels_uppercase';
 
 // «Примечание» для ИИ-подсказок и памяти фраз — как отдельное текстовое
 // поле шаблона с этим id (в phrase_memory у него своя память фраз).
@@ -107,17 +108,9 @@ const CORRECTION_IDLE_MS = 1000;
 // модели фразы быстрых кнопок (см. запрос подсказки).
 const COLD_START_PHRASES = 10;
 
-// Кнопка нижней панели действий (копировать/сохранить/сброс/…). Подсказки
-// (tooltip) на странице заполнения остались только у этого ряда.
-// Раскладка страницы: док действий слева, строки полей по центру, быстрые
-// кнопки справа. Та же сетка повторена в панели над полями (в липкой шапке),
-// чтобы её кнопки стояли ровно над колонкой полей.
-const PAGE_COLUMNS_CLASS = 'max-w-[1400px] mx-auto px-6 flex gap-6';
-const DOCK_COLUMN_CLASS = 'w-12 shrink-0';
+// Раскладка страницы (док слева, строки по центру) — lib/pageLayout.ts;
+// справа — панель быстрых кнопок.
 const QUICK_COLUMN_CLASS = 'w-72 shrink-0';
-// Боковые панели липнут под шапкой (UserHeader + панель над полями).
-const SIDE_PANEL_TOP_CLASS = 'top-28';
-const DOCK_BUTTON_CLASS = 'tooltip tooltip-right w-10 h-10 flex items-center justify-center rounded-xl transition-colors cursor-pointer focus:outline-none';
 const TOPBAR_BUTTON_CLASS = 'h-8 px-3 inline-flex items-center text-xs font-medium rounded-lg border transition-colors cursor-pointer';
 const TOPBAR_BUTTON_ACTIVE_CLASS = 'bg-amber-400/10 border-amber-400 text-amber-400';
 const TOPBAR_BUTTON_IDLE_CLASS = 'bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-white/20';
@@ -128,33 +121,12 @@ const CONTENT_TEXT_CLASS = 'pl-[8px] pr-1 py-0.5 text-sm leading-tight';
 const BRACKET_OPEN_CLASS = 'pointer-events-none select-none absolute left-0 top-0 py-0.5 text-sm leading-tight text-zinc-500';
 const BRACKET_CLOSE_CLASS = 'ml-[2px] text-zinc-500';
 
-// Точная ширина текста в px шрифтом страницы (14px) — для полей, которые
-// должны быть ровно по тексту: плашка названия, комментарий формулы. Ширина
-// в ch не годится: кириллица в среднем уже «0», поля выходили шире текста.
-let textMeasureCtx: CanvasRenderingContext2D | null = null;
-const measureTextPx = (text: string, fontWeight: number): number => {
-  if (typeof document === 'undefined') return text.length * 8;
-  textMeasureCtx ??= document.createElement('canvas').getContext('2d');
-  if (!textMeasureCtx) return text.length * 8;
-  textMeasureCtx.font = `${fontWeight} 14px ${getComputedStyle(document.body).fontFamily}`;
-  return Math.ceil(textMeasureCtx.measureText(text).width);
-};
-// Название поля (font-medium); tracking-wide у заглавных — +0.025em на символ.
-const measureLabelPx = (text: string, uppercase: boolean): number => {
-  const shown = uppercase ? text.toUpperCase() : text;
-  return measureTextPx(shown, 500) + (uppercase ? Math.ceil(shown.length * 0.35) : 0);
-};
 // Ширина числового поля по содержимому: цифры (tabular-nums) — по 1ch,
 // точка/запятая/минус заметно уже; +0.3ch на курсор.
 const numberInputWidth = (text: string): string => {
   const narrow = (text.match(/[.,\-\s]/g) || []).length;
   return `${Math.max(text.length - narrow + narrow * 0.4, 1.5) + 0.3}ch`;
 };
-
-// Плашка названия: текст + px-2 с обеих сторон + запас на курсор.
-const LABEL_CHIP_PADDING_PX = 20;
-// Двоеточие и зазор до содержимого.
-const LABEL_COLON_PX = 14;
 
 // Маска ввода даты ДД-ММ-ГГГГ (цифры → "01-02-2025"). Один формат для
 // всех дат страницы — раньше "Сравнение" ждало ДД-ММ-ГГГГ, а "Сохранить"
@@ -2869,7 +2841,7 @@ for (const f of visibleFields) {
       <div className={`${PAGE_COLUMNS_CLASS} pt-6 pb-8`}>
         {/* Док слева: действия с протоколом. Не фокусируются по Tab. */}
         <aside className={DOCK_COLUMN_CLASS}>
-          <div className={`sticky ${SIDE_PANEL_TOP_CLASS} flex flex-col items-center gap-1 p-1 rounded-2xl bg-zinc-900/75 border border-white/10 shadow-2xl`}>
+          <div className={`sticky ${SIDE_PANEL_TOP_CLASS} ${DOCK_PANEL_CLASS}`}>
             <button onClick={copyToClipboard} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-amber-400 hover:text-amber-300 hover:bg-amber-400/10`} data-tip="Скопировать (Ctrl+Shift+C)"><Copy className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <button onClick={downloadTxt} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Сохранить"><Download className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <div className="h-px w-5 bg-white/10 my-1" aria-hidden="true" />

@@ -1,17 +1,16 @@
 'use client';
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, CornerDownRight, Sparkles, SpellCheck, X } from 'lucide-react';
+import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X } from 'lucide-react';
 import type { BuilderField, QuickButtonGroup, Template } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
 import { migrateQuickButtons } from '../lib/migrateQuickButtons';
 import { evaluateFormula } from '../lib/evaluateFormula';
-import { generateReport } from '../lib/generateReport';
+import { comparisonLine, formulaCommentKey, generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
 import { usePhraseMemory } from '../hooks/usePhraseMemory';
 import { firstWord, rankedPhrases, selectExamples, selectVocabulary, suggestedPhrase, sumStats, SLOT } from '../lib/phraseMemory';
@@ -50,11 +49,8 @@ const RatingField = ({
   };
 
   return (
-    // Центрируется просто по ширине своей колонки контента (та же, что и у
-    // "Название поля" выше) — кнопки добавить/удалить/в Заключение теперь
-    // живут в отдельной боковой панели карточки, а не в этой строке, так
-    // что больше не нужен компенсирующий спейсер под их ширину.
-    <div className="flex justify-center gap-2">
+    // В строке поля — сразу после названия, внутри [ ].
+    <div className="flex items-center gap-1">
       {Array.from({ length: field.max || 5 }, (_, i) => {
         const score = i + 1;
         const isActive = value === score;
@@ -66,11 +62,11 @@ const RatingField = ({
               onKeyDown={onKeyDown}
               tabIndex={disabled ? -1 : 0}
               data-custom-focus
-              className={`w-8 h-8 flex items-center justify-center text-sm font-medium rounded-xl transition-all border cursor-pointer
+              className={`w-6 h-6 flex items-center justify-center text-xs font-medium rounded-md transition-all border cursor-pointer
                 focus:outline-none focus-visible:border-amber-400 focus-visible:ring-2 focus-visible:ring-amber-400/40
                 ${isActive
-                  ? 'bg-zinc-800 border-amber-400 text-white shadow-md'
-                  : 'bg-transparent border-white/30 hover:border-amber-400 hover:bg-white/5 text-white'
+                  ? 'bg-amber-400/10 border-amber-400 text-amber-400'
+                  : 'bg-transparent border-white/20 hover:border-amber-400 hover:bg-white/5 text-zinc-400'
                 }
               `}
             >
@@ -90,18 +86,73 @@ const RatingField = ({
 // три уровня (название шаблона, заголовки, названия полей) были выровнены
 // по одной вертикали, название шаблона и заголовки получают такой же
 // "фантомный" отступ справа той же ширины.
-const FIELD_ACTIONS_RAIL_WIDTH = 46;
+const LABELS_UPPERCASE_KEY = 'filler_labels_uppercase';
+
+// «Примечание» для ИИ-подсказок и памяти фраз — как отдельное текстовое
+// поле шаблона с этим id (в phrase_memory у него своя память фраз).
+const STATE_AFTER_FIELD_ID = '__state_after__';
+const STATE_AFTER_FIELD: BuilderField = { id: STATE_AFTER_FIELD_ID, type: 'text', label: 'Примечание' };
+// Отступы и шрифт поля «Примечания» — общие у textarea и слоя ИИ-подсказки.
+const STATE_AFTER_TEXT_CLASS = 'px-3.5 py-2.5 text-sm';
 
 // Пауза в наборе перед запросом ИИ-подсказки: меньше — чаще запросы на
 // каждую букву, больше — подсказка заметно «опаздывает».
 const AI_SUGGEST_DELAY_MS = 350;
+// Пауза в наборе, после которой поле проверяется ИИ (опечатки, согласование):
+// короче — правка всплывала бы в каждой паузе «на подумать».
+const CORRECTION_IDLE_MS = 1500;
 // Сколько выученных фраз поля нужно, чтобы перестать подмешивать в запрос
 // модели фразы быстрых кнопок (см. запрос подсказки).
 const COLD_START_PHRASES = 10;
 
 // Кнопка нижней панели действий (копировать/сохранить/сброс/…). Подсказки
 // (tooltip) на странице заполнения остались только у этого ряда.
-const TOOLBAR_BUTTON_CLASS = 'tooltip tooltip-top w-10 h-10 flex items-center justify-center rounded-xl transition-colors cursor-pointer focus:outline-none';
+// Раскладка страницы: док действий слева, строки полей по центру, быстрые
+// кнопки справа. Та же сетка повторена в панели над полями (в липкой шапке),
+// чтобы её кнопки стояли ровно над колонкой полей.
+const PAGE_COLUMNS_CLASS = 'max-w-[1400px] mx-auto px-6 flex gap-6';
+const DOCK_COLUMN_CLASS = 'w-12 shrink-0';
+const QUICK_COLUMN_CLASS = 'w-72 shrink-0';
+// Боковые панели липнут под шапкой (UserHeader + панель над полями).
+const SIDE_PANEL_TOP_CLASS = 'top-28';
+const DOCK_BUTTON_CLASS = 'tooltip tooltip-right w-10 h-10 flex items-center justify-center rounded-xl transition-colors cursor-pointer focus:outline-none';
+const TOPBAR_BUTTON_CLASS = 'h-8 px-3 inline-flex items-center text-xs font-medium rounded-lg border transition-colors cursor-pointer';
+const TOPBAR_BUTTON_ACTIVE_CLASS = 'bg-amber-400/10 border-amber-400 text-amber-400';
+const TOPBAR_BUTTON_IDLE_CLASS = 'bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-white/20';
+// Шрифт и отступы содержимого строки. Общие у textarea и её прозрачного
+// зеркала (data-ghost-overlay) — иначе разойдутся переносы строк, и «]» с
+// ИИ-подсказкой встанут не туда.
+const CONTENT_TEXT_CLASS = 'pl-[8px] pr-1 py-0.5 text-sm leading-tight';
+const BRACKET_OPEN_CLASS = 'pointer-events-none select-none absolute left-0 top-0 py-0.5 text-sm leading-tight text-zinc-500';
+const BRACKET_CLOSE_CLASS = 'ml-[2px] text-zinc-500';
+
+// Точная ширина текста в px шрифтом страницы (14px) — для полей, которые
+// должны быть ровно по тексту: плашка названия, комментарий формулы. Ширина
+// в ch не годится: кириллица в среднем уже «0», поля выходили шире текста.
+let textMeasureCtx: CanvasRenderingContext2D | null = null;
+const measureTextPx = (text: string, fontWeight: number): number => {
+  if (typeof document === 'undefined') return text.length * 8;
+  textMeasureCtx ??= document.createElement('canvas').getContext('2d');
+  if (!textMeasureCtx) return text.length * 8;
+  textMeasureCtx.font = `${fontWeight} 14px ${getComputedStyle(document.body).fontFamily}`;
+  return Math.ceil(textMeasureCtx.measureText(text).width);
+};
+// Название поля (font-medium); tracking-wide у заглавных — +0.025em на символ.
+const measureLabelPx = (text: string, uppercase: boolean): number => {
+  const shown = uppercase ? text.toUpperCase() : text;
+  return measureTextPx(shown, 500) + (uppercase ? Math.ceil(shown.length * 0.35) : 0);
+};
+// Ширина числового поля по содержимому: цифры (tabular-nums) — по 1ch,
+// точка/запятая/минус заметно уже; +0.3ch на курсор.
+const numberInputWidth = (text: string): string => {
+  const narrow = (text.match(/[.,\-\s]/g) || []).length;
+  return `${Math.max(text.length - narrow + narrow * 0.4, 1.5) + 0.3}ch`;
+};
+
+// Плашка названия: текст + px-2 с обеих сторон + запас на курсор.
+const LABEL_CHIP_PADDING_PX = 20;
+// Двоеточие и зазор до содержимого.
+const LABEL_COLON_PX = 14;
 
 // Маска ввода даты ДД-ММ-ГГГГ (цифры → "01-02-2025"). Один формат для
 // всех дат страницы — раньше "Сравнение" ждало ДД-ММ-ГГГГ, а "Сохранить"
@@ -135,17 +186,8 @@ const isSafeUrl = (url: string): boolean => {
   }
 };
 
-// Строка, вставляемая в "Заключение" по чипу: с большой буквы, с точкой на
-// конце (если там уже не .!?… — не дублируем).
-const formatConclusionLine = (text: string): string => {
-  const t = text.trim();
-  if (!t) return t;
-  const capitalized = t.charAt(0).toUpperCase() + t.slice(1);
-  return /[.!?…]$/.test(capitalized) ? capitalized : `${capitalized}.`;
-};
-
-// Должно совпадать с duration-200 на карточках полей (см. className ниже,
-// где рендерятся карточки) — используется, чтобы не скроллить/фокусировать
+// Должно совпадать с duration-200 на строках полей (см. className ниже,
+// где рендерятся строки) — используется, чтобы не скроллить/фокусировать
 // элемент, пока его ещё двигает CSS-анимация сворачивания/разворачивания.
 const SECTION_TRANSITION_MS = 200;
 
@@ -198,6 +240,20 @@ function FillerPage() {
   // поля не изменился.
   const [corrections, setCorrections] = useState<Record<string, { original: string; corrected: string }>>({});
   const [phraseMemoryFieldId, setPhraseMemoryFieldId] = useState<string | null>(null);
+  // Названия полей ЗАГЛАВНЫМИ (переключатель над полями) — настройка
+  // внешнего вида, запоминается в этом браузере.
+  const [labelsUppercase, setLabelsUppercase] = useState(false);
+  useEffect(() => {
+    try {
+      setLabelsUppercase(localStorage.getItem(LABELS_UPPERCASE_KEY) === '1');
+    } catch {}
+  }, []);
+  const toggleLabelsUppercase = () => {
+    setLabelsUppercase(prev => {
+      try { localStorage.setItem(LABELS_UPPERCASE_KEY, prev ? '0' : '1'); } catch {}
+      return !prev;
+    });
+  };
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Все');
   const [newAbbrText, setNewAbbrText] = useState('');
@@ -234,30 +290,7 @@ function FillerPage() {
   }
   const [isMultipleComparison, setIsMultipleComparison] = useState(false);
   const [isStateAfterActive, setIsStateAfterActive] = useState(false);
-  const [stateAfterPhrases, setStateAfterPhrases] = useState<string[]>([]);
   const stateAfterTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  // Флаг "после вставки фразы нужно поставить курсор в конец" — сама
-  // установка курсора идёт в useEffect по stateAfterText, а не сразу в
-  // обработчике клика, чтобы не спорить с React о том, когда именно DOM
-  // textarea получит новое значение (requestAnimationFrame может сработать
-  // раньше коммита React, и курсор уедет не в то место).
-  const stateAfterCaretToEndRef = useRef(false);
-  // Индекс подсвеченной подсказки в dropdown'е "Примечание" — сбрасывается
-  // на 0 при каждом новом запросе (см. useEffect ниже).
-  const [stateAfterHighlightedIndex, setStateAfterHighlightedIndex] = useState(0);
-  // Dropdown подсказок "Примечание" закрыт вручную (Esc), хотя запрос всё
-  // ещё мог бы что-то предложить — сбрасывается при новом запросе и при
-  // каждом открытии модалки, чтобы список снова появлялся как обычно.
-  const [stateAfterDropdownDismissed, setStateAfterDropdownDismissed] = useState(false);
-  // Экранные координаты dropdown'а подсказок "Примечание" — вычисляются из
-  // textarea и используются для портала в document.body (см. ниже), чтобы
-  // список не обрезался overflow-y:auto самой модалки, когда он большой.
-  const [stateAfterDropdownRect, setStateAfterDropdownRect] = useState<{
-    top: number;
-    left: number;
-    width: number;
-    maxHeight: number;
-  } | null>(null);
   const [pathNav, setPathNav] = useState<{
   groupIdx: number;
   phraseIdx: number;
@@ -303,8 +336,6 @@ const handleComparisonDateChange = (e: React.ChangeEvent<HTMLInputElement>, inde
 };
   const [showNotesModal, setShowNotesModal] = useState(false);
   const [showStateAfterModal, setShowStateAfterModal] = useState(false);
-  const [showAddNotePhraseModal, setShowAddNotePhraseModal] = useState(false);
-  const [newNotePhraseText, setNewNotePhraseText] = useState('');
   const [showAbbrModal, setShowAbbrModal] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [fullName, setFullName] = useState('');
@@ -930,7 +961,6 @@ const handleClearDraft = async () => {
   const anyModalOpen =
     showComparisonModal ||
     showStateAfterModal ||
-    showAddNotePhraseModal ||
     showAbbrModal ||
     showNotesModal ||
     showSaveModal ||
@@ -941,13 +971,23 @@ const handleClearDraft = async () => {
   // конце текста (дальше — лишь пробелы), без выделения. Не показываем,
   // пока открыт выбор вариантов сокращения, список быстрых кнопок или
   // модалка — у них свои стрелки/Enter/Esc.
+  // Поле «Примечания» (в его окне) работает как ещё одно текстовое поле со
+  // своей памятью фраз: условие показа — открыто его окно, а не фокус в
+  // строке шаблона.
   const ghostContext = useMemo(() => {
-    if (!caret || caret.fieldId !== activeFieldId) return null;
-    if (variantSelector || pathNav || openQuickButtonGroupIdx !== null || anyModalOpen) return null;
-    const field = template?.fields.find(f => f.id === caret.fieldId);
+    if (!caret) return null;
+    const isStateAfter = caret.fieldId === STATE_AFTER_FIELD_ID;
+    if (isStateAfter) {
+      const otherModalOpen = anyModalOpen && !(showStateAfterModal && !showComparisonModal && !showAbbrModal && !showNotesModal && !showSaveModal && phraseMemoryFieldId === null);
+      if (!showStateAfterModal || otherModalOpen) return null;
+    } else {
+      if (caret.fieldId !== activeFieldId) return null;
+      if (variantSelector || pathNav || openQuickButtonGroupIdx !== null || anyModalOpen) return null;
+    }
+    const field = isStateAfter ? STATE_AFTER_FIELD : template?.fields.find(f => f.id === caret.fieldId);
     if (!field || (field.type !== 'text' && field.type !== 'conclusion')) return null;
 
-    const value: string = fieldsData[field.id] || '';
+    const value: string = isStateAfter ? stateAfterText : (fieldsData[field.id] || '');
     if (caret.pos > value.length || value.slice(caret.pos).trim() !== '') return null;
     // В пустом поле с placeholder'ом тот и так подставится в протокол —
     // подсказка поверх него только мешала бы.
@@ -956,7 +996,8 @@ const handleClearDraft = async () => {
     const textBefore = value.slice(0, caret.pos);
     if (dismissedGhosts[field.id]?.has(textBefore)) return null;
     return { field, fieldId: field.id, pos: caret.pos, textBefore };
-  }, [caret, activeFieldId, variantSelector, pathNav, openQuickButtonGroupIdx, anyModalOpen, template, fieldsData, dismissedGhosts]);
+  }, [caret, activeFieldId, variantSelector, pathNav, openQuickButtonGroupIdx, anyModalOpen, template, fieldsData, dismissedGhosts,
+      stateAfterText, showStateAfterModal, showComparisonModal, showAbbrModal, showNotesModal, showSaveModal, phraseMemoryFieldId]);
 
   // Показываем ответ модели, только если он получен ровно для текущего
   // текста до курсора. Если пользователь печатает то, что подсказано,
@@ -978,6 +1019,7 @@ const handleClearDraft = async () => {
     const ids = new Set([prevGhostFieldRef.current, ghost?.fieldId].filter(Boolean) as string[]);
     prevGhostFieldRef.current = ghost?.fieldId ?? null;
     ids.forEach(fieldId => {
+      if (fieldId === STATE_AFTER_FIELD_ID) return; // свой эффект высоты
       const ta = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
       if (ta?.tagName === 'TEXTAREA') autoResize(ta);
     });
@@ -1027,18 +1069,21 @@ const handleClearDraft = async () => {
       phraseMemory.recordSuggestStat(fieldId, aiGhost.model, { accepted: 1 });
     }
     const insert = wordOnly ? firstWord(ghost.ghost) : ghost.ghost;
-    const value: string = fieldsData[fieldId] || '';
+    const isStateAfter = fieldId === STATE_AFTER_FIELD_ID;
+    const value: string = isStateAfter ? stateAfterText : (fieldsData[fieldId] || '');
     const newText = value.slice(0, pos) + insert + value.slice(pos);
     const newPos = pos + insert.length;
 
-    updateField(fieldId, newText);
+    if (isStateAfter) setStateAfterText(newText);
+    else updateField(fieldId, newText);
     setCaret({ fieldId, pos: newPos });
 
     requestAnimationFrame(() => {
       const el = inputRefs.current[fieldId] as HTMLTextAreaElement | undefined;
       if (el) {
         el.setSelectionRange(newPos, newPos);
-        autoResize(el);
+        // Высоту поля «Примечания» ведёт его собственный эффект (с анимацией).
+        if (!isStateAfter) autoResize(el);
       }
     });
   };
@@ -1073,11 +1118,13 @@ const handleClearDraft = async () => {
   const learnPhrasesFromReport = () => {
     if (!template || !originalTemplate) return;
     const templateFieldIds = new Set(originalTemplate.fields.map(f => f.id));
-    phraseMemory.learnFromReport(
-      template.fields
+    phraseMemory.learnFromReport([
+      ...template.fields
         .filter(f => (f.type === 'text' || f.type === 'conclusion') && templateFieldIds.has(f.id) && !deletedFieldIds.includes(f.id))
-        .map(f => ({ id: f.id, text: typeof fieldsData[f.id] === 'string' ? fieldsData[f.id] : '' }))
-    );
+        .map(f => ({ id: f.id, text: typeof fieldsData[f.id] === 'string' ? fieldsData[f.id] : '' })),
+      // «Примечание» — учится, только если оно включено в протокол.
+      { id: STATE_AFTER_FIELD_ID, text: isStateAfterActive ? stateAfterText : '' },
+    ]);
   };
 
   // Окно «Выученные фразы» — для текстового поля, где последним стоял
@@ -1102,10 +1149,13 @@ const handleClearDraft = async () => {
   };
 
   // === ИИ-ПРОВЕРКА ПОЛЯ (опечатки, род/число/падеж) ===
-  // Запускается, когда курсор уходит из текстового поля / «Заключения».
-  // Ничего не заменяет сама: под полем появляется исправленный вариант с
-  // подсвеченными правками — «Исправить» или «×». Ответы кэшируются по
-  // тексту; отклонённая правка для того же текста больше не предлагается.
+  // Запускается сама после паузы в наборе (CORRECTION_IDLE_MS) в активном
+  // текстовом поле / «Заключении». Ничего не заменяет: справа от строки
+  // всплывает исправленный вариант с подсвеченными правками — Alt+Enter /
+  // «Исправить» или Esc / «Не исправлять». Продолжили печатать — попап
+  // исчезает (текст уже не тот, что проверяли) и после новой паузы
+  // проверяется заново. Ответы кэшируются по тексту; отклонённая правка для
+  // того же текста больше не предлагается.
   const correctionCacheRef = useRef<Map<string, string>>(new Map());
   const dismissedCorrectionsRef = useRef<Set<string>>(new Set());
   const correctionDisabledRef = useRef(false);
@@ -1149,6 +1199,43 @@ const handleClearDraft = async () => {
       if ((err as { status?: number })?.status === 503) correctionDisabledRef.current = true;
       else console.warn('[correct] проверка не выполнена:', err);
     }
+  };
+
+  // Пауза в наборе в активном поле → проверка. Любое изменение текста
+  // перезапускает ожидание.
+  const activeFieldText: string = activeFieldId && typeof fieldsData[activeFieldId] === 'string' ? fieldsData[activeFieldId] : '';
+  useEffect(() => {
+    if (!activeFieldId || !activeFieldText.trim()) return;
+    const fieldId = activeFieldId;
+    const timer = setTimeout(() => checkFieldGrammar(fieldId), CORRECTION_IDLE_MS);
+    return () => clearTimeout(timer);
+    // checkFieldGrammar читает актуальный текст из fieldsDataRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFieldId, activeFieldText]);
+
+  // Попап — только у активной строки и только пока её текст тот же, что
+  // проверяли (начали печатать — исчез).
+  const visibleCorrection = (() => {
+    if (!activeFieldId) return null;
+    const c = corrections[activeFieldId];
+    if (!c || (fieldsData[activeFieldId] || '') !== c.original) return null;
+    return { fieldId: activeFieldId, ...c };
+  })();
+
+  // Клавиши попапа проверки. true — событие обработано.
+  const handleCorrectionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: string): boolean => {
+    if (visibleCorrection?.fieldId !== fieldId || e.nativeEvent.isComposing) return false;
+    if (e.key === 'Enter' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      applyCorrection(fieldId);
+      return true;
+    }
+    if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault();
+      dismissCorrection(fieldId);
+      return true;
+    }
+    return false;
   };
 
   const applyCorrection = (fieldId: string) => {
@@ -1221,10 +1308,12 @@ const handleClearDraft = async () => {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // Esc уже обработан внутри окна (например, поле «Примечания» скрыло
+      // ИИ-подсказку) — окно не закрываем.
+      if (e.defaultPrevented) return;
       e.preventDefault();
 
       if (showComparisonModal) setShowComparisonModal(false);
-      if (showAddNotePhraseModal) setShowAddNotePhraseModal(false);
       if (showStateAfterModal) setShowStateAfterModal(false);
       if (showAbbrModal) setShowAbbrModal(false);
       if (showNotesModal) setShowNotesModal(false);
@@ -1238,7 +1327,6 @@ const handleClearDraft = async () => {
     anyModalOpen,
     showComparisonModal,
     showStateAfterModal,
-    showAddNotePhraseModal,
     showAbbrModal,
     showNotesModal,
     showSaveModal,
@@ -1358,238 +1446,15 @@ const handleClearDraft = async () => {
   }, [variantSelector?.fieldId]);
 
 
-    // ====================== ЗАГРУЗКА ФРАЗ "СОСТОЯНИЕ ПОСЛЕ" С СЕРВЕРА ======================
-  useEffect(() => {
-    const loadStateAfterPhrases = async () => {
-      if (!pb.authStore.record?.id) return;
-
-      const userId = pb.authStore.record.id;
-
-      try {
-        const records = await pb.collection('state_after_phrases').getList(1, 1, {
-          filter: `user = "${userId}"`,
-          $autoCancel: false
-        });
-
-        if (records.items.length > 0) {
-          setStateAfterPhrases(records.items[0].phrases || []);
-          console.log('✅ Фразы "Состояние после" загружены с сервера');
-        } else {
-          try {
-            // Создаём запись при первом использовании
-            await pb.collection('state_after_phrases').create({
-              user: userId,
-              phrases: []
-            });
-            setStateAfterPhrases([]);
-            console.log('✅ Создана новая запись фраз "Состояние после"');
-          } catch {
-            // Как и с аббревиатурами: параллельный запрос уже создал запись
-            // первым, уникальный индекс на user не даёт создать вторую —
-            // читаем то, что уже есть, вместо гонки.
-            const records2 = await pb.collection('state_after_phrases').getList(1, 1, {
-              filter: `user = "${userId}"`,
-              $autoCancel: false
-            });
-            setStateAfterPhrases(records2.items[0]?.phrases || []);
-          }
-        }
-      } catch (err) {
-        console.error("Ошибка загрузки фраз 'Состояние после':", err);
-        setStateAfterPhrases([]);
-      }
-    };
-    loadStateAfterPhrases();
-  }, []);
-
-    // ====================== СОХРАНЕНИЕ ФРАЗ "СОСТОЯНИЕ ПОСЛЕ" ======================
-  const saveStateAfterPhrasesToServer = async (newPhrases: string[]) => {
-    if (!pb.authStore.record?.id) return;
-
-    const userId = pb.authStore.record.id;
-
-    try {
-      const records = await pb.collection('state_after_phrases').getList(1, 1, {
-        filter: `user = "${userId}"`,
-        $autoCancel: false
-      });
-
-      if (records.items.length > 0) {
-        await pb.collection('state_after_phrases').update(records.items[0].id, {
-          phrases: newPhrases
-        });
-      } else {
-        try {
-          await pb.collection('state_after_phrases').create({
-            user: userId,
-            phrases: newPhrases
-          });
-        } catch (createErr) {
-          // Гонка: запись уже создана параллельным запросом — обновляем её.
-          const retry = await pb.collection('state_after_phrases').getList(1, 1, {
-            filter: `user = "${userId}"`,
-            $autoCancel: false
-          });
-          if (retry.items[0]) {
-            await pb.collection('state_after_phrases').update(retry.items[0].id, { phrases: newPhrases });
-          } else {
-            throw createErr;
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Ошибка сохранения фраз 'Состояние после':", err);
-    }
+  // Применить «Примечание»: точка в конце, если её нет, — и в протокол.
+  const applyStateAfter = () => {
+    let text = stateAfterText.trim();
+    if (!text) return;
+    if (!/[.!?…]$/.test(text)) text += '.';
+    setStateAfterText(text);
+    setIsStateAfterActive(true);
+    setShowStateAfterModal(false);
   };
-
-    // ====================== РАБОТА С ФРАЗАМИ "СОСТОЯНИЕ ПОСЛЕ" ======================
-
-  // Позиция начала "текущего слова" — сразу после последнего пробельного
-  // символа в тексте (0, если пробелов ещё нет). Всё, что после неё,
-  // считается запросом для подбора подсказок и целиком заменяется при
-  // вставке фразы; то, что было до неё (включая сам пробел), не трогаем.
-  // Полностью без состояния — пересчитывается из самого текста, поэтому
-  // не может "протухнуть" независимо от того, что и как было напечатано раньше.
-  const stateAfterQueryStart = (() => {
-    const match = stateAfterText.match(/\s(?![\s\S]*\s)/);
-    return match && typeof match.index === 'number' ? match.index + 1 : 0;
-  })();
-  // Запрос для подбора подсказок — текущее набираемое слово/фраза.
-  const stateAfterQuery = stateAfterText.slice(stateAfterQueryStart).trim();
-
-    // Добавить фразу из popup'а "Новая фраза" в список сохранённых.
-  const confirmAddNotePhrase = async () => {
-    const text = newNotePhraseText.trim();
-    if (!text || stateAfterPhrases.includes(text)) return;
-
-    const newPhrases = [...stateAfterPhrases, text];
-    setStateAfterPhrases(newPhrases);
-    await saveStateAfterPhrasesToServer(newPhrases);
-    setShowAddNotePhraseModal(false);
-    setNewNotePhraseText('');
-  };
-
-  // Удалить фразу из списка
-  const deleteStateAfterPhrase = async (index: number) => {
-    const newPhrases = stateAfterPhrases.filter((_, i) => i !== index);
-    setStateAfterPhrases(newPhrases);
-    await saveStateAfterPhrasesToServer(newPhrases);
-  };
-
-    // Подгоняет регистр первой буквы фразы под то, что стоит перед ней:
-    // с большой — в начале текста и после точки/!/?, с маленькой — после
-    // запятой или пробела (продолжение того же предложения).
-  const applyStateAfterPhraseCase = (phrase: string, before: string): string => {
-    if (!phrase) return phrase;
-    const trimmedBefore = before.replace(/\s+$/, '');
-    const lastChar = trimmedBefore.slice(-1);
-    const startsNewSentence =
-      trimmedBefore.length === 0 || lastChar === '.' || lastChar === '!' || lastChar === '?';
-    return startsNewSentence
-      ? phrase.charAt(0).toUpperCase() + phrase.slice(1)
-      : phrase.charAt(0).toLowerCase() + phrase.slice(1);
-  };
-
-    // Заменить набранное текущее слово выбранной фразой-подсказкой: без
-    // знаков препинания вокруг неё (пользователь ставит их сам). Часть
-    // текста до последнего пробела (включая сам пробел, если он есть) не
-    // трогаем — он и служит единственным разделителем, лишний пробел
-    // поэтому никогда не добавляется и не дублируется.
-  const selectStateAfterPhrase = (phrase: string) => {
-    const before = stateAfterText.slice(0, stateAfterQueryStart);
-    const newText = `${before}${applyStateAfterPhraseCase(phrase, before)}`;
-    setStateAfterText(newText);
-    // Курсор поставим в конец после того, как DOM textarea реально получит
-    // это значение — см. useEffect ниже.
-    stateAfterCaretToEndRef.current = true;
-  };
-
-  // Ставит курсор в конец textarea после вставки фразы. Вынесено в эффект
-  // (а не сделано сразу в onClick через requestAnimationFrame), потому что
-  // должно выполняться строго после того, как React обновит DOM новым
-  // значением — иначе курсор мог остаться в середине старого текста, и
-  // следующий введённый символ попадал бы не в конец, а куда-то в середину.
-  useEffect(() => {
-    if (!stateAfterCaretToEndRef.current) return;
-    stateAfterCaretToEndRef.current = false;
-    const el = stateAfterTextareaRef.current;
-    if (el) {
-      el.focus();
-      el.setSelectionRange(stateAfterText.length, stateAfterText.length);
-    }
-  }, [stateAfterText]);
-
-  // При каждом новом запросе подсветка в dropdown'е начинается заново сверху,
-  // и список подсказок, если он был закрыт по Esc, появляется снова —
-  // пользователь печатает дальше, значит хочет видеть новые варианты.
-  // "Adjusting state during rendering", а не useEffect: эффект вызывал
-  // setState на КАЖДОЕ нажатие — обычно React пропускает такие вызовы с
-  // тем же значением, но если у страницы уже есть отложенное обновление,
-  // пропуск не срабатывает, и при быстром наборе эти обновления копились
-  // до "Maximum update depth exceeded" (воспроизведено). Здесь сброс
-  // происходит только при реальной смене запроса и без лишнего рендера.
-  const [prevStateAfterQuery, setPrevStateAfterQuery] = useState(stateAfterQuery);
-  if (stateAfterQuery !== prevStateAfterQuery) {
-    setPrevStateAfterQuery(stateAfterQuery);
-    if (stateAfterHighlightedIndex !== 0) setStateAfterHighlightedIndex(0);
-    if (stateAfterDropdownDismissed) setStateAfterDropdownDismissed(false);
-  }
-
-  // Каждое открытие модалки — список подсказок не должен оставаться
-  // закрытым из-за Esc, нажатого в прошлый раз.
-  useEffect(() => {
-    if (showStateAfterModal) setStateAfterDropdownDismissed(false);
-  }, [showStateAfterModal]);
-
-  // Подсказки — фразы, совпадающие с текущим запросом.
-  const filteredStateAfterPhrases = stateAfterPhrases.filter(phrase =>
-    phrase.toLowerCase().includes(stateAfterQuery.toLowerCase())
-  );
-
-  // Видимость dropdown'а подсказок "Примечание" — используется и для
-  // рендера, и для решения, что должен закрыть Esc (список или модалку).
-  const stateAfterDropdownVisible =
-    Boolean(stateAfterQuery) && stateAfterPhrases.length > 0 && !stateAfterDropdownDismissed;
-
-  // Карточка готового протокола плавно меняет высоту вместе с текстом:
-  // высота задаётся явно (от высоты содержимого, до 42vh) и анимируется
-  // CSS-переходом — раньше она менялась скачком, и быстрые кнопки под ней
-  // резко прыгали вниз. ResizeObserver ловит любое изменение содержимого
-  // (новый текст, перенос строк при смене ширины).
-  const reportCardRef = useRef<HTMLDivElement | null>(null);
-  const reportContentRef = useRef<HTMLDivElement | null>(null);
-  const [reportCard, setReportCard] = useState<{ height: number; capped: boolean } | null>(null);
-  useLayoutEffect(() => {
-    const content = reportContentRef.current;
-    const card = reportCardRef.current;
-    const scroller = content?.parentElement;
-    if (!content || !card || !scroller) return;
-
-    const measure = () => {
-      const px = (v: string) => parseFloat(v) || 0;
-      const sc = getComputedStyle(scroller);
-      const cc = getComputedStyle(card);
-      const natural =
-        content.offsetHeight +
-        px(sc.paddingTop) + px(sc.paddingBottom) +
-        px(cc.paddingTop) + px(cc.paddingBottom) +
-        px(cc.borderTopWidth) + px(cc.borderBottomWidth);
-      const max = window.innerHeight * 0.42;
-      const next = { height: Math.min(natural, max), capped: natural > max };
-      setReportCard(prev =>
-        prev && prev.height === next.height && prev.capped === next.capped ? prev : next
-      );
-    };
-
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(content);
-    window.addEventListener('resize', measure);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', measure);
-    };
-  }, [loading]);
 
   // Поле "Примечание" растёт вместе с текстом (от 3 строк до 240px, дальше
   // — прокрутка), и высота меняется плавно (transition на height): новая
@@ -1603,51 +1468,16 @@ const handleClearDraft = async () => {
     el.style.height = 'auto';
     const minHeight = el.offsetHeight; // высота по rows={3}
     const border = el.offsetHeight - el.clientHeight;
-    const target = Math.min(240, Math.max(minHeight, el.scrollHeight + border));
+    // ИИ-подсказка может переноситься на строки ниже текста — поле растёт и под неё.
+    const ghostOverlay = el.parentElement?.querySelector<HTMLElement>('[data-ghost-overlay]');
+    const content = Math.max(el.scrollHeight + border, ghostOverlay?.offsetHeight ?? 0);
+    const target = Math.min(240, Math.max(minHeight, content));
     el.style.height = `${startHeight}px`;
     void el.offsetHeight; // зафиксировать стартовую высоту перед переходом
     el.style.transition = '';
     el.style.height = `${target}px`;
     el.style.overflowY = el.scrollHeight + border > 240 ? 'auto' : 'hidden';
-  }, [stateAfterText, showStateAfterModal]);
-
-  // Пересчитывает экранную позицию dropdown'а из textarea — используется
-  // порталом в document.body (см. рендер модалки "Примечание"), чтобы
-  // большой список подсказок не обрезался overflow-y:auto самой модалки.
-  useEffect(() => {
-    if (!stateAfterDropdownVisible) {
-      setStateAfterDropdownRect(null);
-      return;
-    }
-    const updateRect = () => {
-      const el = stateAfterTextareaRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const next = {
-        top: rect.bottom + 8,
-        left: rect.left,
-        width: rect.width,
-        maxHeight: Math.max(120, Math.min(240, window.innerHeight - rect.bottom - 24)),
-      };
-      // Тот же объект, если ничего не сдвинулось — без перерисовки всей
-      // страницы на каждом кадре цикла ниже.
-      setStateAfterDropdownRect(prev =>
-        prev && prev.top === next.top && prev.left === next.left && prev.width === next.width && prev.maxHeight === next.maxHeight
-          ? prev
-          : next
-      );
-    };
-    // Каждый кадр, пока список открыт: поле плавно меняет высоту, а окно
-    // модалки — положение (оно центрируется и растёт в обе стороны), и
-    // список должен ехать вместе с полем, а не остаться на старом месте.
-    let frame = 0;
-    const loop = () => {
-      updateRect();
-      frame = requestAnimationFrame(loop);
-    };
-    loop();
-    return () => cancelAnimationFrame(frame);
-  }, [stateAfterDropdownVisible]);
+  }, [stateAfterText, showStateAfterModal, ghost]);
 
     const notesLinks = useMemo(() => {
     if (!template?.fields) return [];
@@ -1861,7 +1691,9 @@ initializeCollapsedState(record.fields);
 }, [fieldsData, template]);
 
       // ====================== ГЕНЕРАЦИЯ ОТЧЁТА (useMemo) ======================
-  const { finalText, finalPlainText } = useMemo(
+  // Готовый протокол — только для копирования/сохранения (карточки с
+  // превью на странице больше нет); HTML-вариант generateReport не нужен.
+  const { finalPlainText } = useMemo(
     () => generateReport({
       template,
       fieldsData,
@@ -1870,6 +1702,7 @@ initializeCollapsedState(record.fields);
       comparisonDates,
       isStateAfterActive,
       stateAfterText,
+      uppercaseLabels: labelsUppercase,
     }),
     [
       fieldsData,
@@ -1878,7 +1711,8 @@ initializeCollapsedState(record.fields);
       isComparisonActive,
       comparisonDates,
       isStateAfterActive,
-      stateAfterText
+      stateAfterText,
+      labelsUppercase,
     ]
   );
 
@@ -2123,95 +1957,58 @@ useEffect(() => {
   updateField(fieldId, value, { groupTyping: true });
 };
 
-// === Заключение: кнопка на текстовых полях, добавляющая ВЫДЕЛЕННЫЙ в них
-// текст в отдельное поле-цель типа "conclusion". Активный статус — чтобы
-// можно было быстро отменить ошибочную вставку повторным нажатием (строка
-// убирается из "Заключения"). Если в шаблоне несколько полей "Заключение"
-// — берём первое; сценарий с несколькими целями не предусмотрен.
+// Поле «Заключение» шаблона (первое, если их несколько) — в нём фраза
+// быстрой кнопки в начале поля пишется с заглавной (см. insertPhrase).
 const conclusionField = useMemo(
   () => template?.fields.find(f => f.type === 'conclusion' && !deletedFieldIds.includes(f.id)) || null,
   [template, deletedFieldIds]
 );
 
-// Текст, вставленный ПРИ АКТИВАЦИИ (а не текущее выделение — к моменту
-// повторного нажатия выделения уже может не быть), чтобы при отмене убрать
-// именно эту строку, а не всё поле "Заключение" целиком.
-type ConclusionEntry = { fieldId: string; text: string };
-const conclusionEntries: ConclusionEntry[] = fieldsData['__conclusionEntries'] || [];
-const isInConclusion = (fieldId: string) => conclusionEntries.some(e => e.fieldId === fieldId);
-
-const toggleConclusionEntry = (textFieldId: string) => {
-  if (!conclusionField) return;
-  // fieldsDataRef, а не fieldsData — эта функция вызывается и из
-  // обработчика Ctrl+Enter на window, чей useEffect не перезапускается при
-  // каждом изменении fieldsData (иначе слушатель клавиатуры пришлось бы
-  // пересоздавать на каждое нажатие), поэтому замыкание через обычный
-  // fieldsData было бы устаревшим уже после первой вставки.
-  const entries = fieldsDataRef.current['__conclusionEntries'] || [];
-  const existingIndex = entries.findIndex((e: ConclusionEntry) => e.fieldId === textFieldId);
-  const currentText: string = fieldsDataRef.current[conclusionField.id] || '';
-
-  let newEntries: ConclusionEntry[];
-  let newText: string;
-
-  if (existingIndex !== -1) {
-    const entry = entries[existingIndex];
-    newEntries = entries.filter((_: ConclusionEntry, i: number) => i !== existingIndex);
-    const lines = currentText.split('\n');
-    const lineIdx = lines.indexOf(entry.text);
-    // Строку могли отредактировать вручную после вставки — тогда она уже
-    // не найдётся дословно, и текст поля не трогаем, снимаем только статус.
-    if (lineIdx !== -1) lines.splice(lineIdx, 1);
-    newText = lines.join('\n');
-  } else {
-    const textarea = inputRefs.current[textFieldId] as HTMLTextAreaElement | undefined;
-    if (!textarea) return;
-    const start = textarea.selectionStart ?? 0;
-    const end = textarea.selectionEnd ?? 0;
-    if (start === end) {
-      dialog.alert('Выделите текст, который нужно добавить в Заключение');
-      return;
+// Находки — поля, которые пользователь изменил: значение отличается от
+// исходного (defaultValue шаблона или пустого). Показываются попапом, пока
+// курсор в «Заключении», — чтобы составлять его, глядя на находки.
+// Нормы-placeholder в находки не попадают: их не трогали. Группируются по
+// разделам (заголовкам), в порядке полей шаблона.
+type Finding = { id: string; section: string; label: string; value: string };
+const findings: Finding[] = useMemo(() => {
+  if (!template) return [];
+  const original = new Map((originalTemplate?.fields || []).map(f => [f.id, f]));
+  const initial = (f: BuilderField) =>
+    original.get(f.id)?.defaultValue ?? (f.type === 'checkbox' ? false : f.type === 'rating' ? 0 : '');
+  const result: Finding[] = [];
+  let section = '';
+  for (const f of template.fields) {
+    if (deletedFieldIds.includes(f.id)) continue;
+    if (f.type === 'header') { section = f.label || ''; continue; }
+    if (f.type === 'conclusion' || f.type === 'notes') continue;
+    const v = fieldsData[f.id];
+    let value = '';
+    if (f.type === 'text' || f.type === 'select') {
+      if (typeof v === 'string' && v.trim() && v !== initial(f)) value = v.trim();
+    } else if (f.type === 'number') {
+      if (v !== undefined && v !== null && String(v).trim() && v !== initial(f)) value = `${v}${f.unit ? ' ' + f.unit : ''}`;
+    } else if (f.type === 'checkbox') {
+      if (!!v !== !!initial(f)) value = v ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет');
+    } else if (f.type === 'rating') {
+      if (v && v !== initial(f)) {
+        const expl = f.showExplanations && f.explanations ? f.explanations[v - 1] : '';
+        value = expl ? `${v} — ${expl}` : String(v);
+      }
+    } else if (f.type === 'formula') {
+      const anyVar = (f.variables || []).some((_x, i) => String(fieldsData[`${f.id}_var_${i}`] ?? '').trim());
+      const comment = String(fieldsData[formulaCommentKey(f.id)] ?? '').trim();
+      if (anyVar && v && v !== 'NaN') value = `${v}${f.unit ? ' ' + f.unit : ''}${comment ? ` (${comment})` : ''}`;
     }
-    const formatted = formatConclusionLine(textarea.value.substring(start, end));
-    if (!formatted) return;
-    newEntries = [...entries, { fieldId: textFieldId, text: formatted }];
-    newText = currentText ? `${currentText}\n${formatted}` : formatted;
+    if (value) result.push({ id: f.id, section, label: f.label || '', value });
   }
+  return result;
+}, [template, originalTemplate, fieldsData, deletedFieldIds]);
 
-  endTypingSession();
-  saveToHistory();
-  setFieldsData(prev => {
-    const next = { ...prev, __conclusionEntries: newEntries, [conclusionField.id]: newText };
-    fieldsDataRef.current = next;
-    return next;
-  });
-
-  // Высота textarea "Заключения" считается через autoResize только по
-  // событию onChange — при таком, программном обновлении значения (не
-  // через ввод с клавиатуры) React перерисует текст, но не пересчитает
-  // inline height, оставшуюся от предыдущего содержимого. rAF — чтобы
-  // измерить scrollHeight уже после того, как DOM отрисует новый текст.
-  requestAnimationFrame(() => {
-    autoResize(inputRefs.current[conclusionField.id] as HTMLTextAreaElement | undefined ?? null);
-  });
-};
-
-// Горячие клавиши: Ctrl+Enter — выделенный текст активного текстового поля
-// в "Заключение" (то же, что кнопка на поле); Alt+C / Alt+P — переключить
-// "Сравнение" / "Примечание" (та же логика, что в onClick этих кнопок).
-// Слушатель на window, а не на конкретном элементе — "Сравнение"/
-// "Примечание" не привязаны к какому-то одному полю, а Ctrl+Enter должен
-// сработать независимо от того, что именно сейчас в фокусе внутри поля.
+// Горячие клавиши: Alt+C / Alt+P — переключить "Сравнение" / "Примечание"
+// (та же логика, что в onClick этих кнопок). Слушатель на window, а не на
+// конкретном элементе — они не привязаны к какому-то одному полю.
 useEffect(() => {
   const handleGlobalKeyDown = (e: KeyboardEvent) => {
-    if (e.ctrlKey && !e.altKey && !e.metaKey && e.key === 'Enter') {
-      const fieldId = activeFieldRef.current;
-      const field = fieldId ? template?.fields.find(f => f.id === fieldId) : null;
-      if (!field || field.type !== 'text') return;
-      e.preventDefault();
-      toggleConclusionEntry(fieldId!);
-      return;
-    }
 
     // e.code (физическая позиция клавиши), а не e.key — на macOS Option
     // подменяет символ (Option+C -> "ç", Option+P -> "π" на US-раскладке),
@@ -2939,6 +2736,18 @@ for (const f of visibleFields) {
 
   const activeField = template?.fields?.find((f: BuilderField) => f.id === activeFieldId);
 
+  // Колонка названий — общая в разделе: по самой широкой плашке его полей,
+  // но не больше 40% строки (дальше название прокручивается в своём поле).
+  // По разделу, а не по всему шаблону: одно длинное название где-то ниже
+  // не должно отодвигать содержимое во всех остальных разделах.
+  const sectionLabelPx = new Map<string | null, number>();
+  for (const f of visibleFields) {
+    if (f.type === 'header') continue;
+    const section = sectionHeaderMap.get(f.id) ?? null;
+    const w = measureLabelPx(f.label || 'Название поля', labelsUppercase) + LABEL_CHIP_PADDING_PX;
+    sectionLabelPx.set(section, Math.max(sectionLabelPx.get(section) || 0, w));
+  }
+
     
 
 
@@ -2966,10 +2775,94 @@ for (const f of visibleFields) {
             {toastMessage}
           </div>
         </UserHeader>
-      </div>               
+        {/* Панель над полями — всегда видна (часть липкой шапки, поэтому
+            прокрутка к разделу, отсчитывающая от низа шапки, учитывает и
+            её). Та же сетка колонок, что у страницы ниже, — кнопки стоят
+            ровно над колонкой полей. */}
+        <div className={PAGE_COLUMNS_CLASS}>
+          <div className={DOCK_COLUMN_CLASS} aria-hidden="true" />
+          <div className="flex-1 min-w-0 flex items-center gap-2 py-2">
+            <button
+              tabIndex={-1}
+              onClick={() => {
+                if (isComparisonActive) {
+                  setIsComparisonActive(false);
+                  // даты и режим не очищаем — остаются в памяти
+                } else {
+                  if (comparisonDates.length === 0) setComparisonDates(['']);
+                  if (comparisonDates.length > 1) setIsMultipleComparison(true);
+                  setShowComparisonModal(true);
+                }
+              }}
+              className={`${TOPBAR_BUTTON_CLASS} ${isComparisonActive ? TOPBAR_BUTTON_ACTIVE_CLASS : TOPBAR_BUTTON_IDLE_CLASS}`}
+              aria-label="Сравнение (Alt+C)"
+            >
+              Сравнение
+              <span className="ml-1.5 text-[10px] font-normal text-zinc-500">Alt+C</span>
+            </button>
+            <button
+              tabIndex={-1}
+              onClick={() => {
+                if (isStateAfterActive) {
+                  setIsStateAfterActive(false);
+                  // текст не очищаем
+                } else {
+                  setShowStateAfterModal(true);
+                }
+              }}
+              className={`${TOPBAR_BUTTON_CLASS} ${isStateAfterActive ? TOPBAR_BUTTON_ACTIVE_CLASS : TOPBAR_BUTTON_IDLE_CLASS}`}
+              aria-label="Примечание (Alt+P)"
+            >
+              Примечание
+              <span className="ml-1.5 text-[10px] font-normal text-zinc-500">Alt+P</span>
+            </button>
+            {/* Видна всегда; без заметок — приглушена, окно подскажет, где их
+                добавить. */}
+            <button
+              onClick={() => setShowNotesModal(true)}
+              tabIndex={-1}
+              className={`${TOPBAR_BUTTON_CLASS} gap-1.5 ${notesLinks.length > 0 ? TOPBAR_BUTTON_IDLE_CLASS : 'bg-transparent border-white/10 text-zinc-500 hover:text-zinc-300 hover:border-white/20'}`}
+            >
+              <Paperclip className="w-3.5 h-3.5" />
+              Заметки
+              {notesLinks.length > 0 && <span className="text-[10px] font-normal text-zinc-500">{notesLinks.length}</span>}
+            </button>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={labelsUppercase}
+              tabIndex={-1}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={toggleLabelsUppercase}
+              className="ml-auto inline-flex items-center gap-2 h-8 px-2 rounded-lg text-xs text-zinc-400 hover:text-white transition-colors cursor-pointer"
+              title="Названия полей заглавными буквами"
+            >
+              <span className={`relative w-7 h-4 rounded-full transition-colors ${labelsUppercase ? 'bg-amber-400' : 'bg-white/15'}`}>
+                <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-zinc-950 transition-transform ${labelsUppercase ? 'translate-x-3' : ''}`} />
+              </span>
+              ЗАГЛАВНЫЕ
+            </button>
+          </div>
+          <div className={QUICK_COLUMN_CLASS} aria-hidden="true" />
+        </div>
+      </div>
 
-      <div className="max-w-7xl mx-auto px-4 md:px-8 lg:px-12 pt-8 pb-8 grid grid-cols-12 gap-8">
-        <div className="col-span-5 space-y-4 pb-64">
+      <div className={`${PAGE_COLUMNS_CLASS} pt-6 pb-8`}>
+        {/* Док слева: действия с протоколом. Не фокусируются по Tab. */}
+        <aside className={DOCK_COLUMN_CLASS}>
+          <div className={`sticky ${SIDE_PANEL_TOP_CLASS} flex flex-col items-center gap-1 p-1 rounded-2xl bg-zinc-900/75 border border-white/10 shadow-2xl`}>
+            <button onClick={copyToClipboard} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-amber-400 hover:text-amber-300 hover:bg-amber-400/10`} data-tip="Скопировать (Ctrl+Shift+C)"><Copy className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
+            <button onClick={downloadTxt} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Сохранить"><Download className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
+            <div className="h-px w-5 bg-white/10 my-1" aria-hidden="true" />
+            <button onClick={resetToDefault} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-red-400 hover:bg-white/10`} data-tip="Сбросить протокол (Ctrl+Shift+R)"><RotateCcw className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
+            <button onClick={() => setShowAbbrModal(true)} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Автокоррекции"><Settings className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
+            <button onClick={openPhraseMemory} onMouseDown={(e) => e.preventDefault()} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Выученные фразы поля"><Sparkles className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
+            <div className="h-px w-5 bg-white/10 my-1" aria-hidden="true" />
+            <button onClick={goToTemplateList} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="К списку шаблонов (Ctrl+Shift+H)"><Home className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
+          </div>
+        </aside>
+
+        <main className="flex-1 min-w-0 pb-64">
           {variantSelector && (
             <div
               className="fixed z-40 bg-zinc-900/90 backdrop-blur-md rounded-xl shadow-xl py-1 w-fit min-w-[160px] max-w-[420px]"
@@ -2998,121 +2891,90 @@ for (const f of visibleFields) {
               ))}
             </div>
           )}
-        <div className="flex items-center mb-6">
-          <h1 className="flex-1 text-3xl font-bold text-center tracking-tight select-none">{template.title}</h1>
-          <div style={{ width: FIELD_ACTIONS_RAIL_WIDTH }} className="shrink-0" aria-hidden="true" />
-        </div>
-                        <div className="space-y-4">
+          <h1 className="mb-6 px-2 text-2xl font-bold tracking-tight select-none">{template.title}</h1>
+
+          {/* Вводные строки протокола — «Сравнение» и «Примечание»: в
+              протоколе они идут перед всеми полями, здесь — так же, тем же
+              текстом (comparisonLine/stateAfterText, как в generateReport). */}
+          {((isComparisonActive && comparisonDates.length > 0) || (isStateAfterActive && stateAfterText)) && (
+            <div className="mb-3 px-2 space-y-1">
+              {([
+                isComparisonActive && comparisonDates.length > 0 && {
+                  key: 'comparison',
+                  text: comparisonLine(comparisonDates),
+                  edit: () => {
+                    if (comparisonDates.length > 1) setIsMultipleComparison(true);
+                    setShowComparisonModal(true);
+                  },
+                  remove: () => setIsComparisonActive(false),
+                  title: 'Сравнение',
+                },
+                isStateAfterActive && stateAfterText && {
+                  key: 'stateAfter',
+                  text: stateAfterText,
+                  edit: () => setShowStateAfterModal(true),
+                  remove: () => setIsStateAfterActive(false),
+                  title: 'Примечание',
+                },
+              ].filter(Boolean) as { key: string; text: string; edit: () => void; remove: () => void; title: string }[]).map(line => (
+                <div key={line.key} className="group/lead flex items-start gap-2 pl-3 py-1 border-l-2 border-amber-400/50">
+                  <span className="flex-1 min-w-0 text-sm leading-tight text-amber-400 whitespace-pre-wrap break-words">{line.text}</span>
+                  <span className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover/lead:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={line.edit}
+                      aria-label={`Изменить: ${line.title}`}
+                      className="w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-white hover:bg-white/10 cursor-pointer"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={line.remove}
+                      aria-label={`Убрать: ${line.title}`}
+                      className="w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Строки «Название поля: [содержимое]». Колонка названий общая в
+              разделе — содержимое его строк начинается с одной вертикали. */}
+          <div>
   {visibleFields.map((f: BuilderField) => {
     const parentHeaderId = f.type !== 'header' ? sectionHeaderMap.get(f.id) : null;
     const isSectionCollapsed = parentHeaderId ? collapsedHeaders.has(parentHeaderId) : false;
-    // Кнопки боковой колонки видны у активного поля, при наведении на
-    // карточку или фокусе внутри неё — как в билдере шаблонов.
+    const isAnimatingOut = isSectionCollapsed || newlyAddedId === f.id || removingId === f.id;
+    // Кнопки в конце строки видны у активного поля, при наведении на
+    // строку или фокусе внутри неё.
     const railVisibilityClass = activeFieldId === f.id
       ? ''
       : 'opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100';
-    
+    const value: string = typeof fieldsData[f.id] === 'string' ? fieldsData[f.id] : '';
 
     return (
+      // Внешний grid + grid-rows-[0fr] — плавное сворачивание раздела, как и
+      // раньше у карточек; обрезка (overflow-hidden) — только пока строка
+      // свёрнута/появляется/удаляется, иначе резались бы всплывающие окна.
       <div
         key={f.id}
         data-field-id={f.id}
-        className={`card transition-all ${skipSectionTransition ? 'duration-0' : 'duration-200'} ease-out 
-            ${f.type === 'header' || f.type === 'notes'
-              ? 'bg-transparent border-0 shadow-none' 
-              : 'bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl'
-            }
-            ${isSectionCollapsed 
-              ? 'grid-rows-[0fr] overflow-hidden border-0 shadow-none bg-transparent py-0 my-0' 
-              : 'grid-rows-[1fr] overflow-visible'
-            }
-            ${newlyAddedId === f.id 
-              ? 'opacity-0 max-h-0 mt-0 mb-0 py-0 scale-[0.95]' 
-              : ''
-            }
-            ${removingId === f.id 
-              ? 'opacity-0 max-h-0 mt-0 mb-0 py-0 scale-[0.95]' 
-              : ''
-            }
-            ${activeFieldId === f.id
-              ? 'border-amber-400 shadow-[0_0_0_4px_rgba(245,158,11,0.3)]' 
-              : 'hover:border-white/20'
-            }
-            relative grid group/card
-          `}
-          >
-      
+        className={`grid group/card transition-all ${skipSectionTransition ? 'duration-0' : 'duration-200'} ease-out
+          ${isSectionCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}
+          ${newlyAddedId === f.id || removingId === f.id ? 'opacity-0 grid-rows-[0fr]' : ''}
+        `}
+      >
+      <div className={`min-h-0 min-w-0 ${isAnimatingOut ? 'overflow-hidden' : ''}`}>
 
-     {/* === Анимируемая обёртка (вставь сюда) === */}
-     {/* overflow-hidden только пока карточка реально анимируется (сворачивание
-         раздела через grid-rows-0fr, появление/исчезновение через max-h-0) —
-         это единственные случаи, где обрезка контента нужна технически. В
-         остальное время overflow-visible, иначе тултипы кнопок (➕/➖, чип
-         "в Заключение") обрезаются этим враппером и не видны за границей
-         карточки. min-w-0 — отдельно от overflow: этот div одновременно
-         грид-элемент внутри .card (display:grid), а у элементов грида
-         auto-minimum-size по умолчанию считается по содержимому (сжимается
-         до 0 только когда overflow ≠ visible). Без явного min-w-0 длинное
-         "Название поля" (у него нет верхней границы для width в ch)
-         распирало бы весь враппер шире самой карточки именно в
-         overflow-visible режиме — воспроизведено и проверено.
-         flex — делит карточку на колонку контента и боковую панель кнопок
-         (➕/➖/чип "в Заключение", справа от вертикального разделителя) для
-         text/number/select/rating/formula/conclusion. У header и checkbox
-         панели нет — единственный ребёнок flex-контейнера просто занимает
-         всю ширину, как и раньше. */}
-     <div className={`min-w-0 transition-all duration-200 ease-out flex ${
-       isSectionCollapsed || newlyAddedId === f.id || removingId === f.id
-         ? 'overflow-hidden'
-         : 'overflow-visible'
-     }`}>
-
-      {/* flex flex-col — нужно, чтобы card-body (у неё у самой daisyUI
-          задаёт flex-grow) реально растягивалась по высоте этой колонки,
-          когда та выше своего контента (боковая панель кнопок справа, вне
-          card-body, оказалась выше — например, у чекбокса: панель ➕/➖
-          заметно выше однострочной надписи с галочкой). Без flex-контекста
-          здесь card-body просто взяла бы свою обычную блочную высоту по
-          контенту, оставив пустоту под собой. */}
-      <div className="flex-1 min-w-0 flex flex-col">
-
-      {/* justify-center на card-body центрирует её контент по вертикали
-          внутри уже растянутой (см. выше) высоты. Для карточек, где
-          контента и так больше высоты панели, растягивать нечего —
-          justify-center действует на уже полностью заполненную колонку. */}
-      <div className={`card-body justify-center ${
-  f.type === 'header'
-    ? 'px-1 py-0'
-    : 'px-4 pt-3 pb-3'
-}`}>
-
-
-
-        {/* Название поля — просто центрируется по ширине колонки контента;
-            больше не делит строку с кнопками (они в боковой панели правее),
-            поэтому не нужен ни компенсирующий спейсер, ни flex-1/min-w-0
-            трюк — сама строка и есть вся доступная ширина. */}
-{/* === РЕДАКТИРУЕМЫЙ ЗАГОЛОВОК ДЛЯ ВСЕХ ПОЛЕЙ === */}
-                {f.type !== 'header' && f.type !== 'checkbox' && (
-          <div className="flex justify-center mb-1">
-      <input
-        type="text"
-        tabIndex={-1}
-        data-custom-focus
-        value={f.label || ''}
-        onChange={(e) => updateFieldLabel(f.id, e.target.value)}
-        onFocus={() => handleFocus(f.id, null)}
-        onBlur={handleBlur}
-        placeholder="Название поля"
-        style={{
-          width: `${Math.max((f.label || 'Название поля').length + 2, 10)}ch`,
-        }}
-        className="max-w-full text-center bg-white/10 rounded-lg px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none transition-all"
-      />
-          </div>
-        )}
-
-      {/* === HEADER — Большой заголовок раздела (с кнопкой сворачивания) === */}
+      {/* === ЗАГОЛОВОК РАЗДЕЛА (сворачивание — как раньше) === */}
 {f.type === 'header' && (
   <div
     role="button"
@@ -3125,15 +2987,13 @@ for (const f of visibleFields) {
     // tabIndex=-1 не мешает.
     tabIndex={collapsedHeaders.has(f.id) ? 0 : -1}
     data-header-id={f.id}
-    className="py-2 flex items-center justify-between cursor-pointer group select-none outline-none
-  rounded-xl px-2 relative
-  focus:bg-white/10 focus:text-amber-400
-  focus:ring-2 focus:ring-amber-400/40 focus:ring-inset"
+    className="mt-5 mb-1 py-1.5 px-2 flex items-center gap-2 cursor-pointer group select-none outline-none rounded-lg
+      focus:bg-white/10 focus:ring-2 focus:ring-amber-400/40 focus:ring-inset"
     onClick={() => openOnlySection(f.id)}
     onMouseDown={(e) => {
-  // оставляем фокус на заголовке, не уводим в body
-  e.preventDefault();
-}}
+      // оставляем фокус на заголовке, не уводим в body
+      e.preventDefault();
+    }}
     onKeyDown={(e) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
@@ -3165,129 +3025,114 @@ for (const f of visibleFields) {
       }
     }}
   >
-    <h2 className="text-2xl font-bold text-white tracking-tight flex-1 text-center
-  group-hover:text-amber-400 group-focus:text-amber-400 transition-colors select-none">
+    <span className="text-zinc-500 group-hover:text-amber-400 group-focus:text-amber-400 transition-colors">
+      {collapsedHeaders.has(f.id) ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
+    </span>
+    <h2 className="text-base font-semibold tracking-wide text-white group-hover:text-amber-400 group-focus:text-amber-400 transition-colors select-none">
       {f.label}
     </h2>
-    <button
-      onClick={(e) => {
-        e.stopPropagation();
-        openOnlySection(f.id);
-      }}
-      tabIndex={-1}
-      className="absolute right-2 top-1/2 -translate-y-1/2 btn btn-ghost btn-square btn-lg hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 shadow-none transition-all"
-    >
-      {collapsedHeaders.has(f.id) ? <ChevronRight size={22} /> : <ChevronDown size={22} />}
-    </button>
-    {/* Фантомный отступ той же ширины, что и боковая панель кнопок у
-        карточек полей (FIELD_ACTIONS_RAIL_WIDTH) — без него h2 (flex-1)
-        центрировался бы по всей ширине строки и не совпадал бы с
-        названиями полей, у которых эта панель отъедает место справа. */}
-    <div style={{ width: FIELD_ACTIONS_RAIL_WIDTH }} className="shrink-0" aria-hidden="true" />
+    <div className="flex-1 h-px bg-white/10 ml-2" aria-hidden="true" />
   </div>
-)}
-        
-        {/* Все поля остаются без изменений */}
-        {(f.type === 'text' || f.type === 'conclusion') && (
-  // Карточка растёт плавно вслед за полем (и строкой ИИ-проверки под ним).
-  <SmoothHeight className="w-full">
-  <div className="relative w-full">
-  <textarea
-    ref={el => { if (el) inputRefs.current[f.id] = el; }}
-    data-custom-focus
-    value={fieldsData[f.id] || ''}
-    onChange={e => {
-      handleInputChange(f.id, e.target.value);
-      autoResize(e.target);
-      // Курсор — вместе со значением, в том же рендере: иначе подсказка на
-      // кадр считалась бы по старой позиции и мигала.
-      setCaret(e.target.selectionStart === e.target.selectionEnd ? { fieldId: f.id, pos: e.target.selectionStart } : null);
-    }}
-    onSelect={e => {
-      const t = e.currentTarget;
-      setCaret(t.selectionStart === t.selectionEnd ? { fieldId: f.id, pos: t.selectionStart } : null);
-    }}
-    onKeyDown={e => {
-      if (handleGhostKeyDown(e, f.id)) return;
-      handleFieldTabNavigation(e, f.id);
-      if (!e.defaultPrevented) handleKeyDown(e, f.id);
-    }}
-    onFocus={(e) => handleFocus(f.id, e.target)}
-    onBlur={() => { handleBlur(); checkFieldGrammar(f.id); }}
-    tabIndex={isSectionCollapsed ? -1 : 0}
-    rows={1}
-    className="w-full bg-transparent rounded-md border-0 px-1 py-0.5 leading-tight text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm resize-none"
-    placeholder={ghost?.fieldId === f.id ? '' : (f.placeholder || 'Введите значение')}
-  />
-  {/* Подсказка: копия текста до курсора (прозрачная — только чтобы
-      подсказка встала ровно после него с теми же переносами строк) и
-      серое продолжение. Отступы/шрифт должны совпадать с textarea. */}
-  {ghost?.fieldId === f.id && (
-    <div
-      data-ghost-overlay
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-x-0 top-0 px-1 py-0.5 leading-tight text-sm whitespace-pre-wrap break-words text-transparent"
-    >
-      {(fieldsData[f.id] || '').slice(0, ghost.pos)}
-      {/* Разрешённый перенос на стыке: иначе недописанное слово вместе с
-          подсказкой («гор» + «изонтальный») переносилось в слое целиком на
-          следующую строку, а в самом поле «гор» оставалось на прежней —
-          подсказка съезжала с пустым отступом. */}
-      <wbr />
-      <span className="text-zinc-500">{ghost.ghost}</span>
-    </div>
-  )}
-  {/* ИИ-проверка: исправленный вариант с подсвеченными правками (при
-      наведении — что было). Только пока текст поля тот же, что проверяли. */}
-  {corrections[f.id] && (fieldsData[f.id] || '') === corrections[f.id].original && (
-    <div className="mt-1.5 flex items-start gap-2 rounded-md bg-amber-400/5 border border-amber-400/15 px-2 py-1.5 text-xs leading-snug">
-      <SpellCheck className="w-3.5 h-3.5 mt-px shrink-0 text-amber-400" aria-hidden="true" />
-      <span className="flex-1 min-w-0 text-zinc-300 whitespace-pre-wrap break-words">
-        {wordDiff(corrections[f.id].original, corrections[f.id].corrected).map((seg, i) => (
-          <span key={i}>
-            {seg.deleted && (
-              <><span className="line-through text-red-400/80" title="будет удалено">{seg.deleted}</span>{seg.text ? ' ' : ''}</>
-            )}
-            {seg.changed ? (
-              <span
-                className="text-amber-400 underline decoration-dotted underline-offset-2"
-                title={seg.was ? `было: ${seg.was}` : 'добавлено'}
-              >
-                {seg.text}
-              </span>
-            ) : seg.text}
-          </span>
-        ))}
-      </span>
-      <button
-        type="button"
-        tabIndex={-1}
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => applyCorrection(f.id)}
-        className="shrink-0 font-medium text-amber-400 hover:text-amber-300 cursor-pointer"
-      >
-        Исправить
-      </button>
-      <button
-        type="button"
-        tabIndex={-1}
-        onMouseDown={(e) => e.preventDefault()}
-        onClick={() => dismissCorrection(f.id)}
-        aria-label="Не исправлять"
-        className="shrink-0 -mr-0.5 text-zinc-500 hover:text-white cursor-pointer"
-      >
-        <X className="w-3.5 h-3.5" />
-      </button>
-    </div>
-  )}
-  </div>
-  </SmoothHeight>
 )}
 
-        {f.type === 'number' && (
+      {/* === СТРОКА ПОЛЯ === */}
+{f.type !== 'header' && (
+  <div className={`relative flex items-start gap-2 px-2 py-1 rounded-lg transition-colors ${
+    activeFieldId === f.id ? 'bg-white/[0.04]' : 'hover:bg-white/[0.02]'
+  }`}>
+    {/* Название поля — редактируемое, на сером фоне */}
+    <div
+      className="shrink-0 flex items-start gap-1 pt-px"
+      style={{ width: `min(${(sectionLabelPx.get(parentHeaderId ?? null) || 0) + LABEL_COLON_PX}px, 40%)` }}
+    >
+      <input
+        type="text"
+        tabIndex={-1}
+        data-custom-focus
+        value={f.label || ''}
+        onChange={(e) => updateFieldLabel(f.id, e.target.value)}
+        onFocus={() => handleFocus(f.id, null)}
+        onBlur={handleBlur}
+        placeholder="Название поля"
+        title={f.label || ''}
+        style={{ width: measureLabelPx(f.label || 'Название поля', labelsUppercase) + LABEL_CHIP_PADDING_PX }}
+        className={`min-w-0 max-w-full bg-white/10 rounded-md px-2 py-0.5 text-sm font-medium text-white placeholder:text-zinc-500 focus:outline-none focus:bg-white/15 transition-colors ${
+          labelsUppercase ? 'uppercase tracking-wide' : ''
+        }`}
+      />
+      <span className="py-0.5 text-sm text-zinc-500 select-none">:</span>
+    </div>
+
+    {/* Содержимое в [ ] */}
+    <div className="flex-1 min-w-0">
+      {(f.type === 'text' || f.type === 'conclusion') && (
+        <div className="relative">
+          <span aria-hidden="true" className={BRACKET_OPEN_CLASS}>[</span>
+          {/* Поле растёт плавно вслед за текстом (SmoothHeight). */}
+          <SmoothHeight className="w-full">
+          <div className="relative w-full">
+          <textarea
+            ref={el => { if (el) inputRefs.current[f.id] = el; }}
+            data-custom-focus
+            value={value}
+            onChange={e => {
+              handleInputChange(f.id, e.target.value);
+              autoResize(e.target);
+              // Курсор — вместе со значением, в том же рендере: иначе подсказка на
+              // кадр считалась бы по старой позиции и мигала.
+              setCaret(e.target.selectionStart === e.target.selectionEnd ? { fieldId: f.id, pos: e.target.selectionStart } : null);
+            }}
+            onSelect={e => {
+              const t = e.currentTarget;
+              setCaret(t.selectionStart === t.selectionEnd ? { fieldId: f.id, pos: t.selectionStart } : null);
+            }}
+            onKeyDown={e => {
+              if (handleGhostKeyDown(e, f.id)) return;
+              if (handleCorrectionKeyDown(e, f.id)) return;
+              handleFieldTabNavigation(e, f.id);
+              if (!e.defaultPrevented) handleKeyDown(e, f.id);
+            }}
+            onFocus={(e) => handleFocus(f.id, e.target)}
+            onBlur={handleBlur}
+            tabIndex={isSectionCollapsed ? -1 : 0}
+            rows={1}
+            className={`w-full bg-transparent border-0 ${CONTENT_TEXT_CLASS} text-amber-400 caret-amber-400 placeholder:text-zinc-500 focus:outline-none resize-none`}
+            placeholder={ghost?.fieldId === f.id ? '' : (f.placeholder || 'Введите значение')}
+          />
+          {/* Зеркало текста поля: прозрачная копия (те же отступы и шрифт —
+              те же переносы строк) нужна, чтобы закрывающая «]» и серая
+              ИИ-подсказка встали ровно после последнего символа. */}
+          <div
+            data-ghost-overlay
+            aria-hidden="true"
+            className={`pointer-events-none absolute inset-x-0 top-0 ${CONTENT_TEXT_CLASS} whitespace-pre-wrap break-words text-transparent`}
+          >
+            {ghost?.fieldId === f.id ? (
+              <>
+                {value.slice(0, ghost.pos)}
+                {/* Разрешённый перенос на стыке: иначе недописанное слово вместе с
+                    подсказкой («гор» + «изонтальный») переносилось в слое целиком на
+                    следующую строку, а в самом поле «гор» оставалось на прежней —
+                    подсказка съезжала с пустым отступом. */}
+                <wbr />
+                <span className="text-zinc-500">{ghost.ghost}</span>
+                {value.slice(ghost.pos)}
+              </>
+            ) : (value || f.placeholder || 'Введите значение')}
+            <span className={BRACKET_CLOSE_CLASS}>]</span>
+          </div>
+          </div>
+          </SmoothHeight>
+        </div>
+      )}
+
+      {f.type === 'number' && (
+        <div className={`flex items-baseline ${CONTENT_TEXT_CLASS} px-0`}>
+          <span aria-hidden="true" className="text-zinc-500 select-none">[</span>
           <input
             ref={el => { if (el) inputRefs.current[f.id] = el; }}
             type="text"
+            inputMode="decimal"
             data-custom-focus
             value={fieldsData[f.id] || ''}
             onChange={e => handleInputChange(f.id, e.target.value)}
@@ -3295,277 +3140,271 @@ for (const f of visibleFields) {
             tabIndex={isSectionCollapsed ? -1 : 0}
             onKeyDown={e => handleFieldTabNavigation(e, f.id)}
             onBlur={handleBlur}
-            className="w-20 text-center bg-transparent rounded-md border-0 px-1 py-0.5 mb-1 text-white placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all text-sm"
+            style={{ width: numberInputWidth(String(fieldsData[f.id] || f.placeholder || '0.00')) }}
+            className="mx-[2px] bg-transparent border-0 p-0 text-center tabular-nums text-amber-400 caret-amber-400 placeholder:text-zinc-500 focus:outline-none"
             placeholder={f.placeholder || '0.00'}
           />
-        )}
+          <span aria-hidden="true" className="text-zinc-500 select-none">]</span>
+          {f.unit && <span className="ml-1.5 text-zinc-500">{f.unit}</span>}
+        </div>
+      )}
 
-                {f.type === 'checkbox' && (
-  <div className="flex items-center gap-1">
-    {/* ➕/➖ этого поля больше не здесь — они в общей боковой панели
-        карточки (как и у остальных типов), чтобы их позиция совпадала по
-        горизонтали с остальными карточками. */}
-    <label
-      className="flex flex-1 items-center gap-3 cursor-pointer text-sm group min-w-0"
-      onClick={() => handleFocus(f.id, null)}
-    >
-      <span className="relative inline-flex shrink-0">
-        <input
-          ref={el => { if (el) inputRefs.current[f.id] = el; }}
-          type="checkbox"
-          checked={!!fieldsData[f.id]}
-          onChange={e => updateField(f.id, e.target.checked)}
-          onFocus={() => handleFocus(f.id, null)}
-          onBlur={handleBlur}
-          tabIndex={isSectionCollapsed ? -1 : 0}
-          onKeyDown={e => handleFieldTabNavigation(e, f.id)}
-          className="peer sr-only"
-        />
-        <span className="w-5 h-5 rounded-md border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-all flex items-center justify-center">
-          {!!fieldsData[f.id] && (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={3}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-3.5 h-3.5 text-black"
-            >
-              <path d="M5 13l4 4L19 7" />
-            </svg>
-          )}
-        </span>
-      </span>
-      <span className={`transition-colors ${fieldsData[f.id] ? 'text-amber-400' : 'text-white group-hover:text-amber-400'}`}>
-        {f.label}
-      </span>
-    </label>
-  </div>
-)}
-
-                {f.type === 'select' && (
-                  <select
-                    ref={el => { if (el) inputRefs.current[f.id] = el; }}
-                    data-custom-focus
-                    value={fieldsData[f.id] || ''}
-                    onChange={e => updateField(f.id, e.target.value)}
-                    onFocus={() => handleFocus(f.id, null)}
-                    onBlur={handleBlur}
-                    tabIndex={isSectionCollapsed ? -1 : 0}
-                    onKeyDown={e => handleFieldTabNavigation(e, f.id)}
-                    className="w-full bg-zinc-800 border border-zinc-600 rounded-none px-5 py-1.5 mb-1 outline-none text-sm cursor-pointer"
-                  >
-                    <option value="">Выберите вариант...</option>
-                    {f.options?.map((opt: string, i: number) => <option key={i} value={opt}>{opt}</option>)}
-                  </select>
-                )}
-
-                {f.type === 'rating' && <RatingField field={f} value={fieldsData[f.id] || 0} onChange={(val) => updateField(f.id, val)} onFocus={handleFocus} onKeyDown={e => handleFieldTabNavigation(e, f.id)} disabled={isSectionCollapsed}/>} 
-              </div>
-                
-
-
-                {f.type === 'formula' && (
-  <div className="px-3 pt-0 pb-3 space-y-2">
-    {/* Переменные */}
-    <div className="space-y-1">
-      {(f.variables || []).map((v, i: number) => (
-        <div key={i} className="flex items-center gap-3">
-          <span className="w-8 text-zinc-400 text-sm flex-shrink-0">{v.name}</span>
-          <span className="text-zinc-400">=</span>
-          <input
-            ref={el => { if (el) inputRefs.current[`${f.id}_var_${i}`] = el; }}
-            type="text"
+      {f.type === 'select' && (
+        <div className={`flex items-baseline ${CONTENT_TEXT_CLASS} px-0`}>
+          <span aria-hidden="true" className="text-zinc-500 select-none">[</span>
+          <select
+            ref={el => { if (el) inputRefs.current[f.id] = el; }}
             data-custom-focus
-            value={fieldsData[`${f.id}_var_${i}`] || ''}
-            onChange={e => updateField(`${f.id}_var_${i}`, e.target.value)}
+            value={fieldsData[f.id] || ''}
+            onChange={e => updateField(f.id, e.target.value)}
             onFocus={() => handleFocus(f.id, null)}
             onBlur={handleBlur}
             tabIndex={isSectionCollapsed ? -1 : 0}
-            onKeyDown={e => handleFieldTabNavigation(e, f.id, { index: i, total: (f.variables || []).length })}
-            className="w-20 text-center bg-transparent rounded-md border-0 px-0 py-0.5 leading-tight text-white text-sm placeholder:text-zinc-400 focus:outline-none focus:bg-white/5 transition-all"
-            placeholder="0.00"
-          />
+            onKeyDown={e => handleFieldTabNavigation(e, f.id)}
+            className={`max-w-full appearance-none bg-transparent border-0 px-1 py-0 cursor-pointer focus:outline-none ${
+              fieldsData[f.id] ? 'text-amber-400' : 'text-zinc-500'
+            }`}
+          >
+            <option value="" className="bg-zinc-900 text-zinc-400">выберите вариант…</option>
+            {f.options?.map((opt: string, i: number) => <option key={i} value={opt} className="bg-zinc-900 text-white">{opt}</option>)}
+          </select>
+          <span aria-hidden="true" className="text-zinc-500 select-none">]</span>
+          <ChevronDown size={12} className="ml-1 self-center text-zinc-500 pointer-events-none" aria-hidden="true" />
         </div>
-      ))}
+      )}
+
+      {f.type === 'checkbox' && (
+        <label
+          className={`flex items-center gap-2 cursor-pointer ${CONTENT_TEXT_CLASS} px-0`}
+          onClick={() => handleFocus(f.id, null)}
+        >
+          <span aria-hidden="true" className="text-zinc-500 select-none">[</span>
+          <span className="relative inline-flex shrink-0">
+            <input
+              ref={el => { if (el) inputRefs.current[f.id] = el; }}
+              type="checkbox"
+              checked={!!fieldsData[f.id]}
+              onChange={e => updateField(f.id, e.target.checked)}
+              onFocus={() => handleFocus(f.id, null)}
+              onBlur={handleBlur}
+              tabIndex={isSectionCollapsed ? -1 : 0}
+              onKeyDown={e => handleFieldTabNavigation(e, f.id)}
+              className="peer sr-only"
+            />
+            <span className="w-4 h-4 rounded border-2 border-white/40 bg-transparent peer-checked:bg-amber-400 peer-checked:border-amber-400 peer-focus-visible:ring-2 peer-focus-visible:ring-amber-400/40 transition-all flex items-center justify-center">
+              {!!fieldsData[f.id] && (
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3 text-black">
+                  <path d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </span>
+          </span>
+          <span className={fieldsData[f.id] ? 'text-amber-400' : 'text-zinc-500'}>
+            {fieldsData[f.id] ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет')}
+          </span>
+          <span aria-hidden="true" className="text-zinc-500 select-none">]</span>
+        </label>
+      )}
+
+      {f.type === 'rating' && (
+        <div className="flex items-center gap-1.5">
+          <span aria-hidden="true" className="text-sm text-zinc-500 select-none">[</span>
+          <RatingField field={f} value={fieldsData[f.id] || 0} onChange={(val) => updateField(f.id, val)} onFocus={handleFocus} onKeyDown={e => handleFieldTabNavigation(e, f.id)} disabled={isSectionCollapsed} />
+          <span aria-hidden="true" className="text-sm text-zinc-500 select-none">]</span>
+        </div>
+      )}
+
+      {f.type === 'formula' && (
+        <div className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 ${CONTENT_TEXT_CLASS} px-0`}>
+          {(f.variables || []).map((v, i: number) => (
+            <span key={i} className="inline-flex items-baseline">
+              <span className="mr-1 text-zinc-400">{v.name} =</span>
+              <span aria-hidden="true" className="text-zinc-500 select-none">[</span>
+              <input
+                ref={el => { if (el) inputRefs.current[`${f.id}_var_${i}`] = el; }}
+                type="text"
+                inputMode="decimal"
+                data-custom-focus
+                value={fieldsData[`${f.id}_var_${i}`] || ''}
+                onChange={e => updateField(`${f.id}_var_${i}`, e.target.value)}
+                onFocus={() => handleFocus(f.id, null)}
+                onBlur={handleBlur}
+                tabIndex={isSectionCollapsed ? -1 : 0}
+                onKeyDown={e => handleFieldTabNavigation(e, f.id, { index: i, total: (f.variables || []).length + 1 })}
+                style={{ width: numberInputWidth(String(fieldsData[`${f.id}_var_${i}`] || '0.00')) }}
+                className="mx-[2px] bg-transparent border-0 p-0 text-center tabular-nums text-amber-400 caret-amber-400 placeholder:text-zinc-500 focus:outline-none"
+                placeholder="0.00"
+              />
+              <span aria-hidden="true" className="text-zinc-500 select-none">]</span>
+            </span>
+          ))}
+          <span className="inline-flex items-baseline gap-1.5">
+            <span className="text-zinc-500">→</span>
+            <span className={fieldsData[f.id] ? 'text-amber-400' : 'text-zinc-500'}>{fieldsData[f.id] || '—'}</span>
+            {f.unit && <span className="text-zinc-500">{f.unit}</span>}
+          </span>
+          {/* Комментарий к результату — в протоколе в скобках после единицы.
+              Пустой: ни скобок, ни текста; поле ввода видно только при
+              наведении на строку / фокусе в ней (как кнопки строки). */}
+          {(() => {
+            const key = formulaCommentKey(f.id);
+            const comment: string = typeof fieldsData[key] === 'string' ? fieldsData[key] : '';
+            const vars = (f.variables || []).length;
+            return (
+              <span className={`inline-flex items-baseline ${comment ? '' : railVisibilityClass}`}>
+                {comment && <span aria-hidden="true" className="text-zinc-500 select-none">(</span>}
+                <input
+                  ref={el => { if (el) inputRefs.current[key] = el; }}
+                  type="text"
+                  data-custom-focus
+                  value={comment}
+                  onChange={e => handleInputChange(key, e.target.value)}
+                  onFocus={() => handleFocus(f.id, null)}
+                  onBlur={handleBlur}
+                  tabIndex={isSectionCollapsed ? -1 : 0}
+                  onKeyDown={e => handleFieldTabNavigation(e, f.id, { index: vars, total: vars + 1 })}
+                  placeholder="+ комментарий"
+                  style={{ width: measureTextPx(comment || '+ комментарий', 400) + 3 }}
+                  className="bg-transparent border-0 p-0 text-amber-400 caret-amber-400 placeholder:text-zinc-600 focus:outline-none"
+                />
+                {comment && <span aria-hidden="true" className="text-zinc-500 select-none">)</span>}
+              </span>
+            );
+          })()}
+        </div>
+      )}
     </div>
 
-    {/* Результат */}
-    <div className="pt-2 border-t border-white/10 flex items-baseline gap-3">
-      <span className="text-zinc-400 text-sm">Результат</span>
-      <span className="text-sm text-white">
-        {fieldsData[f.id] || '—'}
-      </span>
-      {f.unit && <span className="text-zinc-400 text-sm">{f.unit}</span>}
+    {/* Кнопки в конце строки: добавить поле ниже / удалить это */}
+    <div className="shrink-0 flex items-center gap-0.5 pt-px">
+      <button
+        onClick={() => addTextFieldAfter(f.id)}
+        tabIndex={-1}
+        aria-label="Добавить поле"
+        className={`w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-white hover:bg-white/10 transition-[color,background-color,opacity] cursor-pointer ${railVisibilityClass}`}
+      >
+        <Plus className="w-4 h-4" />
+      </button>
+      <button
+        onClick={() => removeField(f.id)}
+        tabIndex={-1}
+        aria-label="Удалить"
+        className={`w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-[color,background-color,opacity] cursor-pointer ${railVisibilityClass}`}
+      >
+        <Trash2 size={15} />
+      </button>
     </div>
+
+    {/* Находки над «Заключением»: пока в нём курсор. Клики по попапу не
+        уводят фокус из поля (preventDefault на mousedown) — можно смотреть
+        на находки и печатать заключение. Высота — не больше места над
+        строкой: при фокусе она прокручивается в центр экрана, а сверху
+        липкая шапка (~7rem). */}
+    <AnimatePresence>
+      {f.type === 'conclusion' && activeFieldId === f.id && findings.length > 0 && (
+        <motion.div
+          key="findings"
+          initial={{ opacity: 0, y: 6, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 4, scale: 0.98 }}
+          transition={{ duration: 0.16, ease: 'easeOut' }}
+          onMouseDown={(e) => e.preventDefault()}
+          className="absolute bottom-full left-0 right-0 mb-2 z-40 max-h-[calc(50vh-7rem)] overflow-y-auto rounded-2xl bg-zinc-900 border border-white/10 shadow-2xl px-3.5 py-2.5"
+        >
+          <div className="mb-1.5 flex items-baseline gap-2 text-[11px] text-zinc-500">
+            Находки
+            <span className="tabular-nums">{findings.length}</span>
+          </div>
+          <div className="space-y-0.5">
+            {findings.map((item, i) => (
+              <div key={item.id}>
+                {item.section && item.section !== findings[i - 1]?.section && (
+                  <div className={`${i > 0 ? 'mt-1.5' : ''} mb-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500`}>
+                    {item.section}
+                  </div>
+                )}
+                <div className="text-xs leading-snug">
+                  <span className={`text-zinc-400 ${labelsUppercase ? 'uppercase tracking-wide' : ''}`}>{item.label}:</span>{' '}
+                  <span className="text-amber-400 whitespace-pre-wrap break-words">{item.value}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
   </div>
 )}
 
       </div>
-
-      {/* Боковая панель кнопок — чип "в Заключение" (только у text при
-          наличии поля "Заключение" в шаблоне), "Добавить поле", "Удалить".
-          Вертикальный разделитель отделяет её от колонки контента, как и
-          просил пользователь — так кнопки больше не делят строку с
-          "Название поля" и не влияют на её центрирование. У checkbox нет
-          отдельной строки "Название поля", но панель та же общая — иначе
-          её ➕/➖ оказались бы левее, чем у остальных карточек. */}
-      {f.type !== 'header' && (
-        <>
-          <div className="w-px bg-white/10 my-3 shrink-0" />
-          {/* Кнопки — как в билдере шаблонов (components/builder/
-              TemplateBuilder.tsx): одного размера, серые, видны при наведении
-              на карточку, фокусе внутри неё или когда поле активно. Чип
-              "в Заключение" у поля, уже добавленного в Заключение, виден
-              всегда — это не только кнопка, но и индикатор состояния. */}
-          <div className="flex flex-col items-center gap-1 pt-3 pb-3 pl-2 pr-3 shrink-0">
-            {f.type === 'text' && conclusionField && (
-              <button
-                onClick={() => toggleConclusionEntry(f.id)}
-                onMouseDown={(e) => e.preventDefault()}
-                tabIndex={-1}
-                aria-label={isInConclusion(f.id) ? 'Убрать из Заключения' : 'В заключение (Ctrl+Enter)'}
-                className={`w-6 h-6 flex items-center justify-center rounded-md hover:bg-white/10 transition-[color,background-color,opacity] cursor-pointer ${
-                  isInConclusion(f.id)
-                    ? 'text-amber-400 hover:text-amber-300'
-                    : `text-zinc-500 hover:text-white ${railVisibilityClass}`
-                }`}
-              >
-                <CornerDownRight className="w-4 h-4" />
-              </button>
-            )}
-            <button
-              onClick={() => addTextFieldAfter(f.id)}
-              tabIndex={-1}
-              aria-label="Добавить поле"
-              className={`w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-white hover:bg-white/10 transition-[color,background-color,opacity] cursor-pointer ${railVisibilityClass}`}
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => removeField(f.id)}
-              tabIndex={-1}
-              aria-label="Удалить"
-              className={`w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-[color,background-color,opacity] cursor-pointer ${railVisibilityClass}`}
-            >
-              <Trash2 size={16} />
-            </button>
+      </div>
+    );
+  })}
           </div>
-        </>
-      )}
+        </main>
 
-    </div>
-
-    </div>
-  )
-})}
-          </div>
-        </div>
-
-        {/* flex-col: нижний ряд кнопок прижат к низу колонки (mt-auto) и
-            не прыгает при переключении полей — ни от числа строк быстрых
-            кнопок, ни от высоты превью отчёта (до 42vh), которые меняются
-            между полями. Колонка и так фиксированной высоты (sticky). */}
-        <div className="col-span-7 sticky top-20 z-50 self-start h-[calc(100vh-7rem)] relative flex flex-col">
-          
-          <div className="mb-4 flex gap-3">
-             
-
-
-            </div>
-
-                    <div
-                      ref={reportCardRef}
-                      className="card bg-zinc-900/75 backdrop-blur-2xl border border-white/10 shadow-2xl rounded-3xl max-h-[42vh] flex flex-col min-h-0 overflow-hidden mb-6 p-1 relative"
-                      style={reportCard ? { height: reportCard.height, transition: 'height 240ms cubic-bezier(0.22, 1, 0.36, 1)' } : undefined}
-                    >
-  
-  {/* Градиентная защита от наложения */}
-  <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-zinc-900/95 via-zinc-900 to-transparent z-10 pointer-events-none" />
-  
-    {/* Заметки — левый верхний угол */}
-  {notesLinks.length > 0 && (
-    <div className="absolute top-4 left-4 z-10">
-      <button
-        onClick={() => setShowNotesModal(true)}
-        tabIndex={-1}
-        className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-lg text-xs font-medium text-zinc-300 bg-white/5 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+        {/* Справа: быстрые кнопки активного поля (Ctrl+1…9 — группы). */}
+        <aside className={QUICK_COLUMN_CLASS}>
+          <div className={`sticky ${SIDE_PANEL_TOP_CLASS}`}>
+            {/* ИИ-проверка активного поля — после паузы в наборе. В правой
+                панели, а не поверх строки: строка доходит до этой колонки, и
+                всплывающее окно закрывало бы быстрые кнопки. */}
+            {visibleCorrection && (
+      <div
+        className="mb-2 rounded-xl bg-zinc-900 border border-amber-400/25 px-3 py-2.5 text-xs leading-snug"
+        onMouseDown={(e) => e.preventDefault()}
       >
-        <Paperclip className="w-3.5 h-3.5" />
-        Заметки
-      </button>
-    </div>
-  )}
-  
-  
-  {/* Кнопки Сравнение и Состояние в правом верхнем углу */}
-  <div className="absolute top-4 right-4 flex gap-2 z-10">
-    <button
-      tabIndex={-1}
-      onClick={() => {
-        if (isComparisonActive) {
-  setIsComparisonActive(false);
-  // даты и режим не очищаем — остаются в памяти
-} else {
-  if (comparisonDates.length === 0) setComparisonDates(['']);
-  if (comparisonDates.length > 1) setIsMultipleComparison(true);
-  setShowComparisonModal(true);
-}
-      }}
-      className={`h-8 px-3 inline-flex items-center text-xs font-medium rounded-lg border transition-colors cursor-pointer
-        ${isComparisonActive
-          ? 'bg-amber-400/10 border-amber-400 text-amber-400'
-          : 'bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-white/20'
-        }`}
-      aria-label="Сравнение (Alt+C)"
-    >
-      Сравнение
-      {/* Горячая клавиша прямо в кнопке — подсказок (tooltip) на этой
-          странице больше нет, кроме нижней панели. */}
-      <span className="ml-1.5 text-[10px] font-normal text-zinc-500">Alt+C</span>
-    </button>
-
-    <button
-      tabIndex={-1}
-      onClick={() => {
-        if (isStateAfterActive) {
-  setIsStateAfterActive(false);
-  // текст не очищаем
-} else {
-  setShowStateAfterModal(true);
-}
-      }}
-      className={`h-8 px-3 inline-flex items-center text-xs font-medium rounded-lg border transition-colors cursor-pointer
-        ${isStateAfterActive
-          ? 'bg-amber-400/10 border-amber-400 text-amber-400'
-          : 'bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-white/20'
-        }`}
-      aria-label="Примечание (Alt+P)"
-    >
-      Примечание
-      <span className="ml-1.5 text-[10px] font-normal text-zinc-500">Alt+P</span>
-    </button>
-  </div>
-
-  {/* Пока карточка не упёрлась в максимум (42vh), прокрутки нет —
-      иначе во время плавного роста на мгновение мелькала бы полоса
-      прокрутки: новый текст уже есть, а высота ещё догоняет. */}
-  <div className="flex-1 min-h-0 px-7 pb-6 pt-14 text-zinc-100 text-[13px]"
-       style={{ lineHeight: '1.5', overflowY: reportCard && !reportCard.capped ? 'hidden' : 'auto' }}
-  >
-    <div ref={reportContentRef} dangerouslySetInnerHTML={{ __html: finalText }} />
-  </div>
-</div>
-            
-          
-                  
-                  {/* Кнопки патологий */}
-{activeFieldId && activeField?.quickButtons && activeField.quickButtons.length > 0 && (
-  <div className="sticky bottom-0 bg-zinc-950/80 backdrop-blur-xl border-t border-white/10 pt-4 pb-2 z-30">
+        <div className="mb-1.5 text-[11px] text-zinc-500 truncate">
+          Исправление · <span className="text-zinc-300">{activeField?.label || 'поле'}</span>
+        </div>
+        <div className="flex items-start gap-2">
+          <SpellCheck className="w-3.5 h-3.5 mt-px shrink-0 text-amber-400" aria-hidden="true" />
+          <span className="flex-1 min-w-0 text-zinc-300 whitespace-pre-wrap break-words">
+            {wordDiff(visibleCorrection.original, visibleCorrection.corrected).map((seg, i) => (
+              <span key={i}>
+                {seg.deleted && (
+                  <><span className="line-through text-red-400/80" title="будет удалено">{seg.deleted}</span>{seg.text ? ' ' : ''}</>
+                )}
+                {seg.changed ? (
+                  <span
+                    className="text-amber-400 underline decoration-dotted underline-offset-2"
+                    title={seg.was ? `было: ${seg.was}` : 'добавлено'}
+                  >
+                    {seg.text}
+                  </span>
+                ) : seg.text}
+              </span>
+            ))}
+          </span>
+        </div>
+        <div className="mt-2 flex items-center justify-end gap-3">
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => dismissCorrection(visibleCorrection.fieldId)}
+            className="text-zinc-500 hover:text-white cursor-pointer"
+          >
+            Не исправлять <span className="text-[10px] text-zinc-600">Esc</span>
+          </button>
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={() => applyCorrection(visibleCorrection.fieldId)}
+            className="font-medium text-amber-400 hover:text-amber-300 cursor-pointer"
+          >
+            Исправить <span className="text-[10px] font-normal text-amber-400/60">Alt+Enter</span>
+          </button>
+        </div>
+      </div>
+    )}
+          <div className="rounded-2xl bg-zinc-900/75 border border-white/10 shadow-2xl p-2">
+            <div className="px-2 pt-1 pb-2 text-xs text-zinc-500 truncate">
+              Быстрые кнопки{activeField?.label ? <> · <span className="text-zinc-300">{activeField.label}</span></> : null}
+            </div>
+            {activeFieldId && activeField?.quickButtons && activeField.quickButtons.length > 0 ? (
     <div
-      className="flex flex-wrap gap-2"
+      className="flex flex-col gap-0.5"
       onMouseDown={(e) => e.preventDefault()}
       // Раньше здесь сбрасывался pathNav при наведении мыши на ряд — это
       // было нужно для старой модели с dropdown-hover. Теперь раскрытие по
@@ -3612,14 +3451,14 @@ for (const f of visibleFields) {
           <div
             key={group.id}
             ref={(el) => { quickButtonGroupRefs.current[gIdx] = el; }}
-            className={`dropdown ${isOpen ? 'dropdown-open' : ''}`}
+            className={`dropdown dropdown-end w-full ${isOpen ? 'dropdown-open' : ''}`}
           >
             {/* Кнопка группы — раскрытие списка только по клику (не по hover) */}
             <div
               tabIndex={-1}
               role="button"
-              className={`btn btn-ghost btn-sm px-6 py-2.5 text-sm text-white border border-transparent hover:border-transparent hover:bg-transparent hover:text-amber-400 focus:outline-none focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 shadow-none active:shadow-none transition-all ${
-                isOpen ? 'text-amber-400 border-amber-400/40' : ''
+              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-sm text-white hover:bg-white/5 hover:text-amber-400 focus:outline-none cursor-pointer transition-colors ${
+                isOpen ? 'bg-white/5 text-amber-400' : ''
               }`}
               onClick={() => {
                 if (isSinglePhrase && singlePhrase) {
@@ -3630,20 +3469,18 @@ for (const f of visibleFields) {
                 setOpenQuickButtonGroupIdx(prev => (prev === gIdx ? null : gIdx));
               }}
             >
-              {gIdx < 9 && (
-                <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-medium rounded bg-white/10 text-zinc-300 mr-1.5 shrink-0">
-                  {gIdx + 1}
-                </span>
-              )}
-              {group.label || 'Группа'}
-              {!isSinglePhrase && <ChevronDown size={12} className="ml-1" />}
+              <span className={`inline-flex items-center justify-center w-4 h-4 text-[10px] font-medium rounded shrink-0 ${gIdx < 9 ? 'bg-white/10 text-zinc-300' : ''}`}>
+                {gIdx < 9 ? gIdx + 1 : ''}
+              </span>
+              <span className="flex-1 min-w-0 truncate">{group.label || 'Группа'}</span>
+              {!isSinglePhrase && <ChevronDown size={12} className={`shrink-0 text-zinc-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />}
             </div>
 
             {/* Список фраз (2-й уровень) */}
             {!isSinglePhrase && (
               <ul
                 tabIndex={-1}
-                className="dropdown-content menu bg-zinc-900 rounded-box z-[10000] min-w-[340px] p-1"
+                className="dropdown-content menu bg-zinc-900 border border-white/10 shadow-2xl rounded-box z-[10000] w-full min-w-[320px] p-1 mt-1"
               >
                 <div className="max-h-[280px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
                   {phrases.map((phrase: string, pIdx: number) => {
@@ -3691,27 +3528,14 @@ for (const f of visibleFields) {
         );
       })}
     </div>
-  </div>
-)}
-
-          {/* Нижний ряд кнопок — НЕ фокусируются по Tab. Компактная панель
-              в стиле карточек: иконки 18px как в остальном интерфейсе (были
-              22px, чисто белые в квадратах 48px — самые тяжёлые элементы
-              страницы). "Копировать" — главное действие, акцентным цветом;
-              сброс протокола при наведении краснеет, как удаление. */}
-          <div className="mt-auto pt-6 pb-2 flex justify-center">
-            <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-zinc-900/75 border border-white/10 shadow-2xl">
-              <button onClick={copyToClipboard} tabIndex={-1} className={`${TOOLBAR_BUTTON_CLASS} text-amber-400 hover:text-amber-300 hover:bg-amber-400/10`} data-tip="Скопировать (Ctrl+Shift+C)"><Copy className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
-              <button onClick={downloadTxt} tabIndex={-1} className={`${TOOLBAR_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Сохранить"><Download className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
-              <div className="w-px h-5 bg-white/10 mx-1" aria-hidden="true" />
-              <button onClick={resetToDefault} tabIndex={-1} className={`${TOOLBAR_BUTTON_CLASS} text-zinc-400 hover:text-red-400 hover:bg-white/10`} data-tip="Сбросить протокол (Ctrl+Shift+R)"><RotateCcw className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
-              <button onClick={() => setShowAbbrModal(true)} tabIndex={-1} className={`${TOOLBAR_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Автокоррекции"><Settings className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
-              <button onClick={openPhraseMemory} onMouseDown={(e) => e.preventDefault()} tabIndex={-1} className={`${TOOLBAR_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Выученные фразы поля"><Sparkles className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
-              <div className="w-px h-5 bg-white/10 mx-1" aria-hidden="true" />
-              <button onClick={goToTemplateList} tabIndex={-1} className={`${TOOLBAR_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="К списку шаблонов (Ctrl+Shift+H)"><Home className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
-            </div>
+            ) : (
+              <p className="px-2 pb-2 text-xs text-zinc-600">
+                {activeFieldId ? 'У этого поля нет быстрых кнопок' : 'Поставьте курсор в поле'}
+              </p>
+            )}
           </div>
-        </div>
+          </div>
+        </aside>
       </div>
 
       {/* МОДАЛКИ (полностью без изменений) */}
@@ -3729,7 +3553,7 @@ for (const f of visibleFields) {
             <>
               <ModalHeader
                 title="Выученные фразы"
-                subtitle={field?.type === 'conclusion' ? 'Заключение' : (field?.label || 'Текстовое поле')}
+                subtitle={fieldId === STATE_AFTER_FIELD_ID ? 'Примечание' : field?.type === 'conclusion' ? 'Заключение' : (field?.label || 'Текстовое поле')}
                 onClose={() => setPhraseMemoryFieldId(null)}
               />
               {fieldId && phraseMemory.stats[fieldId] && (() => {
@@ -3797,6 +3621,11 @@ for (const f of visibleFields) {
       >
         <ModalHeader title="Заметки" onClose={() => setShowNotesModal(false)} />
         <ModalBody className="max-h-[60vh] py-3">
+          {notesLinks.length === 0 && (
+            <p className="py-4 text-center text-sm text-zinc-500">
+              В этом шаблоне нет заметок — их можно добавить в конструкторе шаблона.
+            </p>
+          )}
           {notesLinks.filter(link => isSafeUrl(link.url)).map((link, i) => (
             <a
               key={i}
@@ -3945,25 +3774,8 @@ for (const f of visibleFields) {
         onClose={() => setShowStateAfterModal(false)}
         size="lg"
         onKeyDown={(e) => {
-          if (e.key === 'Escape') {
-            setShowStateAfterModal(false);
-            return;
-          }
-          if (e.key === 'Enter' && !e.shiftKey) {
-            // не перехватываем Enter внутри textarea без модификатора — см. onKeyDown у textarea
-            const tag = (e.target as HTMLElement)?.tagName;
-            if (tag === 'TEXTAREA') return;
-
-            e.preventDefault();
-            let text = stateAfterText.trim();
-            if (!text) return;
-            if (!text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
-              text += '.';
-            }
-            setStateAfterText(text);
-            setIsStateAfterActive(true);
-            setShowStateAfterModal(false);
-          }
+          // Esc с видимой ИИ-подсказкой уже обработан полем (скрыл подсказку).
+          if (e.key === 'Escape' && !e.defaultPrevented) setShowStateAfterModal(false);
         }}
       >
         <ModalHeader
@@ -3973,191 +3785,77 @@ for (const f of visibleFields) {
             <button
               type="button"
               onClick={() => {
-                setNewNotePhraseText(stateAfterQuery);
-                setShowAddNotePhraseModal(true);
+                // Текст «Примечания» сохраняется — окно можно открыть снова.
+                setShowStateAfterModal(false);
+                setPhraseMemoryFieldId(STATE_AFTER_FIELD_ID);
               }}
               className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 bg-white/5 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
             >
-              <Plus className="w-4 h-4" />
-              Фраза
+              <Sparkles className="w-4 h-4" />
+              Выученные фразы
             </button>
           }
         />
-        {/* Список подсказок рендерится порталом поверх страницы и может
-            перекрывать нижние кнопки, как обычный выпадающий список —
-            резерв пустого места под полем больше не нужен. */}
         <ModalBody>
-              {/* Основное поле (textarea) + всплывающие подсказки под ним */}
-              <div className="relative">
-                <textarea
-  ref={stateAfterTextareaRef}
-  autoFocus
-  value={stateAfterText}
-  onChange={e => setStateAfterText(e.target.value)}
-  onKeyDown={(e) => {
-    const dropdownOpen = stateAfterDropdownVisible && filteredStateAfterPhrases.length > 0;
-
-    // Esc сперва закрывает только список подсказок, не саму модалку —
-    // модалку закрывает следующий Esc (обработчик на dialog ниже), когда
-    // список уже не открыт.
-    if (e.key === 'Escape' && stateAfterDropdownVisible) {
-      e.preventDefault();
-      e.stopPropagation();
-      setStateAfterDropdownDismissed(true);
-      return;
-    }
-
-    if (dropdownOpen && e.key === 'ArrowDown') {
-      e.preventDefault();
-      setStateAfterHighlightedIndex(i => Math.min(filteredStateAfterPhrases.length - 1, i + 1));
-      return;
-    }
-    if (dropdownOpen && e.key === 'ArrowUp') {
-      e.preventDefault();
-      setStateAfterHighlightedIndex(i => Math.max(0, i - 1));
-      return;
-    }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      // Пока открыт dropdown с подсказками, Enter выбирает подсвеченную
-      // фразу вместо отправки формы — иначе не выбрать вариант с клавиатуры.
-      if (dropdownOpen) {
-        const index = Math.min(stateAfterHighlightedIndex, filteredStateAfterPhrases.length - 1);
-        selectStateAfterPhrase(filteredStateAfterPhrases[index]);
-        return;
-      }
-      let text = stateAfterText.trim();
-      if (!text) return;
-      if (!text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
-        text += '.';
-      }
-      setStateAfterText(text);
-      setIsStateAfterActive(true);
-      setShowStateAfterModal(false);
-    }
-  }}
-  placeholder="Введите текст — совпадающие фразы предложатся ниже"
-  className="w-full bg-white/5 border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:border-white/20 transition-[border-color,height] duration-200 ease-out resize-none"
-  rows={3}
-/>
-                {createPortal(
-                  <AnimatePresence>
-                    {stateAfterDropdownVisible && stateAfterDropdownRect && (
-                      <motion.div
-                        key="state-after-dropdown"
-                        style={{
-                          position: 'fixed',
-                          top: stateAfterDropdownRect.top,
-                          left: stateAfterDropdownRect.left,
-                          width: stateAfterDropdownRect.width,
-                          maxHeight: stateAfterDropdownRect.maxHeight,
-                        }}
-                        initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -6, scale: 0.98 }}
-                        transition={{ duration: 0.15, ease: 'easeOut' }}
-                        // Портал в document.body — список подсказок иначе обрезался бы
-                        // overflow-y:auto самой модалки, когда он не помещается под
-                        // textarea (см. комментарий у stateAfterDropdownRect выше).
-                        className="z-[2000] bg-zinc-900/90 backdrop-blur-md rounded-xl shadow-xl py-1 overflow-y-auto"
-                      >
-                        {filteredStateAfterPhrases.length > 0 ? (
-                          filteredStateAfterPhrases.map((phrase, index) => {
-                            const originalIndex = stateAfterPhrases.indexOf(phrase);
-                            const isHighlighted = index === stateAfterHighlightedIndex;
-                            return (
-                              <div
-                                key={originalIndex}
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={() => selectStateAfterPhrase(phrase)}
-                                onMouseEnter={() => setStateAfterHighlightedIndex(index)}
-                                className={`flex items-center justify-between px-4 py-[6px] rounded-xl cursor-pointer group transition-colors ${
-                                  isHighlighted ? 'bg-white/10' : 'hover:bg-white/10'
-                                }`}
-                              >
-                                <span className={`text-sm pr-4 ${isHighlighted ? 'text-white font-medium' : 'text-white'}`}>{phrase}</span>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    deleteStateAfterPhrase(originalIndex);
-                                  }}
-                                  className="text-zinc-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-[color,opacity] p-1 cursor-pointer"
-                                  aria-label="Удалить фразу"
-                                >
-                                  <Minus className="w-4 h-4" />
-                                </button>
-                              </div>
-                            );
-                          })
-                        ) : (
-                          <div className="px-4 py-3 text-sm text-zinc-500 text-center">Ничего не найдено</div>
-                        )}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>,
-                  document.body
-                )}
+          {/* То же, что текстовые поля протокола: ИИ дописывает серым после
+              курсора по прошлым примечаниям (память фраз — STATE_AFTER_FIELD_ID). */}
+          <div className="relative">
+            <textarea
+              ref={el => {
+                stateAfterTextareaRef.current = el;
+                if (el) inputRefs.current[STATE_AFTER_FIELD_ID] = el;
+              }}
+              autoFocus
+              value={stateAfterText}
+              onChange={e => {
+                setStateAfterText(e.target.value);
+                setCaret(e.target.selectionStart === e.target.selectionEnd ? { fieldId: STATE_AFTER_FIELD_ID, pos: e.target.selectionStart } : null);
+              }}
+              onSelect={e => {
+                const t = e.currentTarget;
+                setCaret(t.selectionStart === t.selectionEnd ? { fieldId: STATE_AFTER_FIELD_ID, pos: t.selectionStart } : null);
+              }}
+              onFocus={e => {
+                const t = e.currentTarget;
+                setCaret({ fieldId: STATE_AFTER_FIELD_ID, pos: t.selectionStart });
+              }}
+              onKeyDown={(e) => {
+                if (handleGhostKeyDown(e, STATE_AFTER_FIELD_ID)) return;
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  applyStateAfter();
+                }
+              }}
+              placeholder="Например: состояние после артроскопии"
+              className={`w-full bg-white/5 border border-white/10 rounded-xl ${STATE_AFTER_TEXT_CLASS} text-white placeholder:text-zinc-500 focus:outline-none focus:border-white/20 transition-[border-color,height] duration-200 ease-out resize-none`}
+              rows={3}
+            />
+            {ghost?.fieldId === STATE_AFTER_FIELD_ID && (
+              <div
+                data-ghost-overlay
+                aria-hidden="true"
+                className={`pointer-events-none absolute inset-x-0 top-0 border border-transparent ${STATE_AFTER_TEXT_CLASS} whitespace-pre-wrap break-words text-transparent`}
+              >
+                {stateAfterText.slice(0, ghost.pos)}
+                <wbr />
+                <span className="text-zinc-500">{ghost.ghost}</span>
               </div>
+            )}
+          </div>
+          <p className="mt-2 text-xs text-zinc-500 leading-relaxed">
+            ИИ дописывает по вашим прошлым примечаниям: <span className="text-zinc-400">→</span> — принять,{' '}
+            <span className="text-zinc-400">Ctrl/⌥+→</span> — одно слово, <span className="text-zinc-400">Esc</span> — скрыть.{' '}
+            <span className="text-zinc-400">Enter</span> — применить.
+          </p>
         </ModalBody>
         <ModalFooter>
           <ModalButton onClick={() => setShowStateAfterModal(false)}>Отмена</ModalButton>
-          <ModalButton
-            variant="primary"
-            onClick={() => {
-              let text = stateAfterText.trim();
-              if (text && !text.endsWith('.') && !text.endsWith('!') && !text.endsWith('?')) {
-                text += '.';
-              }
-              setStateAfterText(text);
-              if (text) {
-                setIsStateAfterActive(true);
-                setShowStateAfterModal(false);
-              }
-            }}
-            disabled={!stateAfterText.trim()}
-          >
+          <ModalButton variant="primary" onClick={applyStateAfter} disabled={!stateAfterText.trim()}>
             Применить
           </ModalButton>
         </ModalFooter>
       </AnimatedModal>
 
-      {/* Добавление новой фразы в список "Примечание" */}
-      <AnimatedModal
-        open={showAddNotePhraseModal}
-        onClose={() => setShowAddNotePhraseModal(false)}
-        size="sm"
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            confirmAddNotePhrase();
-          }
-        }}
-      >
-        <ModalHeader title="Новая фраза" onClose={() => setShowAddNotePhraseModal(false)} />
-        <ModalBody>
-          <input
-            autoFocus
-            type="text"
-            value={newNotePhraseText}
-            onChange={e => setNewNotePhraseText(e.target.value)}
-            placeholder="Текст фразы"
-            className={MODAL_INPUT_CLASS}
-          />
-          {stateAfterPhrases.includes(newNotePhraseText.trim()) && newNotePhraseText.trim() && (
-            <p className="mt-2 text-xs text-zinc-500">Такая фраза уже есть в списке.</p>
-          )}
-        </ModalBody>
-        <ModalFooter>
-          <ModalButton onClick={() => setShowAddNotePhraseModal(false)}>Отмена</ModalButton>
-          <ModalButton
-            variant="primary"
-            onClick={confirmAddNotePhrase}
-            disabled={!newNotePhraseText.trim() || stateAfterPhrases.includes(newNotePhraseText.trim())}
-          >
-            Добавить
-          </ModalButton>
-        </ModalFooter>
-      </AnimatedModal>
 
       {/* ====================== АВТОКОРРЕКЦИИ ======================
           Одно слово для функции — "сокращение" (раньше вперемешку

@@ -37,7 +37,21 @@ export interface GenerateReportParams {
   comparisonDates: string[];
   isStateAfterActive: boolean;
   stateAfterText: string;
+  // Названия полей ЗАГЛАВНЫМИ (переключатель на странице заполнения) —
+  // так же и в готовом протоколе.
+  uppercaseLabels?: boolean;
 }
+
+// Ключ комментария к результату формулы в fieldsData (рядом с ключами
+// переменных `${id}_var_${i}`).
+export const formulaCommentKey = (fieldId: string): string => `${fieldId}_comment`;
+
+// Вводная строка «Сравнения» — общая для протокола и для её показа над
+// полями на странице заполнения.
+export const comparisonLine = (comparisonDates: string[]): string => {
+  const label = comparisonDates.length === 1 ? 'с предыдущим от' : 'с предыдущими от';
+  return `Описание исследования в сравнении ${label} ${comparisonDates.join(', ')}:`;
+};
 
 export function generateReport({
   template,
@@ -47,6 +61,7 @@ export function generateReport({
   comparisonDates,
   isStateAfterActive,
   stateAfterText,
+  uppercaseLabels = false,
 }: GenerateReportParams): { finalText: string; finalPlainText: string } {
   if (!template) return { finalText: '', finalPlainText: '' };
 
@@ -54,13 +69,9 @@ export function generateReport({
   let plainText = '';
 
   if (isComparisonActive && comparisonDates.length > 0) {
-    const datesStr = comparisonDates.join(', ');
-    const label = comparisonDates.length === 1
-      ? 'с предыдущим от'
-      : 'с предыдущими от';
-
-    htmlText += row(`<span class="text-amber-400">Описание исследования в сравнении ${escapeHtml(label)} ${escapeHtml(datesStr)}:</span>`);
-    plainText += `Описание исследования в сравнении ${label} ${datesStr}:\n\n`;
+    const line = comparisonLine(comparisonDates);
+    htmlText += row(`<span class="text-amber-400">${escapeHtml(line)}</span>`);
+    plainText += `${line}\n\n`;
   }
   if (isStateAfterActive && stateAfterText) {
     htmlText += row(`<span class="text-amber-400">${escapeHtml(stateAfterText)}</span>`);
@@ -73,7 +84,8 @@ export function generateReport({
     if (f.type === 'header') return;
 
     const val = fieldsData[f.id];
-    const label = escapeHtml(f.label);
+    const plainLabel = uppercaseLabels ? (f.label || '').toUpperCase() : (f.label || '');
+    const label = escapeHtml(plainLabel);
 
     if ((f.type === 'text' || f.type === 'conclusion') && isFieldEmpty(f, val) && !f.placeholder) {
       return;
@@ -113,32 +125,32 @@ export function generateReport({
       }
 
       htmlText += row(`${label}: ${finalHtml}`);
-      plainText += `${f.label}: ${textValue}\n\n`;
+      plainText += `${plainLabel}: ${textValue}\n\n`;
     }
 
     else if (f.type === 'checkbox') {
       const isChecked = fieldsData[f.id] === true;
       const checkboxText = isChecked ? (f.checkedPhrase || 'Да') : (f.uncheckedPhrase || 'Нет');
       htmlText += row(`${label}: <span class="text-amber-400">${escapeHtml(checkboxText)}</span>`);
-      plainText += `${f.label}: ${checkboxText}\n\n`;
+      plainText += `${plainLabel}: ${checkboxText}\n\n`;
     }
     else if (f.type === 'number') {
       if (!val) return;
       const unitHtml = f.unit ? ` <span class="text-amber-400">${escapeHtml(f.unit)}</span>.` : '.';
       const unitPlain = f.unit ? ` ${f.unit}.` : '.';
       htmlText += row(`${label}: <span class="text-amber-400">${escapeHtml(val)}</span>${unitHtml}`);
-      plainText += `${f.label}: ${val}${unitPlain}\n\n`;
+      plainText += `${plainLabel}: ${val}${unitPlain}\n\n`;
     }
     else if (f.type === 'select') {
       if (!val) return;
       htmlText += row(`${label}: ${coloredHtml}`);
-      plainText += `${f.label}: ${val}\n\n`;
+      plainText += `${plainLabel}: ${val}\n\n`;
     }
     else if (f.type === 'rating') {
       if (!val || val === 0) return;
       const expl = f.showExplanations && f.explanations ? ` — ${f.explanations[val - 1] || ''}` : '';
       htmlText += row(`${label}: <span class="text-amber-400">${escapeHtml(val)}${escapeHtml(expl)}</span>`);
-      plainText += `${f.label}: ${val}${expl}\n\n`;
+      plainText += `${plainLabel}: ${val}${expl}\n\n`;
     }
     else if (f.type === 'formula') {
       const hasAnyValue = (f.variables || []).some((_v, i: number) =>
@@ -149,10 +161,17 @@ export function generateReport({
       const result = val || '';
       if (!result || result === 'NaN') return;
 
-      const unitHtml = f.unit ? ` <span class="text-amber-400">${escapeHtml(f.unit)}</span>.` : '.';
-      const unitPlain = f.unit ? ` ${f.unit}.` : '.';
-      htmlText += row(`${label}: <span class="text-amber-400">${escapeHtml(result)}</span>${unitHtml}`);
-      plainText += `${f.label}: ${result}${unitPlain}\n\n`;
+      // Комментарий к результату (вводится на странице заполнения) — в
+      // скобках после единицы; пустой — ни скобок, ни пробела.
+      const comment = typeof fieldsData[formulaCommentKey(f.id)] === 'string'
+        ? fieldsData[formulaCommentKey(f.id)].trim()
+        : '';
+      const unitHtml = f.unit ? ` <span class="text-amber-400">${escapeHtml(f.unit)}</span>` : '';
+      const unitPlain = f.unit ? ` ${f.unit}` : '';
+      const commentHtml = comment ? ` (<span class="text-amber-400">${escapeHtml(comment)}</span>)` : '';
+      const commentPlain = comment ? ` (${comment})` : '';
+      htmlText += row(`${label}: <span class="text-amber-400">${escapeHtml(result)}</span>${unitHtml}${commentHtml}.`);
+      plainText += `${plainLabel}: ${result}${unitPlain}${commentPlain}.\n\n`;
     }
   });
 

@@ -31,7 +31,7 @@ routerAdd("POST", "/api/correct", (e) => {
 
     const system = [
         "You are a proofreader of diagnostic imaging reports (radiography, CT, MRI).",
-        "Fix ONLY: typos and spelling; agreement of words in gender, number and case (in languages that have them); obvious grammatical errors.",
+        "Fix ONLY: typos and spelling; agreement of words in gender, number and case (in languages that have them); obvious grammatical errors; accidentally duplicated words or phrases.",
         "Do not rephrase or add anything. Do not change the meaning, medical terms, word order, numbers or units.",
         "Keep abbreviations and Latin-script terms (T2, STIR, PD, Stoller, CT, MRI) exactly as they are.",
         "Keep line breaks and punctuation; change punctuation only if the phrase is grammatically wrong without it.",
@@ -142,5 +142,23 @@ routerAdd("POST", "/api/correct", (e) => {
     const SPACED = new RegExp("(?<![\\p{L}\\d.,×хx])(?<!\\d[ \\t]+)(" + NUM + ")((?:[ \\t]+" + NUM + "){1,2})(?![\\d\\p{L}×хx])(?![ \\t]+\\d)", "gu");
     const withDimensions = base.replace(SPACED, (m) => m.trim().split(/[ \t]+/).join(usedSep));
 
-    return e.json(200, { corrected: withDimensions });
+    // Случайные повторы — тоже точным правилом: если модель уберёт длинный
+    // повтор, проверка её ответа его отклонит («слишком много изменений»).
+    // Повтор слова или фразы до 6 слов подряд (в том числе через запятую,
+    // без учёта регистра): «рога рога», «контуры ровные, контуры ровные».
+    // Только слова из букв — числа («6 6 мм») не трогаем, это размер.
+    const WORD = "\\p{L}[\\p{L}-]*";
+    const REPEATED = new RegExp("(?<!\\p{L})(" + WORD + "(?:[ \\t]+" + WORD + "){0,5})(?:[ \\t]*,?[ \\t]+\\1)+(?!\\p{L})", "giu");
+    let deduped = withDimensions;
+    let previous;
+    do {
+        previous = deduped;
+        deduped = deduped.replace(REPEATED, "$1");
+    } while (deduped !== previous);
+    deduped = deduped
+        .replace(/([,;:])(?:[ \t]*\1)+/g, "$1")      // «,,» → «,»
+        .replace(/(?<!\.)\.\.(?!\.)/g, ".")          // «..» → «.», многоточие не трогаем
+        .replace(/(\S)[ \t]{2,}(?=\S)/g, "$1 ");     // двойные пробелы внутри строки
+
+    return e.json(200, { corrected: deduped });
 }, $apis.requireAuth("users"))

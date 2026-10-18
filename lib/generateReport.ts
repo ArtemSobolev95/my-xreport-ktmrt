@@ -107,6 +107,11 @@ export function generateReport({
     if (f.type === 'text' || f.type === 'conclusion') {
       // Берём реальное значение пользователя (или placeholder)
       let textValue = (val || displayPlain || '').trim();
+      // Единица (у полей, бывших «Числом», — см. lib/migrateFieldTypes.ts):
+      // дописываем к введённому значению, если её там ещё нет.
+      if (val && f.unit && textValue && !textValue.endsWith(f.unit)) {
+        textValue += ` ${f.unit}`;
+      }
 
       // Автоматически ставим точку, если её (или ! ?) ещё нет
       if (textValue && !/[.!?…]$/.test(textValue)) {

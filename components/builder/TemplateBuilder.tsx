@@ -5,7 +5,7 @@ import pb from '../../lib/pocketbase';
 pb.autoCancellation(false);
 import {
   Trash2, ChevronRight, ClipboardCheck,
-  Heading, Type, Hash, SquareCheck, List, ChartNoAxesColumnIncreasing, Calculator,
+  Heading, Type, List, Calculator,
   Plus, Minus, ImagePlus, Link, Copy, Circle, CircleDot, ArrowLeft, ArrowRight, Save,
   LayoutList, MousePointerClick, Globe,
 } from 'lucide-react';
@@ -37,6 +37,7 @@ import withAuth from '../../components/withAuth';
 import UserHeader from '../../components/UserHeader';
 import dynamic from 'next/dynamic';
 import { migrateQuickButtons } from '../../lib/migrateQuickButtons';
+import { migrateLegacyField } from '../../lib/migrateFieldTypes';
 import { evaluateFormula } from '../../lib/evaluateFormula';
 import { useDialog } from '../DialogProvider';
 import CollapseRow from '../CollapseRow';
@@ -72,13 +73,12 @@ const DynamicUserHeader = dynamic(() => import('../../components/UserHeader'), {
 // были смешаны heroicons, lucide и самодельная залитая SVG у "Шкала",
 // заметно тяжелее остальных.
 const TOOL_ICON_CLASS = 'w-[18px] h-[18px]';
+// «Число», «Чекбокс» и «Шкала» больше не создаются — их заменяет текстовое
+// поле с быстрыми кнопками (старые шаблоны преобразуются при загрузке).
 const availableFields = [
   { type: 'header' as FieldType, label: 'Заголовок', icon: <Heading className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
   { type: 'text' as FieldType, label: 'Текст', icon: <Type className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
-  { type: 'number' as FieldType, label: 'Число', icon: <Hash className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
-  { type: 'checkbox' as FieldType, label: 'Чекбокс', icon: <SquareCheck className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
   { type: 'select' as FieldType, label: 'Список', icon: <List className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
-  { type: 'rating' as FieldType, label: 'Шкала', icon: <ChartNoAxesColumnIncreasing className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
   { type: 'formula' as FieldType, label: 'Формула', icon: <Calculator className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
   { type: 'conclusion' as FieldType, label: 'Заключение', icon: <ClipboardCheck className={TOOL_ICON_CLASS} strokeWidth={1.75} /> },
 ];
@@ -1246,7 +1246,9 @@ function TemplateBuilder() {
 
 setTemplateTitle(record.title || "Новый шаблон");
 
-const migratedFields = (record.fields || []).map((f: BuilderField) => ({
+// Поля «Число» / «Чекбокс» / «Шкала» → текстовые (lib/migrateFieldTypes.ts);
+// в базе шаблон обновится при следующем сохранении.
+const migratedFields = (record.fields || []).map((f: BuilderField) => migrateLegacyField({
   ...f,
   quickButtons: migrateQuickButtons(f.quickButtons),
 }));

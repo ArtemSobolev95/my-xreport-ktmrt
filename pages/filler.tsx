@@ -9,6 +9,7 @@ import type { BuilderField, QuickButtonGroup, Template } from '../types/builder'
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
 import { migrateQuickButtons } from '../lib/migrateQuickButtons';
+import { convertLegacyValue, isLegacyFieldType, migrateLegacyField } from '../lib/migrateFieldTypes';
 import { evaluateFormula } from '../lib/evaluateFormula';
 import { comparisonLine, formulaCommentKey, generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
@@ -1528,12 +1529,18 @@ const handleClearDraft = async () => {
         return;
       }
       
-      // Миграция quickButtons: старый формат (subgroups) → новый (phrases)
+      // Миграция quickButtons: старый формат (subgroups) → новый (phrases);
+      // поля «Число» / «Чекбокс» / «Шкала» → текстовые (lib/migrateFieldTypes.ts).
+      // Исходные поля старых типов запоминаем — для значений из черновика.
+      const legacyFields = new Map<string, BuilderField>();
 if (Array.isArray(record.fields)) {
-  record.fields = record.fields.map((f: BuilderField) => ({
-    ...f,
-    quickButtons: migrateQuickButtons(f.quickButtons),
-  }));
+  record.fields = record.fields.map((f: BuilderField) => {
+    if (isLegacyFieldType(f.type)) legacyFields.set(f.id, f);
+    return migrateLegacyField({
+      ...f,
+      quickButtons: migrateQuickButtons(f.quickButtons),
+    });
+  });
 }
 
       const typedRecord = record as unknown as Template;
@@ -1561,10 +1568,18 @@ initializeCollapsedState(record.fields);
           }
         });
 
-        // Удаляем данные удалённых полей
+        // Значения полей старых типов из черновика (true/false, число) — в текст.
+        legacyFields.forEach((original, fieldId) => {
+          if (newData[fieldId] !== undefined) newData[fieldId] = convertLegacyValue(original, newData[fieldId]);
+        });
+
+        // Удаляем данные удалённых полей. Составные ключи поля (переменные
+        // формулы `${id}_var_${i}`, комментарий `${id}_comment`) — тоже его:
+        // раньше они удалялись, и после перезагрузки формулы пустели.
         const currentIds = new Set(record.fields.map((f: BuilderField) => f.id));
         Object.keys(newData).forEach(key => {
-          if (!currentIds.has(key)) delete newData[key];
+          const ownerId = key.replace(/_(var_\d+|comment)$/, '');
+          if (!currentIds.has(key) && !currentIds.has(ownerId)) delete newData[key];
         });
 
         return newData;
@@ -1985,7 +2000,10 @@ const findings: Finding[] = useMemo(() => {
     const v = fieldsData[f.id];
     let value = '';
     if (f.type === 'text' || f.type === 'select') {
-      if (typeof v === 'string' && v.trim() && v !== initial(f)) value = v.trim();
+      if (typeof v === 'string' && v.trim() && v !== initial(f)) {
+        value = v.trim();
+        if (f.unit && !value.endsWith(f.unit)) value += ` ${f.unit}`;
+      }
     } else if (f.type === 'number') {
       if (v !== undefined && v !== null && String(v).trim() && v !== initial(f)) value = `${v}${f.unit ? ' ' + f.unit : ''}`;
     } else if (f.type === 'checkbox') {
@@ -3121,6 +3139,8 @@ for (const f of visibleFields) {
               </>
             ) : (value || f.placeholder || 'Введите значение')}
             <span className={BRACKET_CLOSE_CLASS}>]</span>
+            {/* Единица (поля, бывшие «Числом») — после скобки, как раньше. */}
+            {f.unit && <span className="ml-1.5 text-zinc-500">{f.unit}</span>}
           </div>
           </div>
           </SmoothHeight>

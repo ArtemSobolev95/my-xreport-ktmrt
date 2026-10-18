@@ -125,7 +125,22 @@ routerAdd("POST", "/api/correct", (e) => {
 
     if (rejectReason) {
         console.log("[correct] ответ модели отброшен:", rejectReason);
-        return e.json(200, { corrected: text });
     }
-    return e.json(200, { corrected: corrected });
+
+    // Размеры, набранные через пробел («12 8 мм», «12 8 5»), — через знак
+    // умножения. Точное правило, а не модель (та могла бы пропустить), и
+    // применяется после проверки её ответа (склейка меняет «числа» и
+    // «термины с цифрами», и проверка отбросила бы правку целиком) — в том
+    // числе к исходному тексту, если ответ модели отброшен. Знак — тот, что
+    // уже есть в размерах этого текста (×, х или x), иначе русская «х».
+    const base = rejectReason ? text : corrected;
+    const NUM = "\\d+(?:[.,]\\d+)?";
+    const usedSep = (base.match(new RegExp(NUM + "\\s*([×хx])\\s*" + NUM)) || [])[1] || "х";
+    // 2–3 числа подряд только через пробелы, не слитые с буквами, не
+    // продолжающие уже записанный размер («12х8 5» не трогаем) и не часть
+    // более длинного ряда чисел («1 2 3 4 5» — не размер).
+    const SPACED = new RegExp("(?<![\\p{L}\\d.,×хx])(?<!\\d[ \\t]+)(" + NUM + ")((?:[ \\t]+" + NUM + "){1,2})(?![\\d\\p{L}×хx])(?![ \\t]+\\d)", "gu");
+    const withDimensions = base.replace(SPACED, (m) => m.trim().split(/[ \t]+/).join(usedSep));
+
+    return e.json(200, { corrected: withDimensions });
 }, $apis.requireAuth("users"))

@@ -7,17 +7,18 @@
 //
 // Медицинский текст: модель не должна «улучшать» описание. Поэтому ответ
 // проверяется здесь же и отбрасывается (возвращается исходный текст), если
-// изменились числа, латинские термины/аббревиатуры, число строк или
+// изменились числа, аббревиатуры и термины с цифрами, число строк или
 // заменено слишком много слов.
 //
-// Вызов модели и лимит запросов — в pb_hooks/yandexgpt.js.
+// Провайдер (YandexGPT / Claude), вызов модели и лимит запросов — в
+// pb_hooks/ai.js. Инструкция — на английском, язык текста модель не меняет.
 routerAdd("POST", "/api/correct", (e) => {
-    const ygpt = require(`${__hooks}/yandexgpt.js`);
-    if (!ygpt.isConfigured()) {
+    const ai = require(`${__hooks}/ai.js`);
+    if (!ai.isConfigured()) {
         return e.json(503, { message: "ИИ-проверка не настроена" });
     }
-    // Одно поле — один запрос при выходе из него: 20 в минуту с запасом.
-    if (ygpt.rateLimited("correct", e.auth.id, 20)) {
+    // Проверка — после паузы в наборе: 20 в минуту с запасом.
+    if (ai.rateLimited("correct", e.auth.id, 20)) {
         return e.json(429, { message: "Слишком много запросов" });
     }
 
@@ -29,34 +30,56 @@ routerAdd("POST", "/api/correct", (e) => {
     }
 
     const system = [
-        "Ты корректор протоколов лучевой диагностики (рентгенология, КТ, МРТ).",
-        "Исправь в тексте ТОЛЬКО: опечатки и орфографию; согласование слов по роду, числу и падежу; явные грамматические ошибки.",
-        "Ничего не перефразируй и не дописывай. Не меняй смысл, медицинские термины, порядок слов, числа и единицы измерения.",
-        "Латиницу и аббревиатуры (T2, STIR, PD, Stoller, КТ, МРТ) оставляй как есть.",
-        "Сохрани переносы строк и пунктуацию; знаки препинания меняй, только если без этого фраза грамматически неверна.",
-        "Если ошибок нет — верни текст без изменений.",
-        "Верни только итоговый текст, без кавычек и пояснений.",
+        "You are a proofreader of diagnostic imaging reports (radiography, CT, MRI).",
+        "Fix ONLY: typos and spelling; agreement of words in gender, number and case (in languages that have them); obvious grammatical errors.",
+        "Do not rephrase or add anything. Do not change the meaning, medical terms, word order, numbers or units.",
+        "Keep abbreviations and Latin-script terms (T2, STIR, PD, Stoller, CT, MRI) exactly as they are.",
+        "Keep line breaks and punctuation; change punctuation only if the phrase is grammatically wrong without it.",
+        "Do NOT capitalize the first letter of the text, do NOT replace the Russian letter \u0435 with \u0451, do NOT replace hyphens with dashes, do NOT touch spaces around hyphens - keep them as the doctor wrote.",
+        "Keep the text in its original language.",
+        "If there are no errors, return the text unchanged.",
+        "Return only the resulting text, without quotes or explanations.",
     ].join("\n");
-    const user = (fieldLabel ? "Поле протокола: " + fieldLabel + "\n\n" : "") + "Текст:\n" + text;
+    const user = (fieldLabel ? "Report field: " + fieldLabel + "\n\n" : "") + "Text:\n" + text;
 
     // Ответ — тот же текст: токенов нужно примерно столько же, сколько во входе
-    // (для русского ~3 символа на токен), с запасом.
-    const res = ygpt.complete(system, user, {
-        model: ygpt.modelFor("CORRECT"),
-        temperature: 0,
+    // (~3 символа на токен), с запасом.
+    const res = ai.complete(system, user, {
+        route: "CORRECT",
         maxTokens: Math.min(2000, Math.ceil(text.length / 2) + 50),
-        timeout: 15,
+        timeout: 20,
     });
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
     }
 
-    let corrected = res.text.replace(/^\s*(Текст:\s*)?/, "").replace(/^["«»]+|["«»]+$/g, "");
+    let corrected = res.text.replace(/^\s*((Текст|Text):\s*)?/, "").replace(/^["«»]+|["«»]+$/g, "");
     // Модель обычно отрезает пробелы/переносы по краям — возвращаем исходные.
     corrected = text.match(/^\s*/)[0] + corrected.trim() + text.match(/\s*$/)[0];
 
+    // Правки, которые врачу не нужны, модель иногда делает вопреки
+    // инструкции — возвращаем их обратно сами:
+    // ё вместо е — только если у врача в тексте «ё» нет вообще;
+    if (!/[ёЁ]/.test(text)) corrected = corrected.replace(/ё/g, "е").replace(/Ё/g, "Е");
+    // тире вместо дефиса — только если у врача тире нет;
+    if (!/[—–]/.test(text)) corrected = corrected.replace(/[—–]/g, "-");
+    // пробелы вокруг дефисов — как у врача, если дефисов столько же;
+    const hyphenGaps = text.match(/\s*-\s*/g) || [];
+    const parts = corrected.split(/\s*-\s*/);
+    if (parts.length === hyphenGaps.length + 1) {
+        corrected = parts.reduce((acc, part, i) => acc + hyphenGaps[i - 1] + part);
+    }
+    // заглавная первая буква — если у врача текст начинался со строчной.
+    const first = text.search(/\S/);
+    if (first !== -1 && corrected[first] && text[first] !== corrected[first] &&
+        text[first] === corrected[first].toLowerCase() && text[first] !== text[first].toUpperCase()) {
+        corrected = corrected.slice(0, first) + text[first] + corrected.slice(first + 1);
+    }
+
     const numbers = (s) => (s.match(/\d+(?:[.,]\d+)?/g) || []).join("|");
-    const latin = (s) => (s.match(/[A-Za-z][A-Za-z0-9-]*/g) || []).join("|");
+    // Аббревиатуры и термины с цифрами (T2, STIR, PD, CT, C1-C7) — не трогать.
+    // Не вся латиница: в англоязычном протоколе это были бы все слова.
+    const latin = (s) => (s.match(/\b(?:[A-Za-z]*\d[A-Za-z0-9-]*|[A-Z]{2,}[A-Z0-9-]*)\b/g) || []).join("|");
     const lines = (s) => s.split("\n").length;
     const words = (s) => s.split(/\s+/).filter(Boolean);
 

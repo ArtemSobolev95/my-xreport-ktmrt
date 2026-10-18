@@ -3,21 +3,24 @@
 //
 // ИИ-подсказки при наборе в filler (ghost-text): браузер шлёт сюда текст
 // поля до курсора и примеры формулировок пользователя (его же память фраз,
-// см. lib/phraseMemory.ts), сервер спрашивает YandexGPT и возвращает
+// см. lib/phraseMemory.ts), сервер спрашивает модель и возвращает
 // продолжение. Запрос идёт с сервера, а не из браузера: ключ API не
-// попадает к пользователям, и им не нужен VPN.
+// попадает к пользователям.
 //
-// Вызов модели и лимит запросов — в pb_hooks/yandexgpt.js. Без ключа
-// маршрут отвечает 503 — фронтенд в этом случае просто не показывает
-// подсказки.
+// Провайдер (YandexGPT / Claude), вызов модели и лимит запросов — в
+// pb_hooks/ai.js. Без ключа маршрут отвечает 503 — фронтенд в этом случае
+// просто не показывает подсказки.
+//
+// Инструкции модели — на английском: протоколы пишут на разных языках, и
+// модель отвечает на языке самого текста поля.
 routerAdd("POST", "/api/suggest", (e) => {
-    const ygpt = require(`${__hooks}/yandexgpt.js`);
-    if (!ygpt.isConfigured()) {
+    const ai = require(`${__hooks}/ai.js`);
+    if (!ai.isConfigured()) {
         return e.json(503, { message: "ИИ-подсказки не настроены" });
     }
     // Фронтенд шлёт запрос только после паузы в наборе, так что живому
     // человеку 40 в минуту хватает с запасом, а скрипту — нет.
-    if (ygpt.rateLimited("suggest", e.auth.id, 40)) {
+    if (ai.rateLimited("suggest", e.auth.id, 40)) {
         return e.json(429, { message: "Слишком много запросов" });
     }
 
@@ -47,51 +50,57 @@ routerAdd("POST", "/api/suggest", (e) => {
     const context = clip(body.context, 3000);
 
     const system = [
-        "Ты помогаешь врачу-рентгенологу быстрее писать протокол исследования: дописываешь текст поля, как подсказка при наборе.",
-        "Верни ТОЛЬКО продолжение текста с места курсора: без кавычек, пояснений и без повторения уже написанного.",
-        "Если курсор стоит внутри недописанного слова, начни ответ с этого слова целиком.",
-        "Продолжение — не длиннее одной фразы, до ближайшей запятой или точки (сам знак не пиши).",
-        "Пиши терминологией и в стиле этого врача: ниже — как он заполнял это поле раньше и его типичные формулировки; предпочитай их, а заготовки шаблона — как допустимый словарь.",
-        "Не придумывай числа и размеры: если дальше должно идти число, оборви продолжение перед ним.",
-        "Если уверенного продолжения нет, верни пустой ответ.",
+        "You help a radiologist write an imaging report faster: you complete the text of a report field, like an autocomplete suggestion while typing.",
+        "Return ONLY the continuation from the cursor position: no quotes, no explanations, never repeat what is already written.",
+        "Write in the same language as the field text (for example Russian or English). Keep the doctor's terminology, including English terms and abbreviations exactly as they use them.",
+        "If the cursor is inside an unfinished word, start your answer with that whole word.",
+        "The continuation is at most one phrase, up to the nearest comma or period (do not write the punctuation mark itself).",
+        "Use this doctor's wording and style: below are how they filled this field before and their typical phrases. Prefer them; treat template phrases as acceptable vocabulary.",
+        "Do not invent numbers or measurements: if a number should come next, stop right before it.",
+        "If there is no confident continuation, return an empty answer - not a single character. Never write explanations such as \"there is no continuation\".",
     ].join("\n");
 
     const parts = [];
-    if (templateTitle) parts.push("Шаблон: " + templateTitle);
-    parts.push("Поле: " + (fieldLabel || (isConclusion ? "Заключение" : "текстовое поле")));
+    if (templateTitle) parts.push("Template: " + templateTitle);
+    parts.push("Field: " + (fieldLabel || (isConclusion ? "Conclusion" : "text field")));
     if (recent.length) {
-        parts.push("Как врач заполнял это поле в прошлых протоколах (N — число):\n" + recent.map((x, i) => (i + 1) + ") " + x).join("\n"));
+        parts.push("How the doctor filled this field in previous reports (N stands for a number):\n" + recent.map((x, i) => (i + 1) + ") " + x).join("\n"));
     }
     if (examples.length) {
-        parts.push("Типичные формулировки врача для этого поля, самые подходящие — первыми (N — число):\n" + examples.map((x) => "- " + x).join("\n"));
+        parts.push("The doctor's typical phrases for this field, most relevant first (N stands for a number):\n" + examples.map((x) => "- " + x).join("\n"));
     }
     if (vocabulary.length) {
-        parts.push("Заготовки шаблона для этого поля:\n" + vocabulary.map((x) => "- " + x).join("\n"));
+        parts.push("Template phrases for this field:\n" + vocabulary.map((x) => "- " + x).join("\n"));
     }
     if (context) {
-        parts.push("Уже заполнено в других полях протокола (продолжение не должно этому противоречить):\n" + context);
+        parts.push("Already filled in other fields of this report (the continuation must not contradict it):\n" + context);
     }
     if (avoid.length) {
-        parts.push("Эти варианты врач для этого поля отклонил — не предлагай их и близкие к ним:\n" + avoid.map((x) => "- " + x).join("\n"));
+        parts.push("The doctor rejected these suggestions for this field - do not suggest them or anything close to them:\n" + avoid.map((x) => "- " + x).join("\n"));
     }
     if (isConclusion && findings) {
-        parts.push("Описание исследования (заключение должно ему соответствовать):\n" + findings);
+        parts.push("Study findings (the conclusion must match them):\n" + findings);
     }
-    parts.push("Текст поля, курсор обозначен ⟨|⟩:\n" + textBefore + "⟨|⟩");
+    parts.push("Field text, the cursor is marked \u27e8|\u27e9:\n" + textBefore + "\u27e8|\u27e9");
     // Курсор сразу после буквы — слово недописано. Без явного указания
     // модель часто возвращает только окончание слова, и на стыке не понять,
     // нужен ли пробел; с ним — начинает ответ со слова целиком.
     const partial = (textBefore.match(/[^\s.,;:!?()«»"'\/]+$/) || [""])[0];
     if (partial) {
-        parts.push("Курсор стоит внутри недописанного слова «" + partial + "». Начни ответ с этого слова целиком (например: «" + partial + "…»), без пробела перед ним.");
+        parts.push("The cursor is inside the unfinished word \"" + partial + "\". Start your answer with this whole word (e.g. \"" + partial + "...\"), with no space before it.");
     }
 
-    const model = ygpt.modelFor("SUGGEST");
-    const res = ygpt.complete(system, parts.join("\n\n"), { model: model, temperature: 0.2, maxTokens: 60 });
+    const model = ai.modelFor("SUGGEST");
+    const res = ai.complete(system, parts.join("\n\n"), { route: "SUGGEST", maxTokens: 60 });
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
     }
 
-    // model — для статистики на клиенте: точность Lite и Pro видна раздельно.
-    return e.json(200, { text: res.text.slice(0, 300), model: model });
+    // Модель иногда вместо пустого ответа пишет пояснение («в данном случае
+    // продолжения нет», "there is no continuation") — это не подсказка.
+    const META_ANSWER = /(продолжени[яе]\s+(нет|отсутству)|нет\s+(подходящ|уместн|продолжени)|не\s+(могу|удаётся|удается)\s+(предлож|продолж|подобр)|невозможно\s+(предлож|продолж)|извин|к\s+сожалению|недостаточно\s+(данных|информац|контекст)|no\s+(suitable\s+|confident\s+|clear\s+)?continuation|(cannot|can't|unable\s+to)\s+(suggest|continue|complete|provide)|\bsorry\b|not\s+enough\s+(context|information))/i;
+    const text = META_ANSWER.test(res.text) ? "" : res.text;
+
+    // model — для статистики на клиенте: точность моделей видна раздельно.
+    return e.json(200, { text: text.slice(0, 300), model: model });
 }, $apis.requireAuth("users"))

@@ -1,11 +1,7 @@
 // pb_hooks/yandexgpt.js
 //
-// Общий код для ИИ-маршрутов (suggest.pb.js, correct.pb.js): вызов
-// YandexGPT и ограничение частоты запросов. Не *.pb.js — PocketBase его сам
-// не загружает; подключается внутри обработчика:
-//   const ygpt = require(`${__hooks}/yandexgpt.js`)
-// (обработчики выполняются изолированно, переменные верхнего уровня
-// других файлов им не видны).
+// Вызов YandexGPT для ИИ-маршрутов — выбирается в pb_hooks/ai.js при
+// AI_PROVIDER=yandex (по умолчанию).
 //
 // Переменные окружения (Amvera → Переменные):
 //   YANDEX_API_KEY    — API-ключ сервисного аккаунта (роль ai.languageModels.user)
@@ -26,17 +22,6 @@ module.exports = {
     // route — "SUGGEST" | "CORRECT".
     modelFor(route) {
         return $os.getenv("YANDEX_GPT_MODEL_" + route) || $os.getenv("YANDEX_GPT_MODEL") || "yandexgpt-lite/latest";
-    },
-
-    // true — лимит превышен. Окно — календарная минута, счётчик в памяти
-    // процесса ($app.store()), отдельный на каждый name.
-    rateLimited(name, userId, perMinute) {
-        const minute = Math.floor(Date.now() / 60000);
-        const key = name + "_rl:" + userId;
-        const [rlMinute, rlCount] = String($app.store().get(key) || "0:0").split(":").map(Number);
-        const count = rlMinute === minute ? rlCount + 1 : 1;
-        $app.store().set(key, minute + ":" + count);
-        return count > perMinute;
     },
 
     // options: { model, temperature, maxTokens, timeout? }.

@@ -79,14 +79,28 @@ routerAdd("POST", "/api/correct", (e) => {
     const numbers = (s) => (s.match(/\d+(?:[.,]\d+)?/g) || []).join("|");
     // Аббревиатуры и термины с цифрами (T2, STIR, PD, CT, C1-C7) — не трогать.
     // Не вся латиница: в англоязычном протоколе это были бы все слова.
-    const latin = (s) => (s.match(/\b(?:[A-Za-z]*\d[A-Za-z0-9-]*|[A-Z]{2,}[A-Z0-9-]*)\b/g) || []).join("|");
+    // Перед сравнением похожие кириллические буквы приводятся к латинским:
+    // «Т2» и «STIR», набранные кириллицей, модель законно исправляет на
+    // латиницу — это та же аббревиатура, а не изменённый термин.
+    const HOMOGLYPHS = { "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X", "У": "Y",
+        "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x" };
+    // Только внутри «слов», где есть латиница или цифры (Т2, СТIR), — обычные
+    // русские слова не трогаем.
+    const toLatin = (s) => s.replace(/[A-Za-zА-Яа-яЁё0-9-]+/g, (w) =>
+        /[A-Za-z0-9]/.test(w) || /^[АВЕКМНОРСТХУ]{2,}$/.test(w)
+            ? w.replace(/[АВЕКМНОРСТХУаеорсух]/g, (ch) => HOMOGLYPHS[ch] || ch)
+            : w);
+    const latinTokens = (s) => toLatin(s).match(/\b(?:[A-Za-z]*\d[A-Za-z0-9-]*|[A-Z]{2,}[A-Z0-9-]*)\b/g) || [];
+    const latin = (s) => latinTokens(s).join("|");
     const lines = (s) => s.split("\n").length;
     const words = (s) => s.split(/\s+/).filter(Boolean);
 
     let rejectReason = "";
     if (!corrected.trim()) rejectReason = "пустой ответ";
     else if (numbers(corrected) !== numbers(text)) rejectReason = "изменились числа";
-    else if (latin(corrected) !== latin(text)) rejectReason = "изменилась латиница";
+    else if (latin(corrected) !== latin(text)) {
+        rejectReason = "изменилась латиница: [" + latinTokens(text).join(", ") + "] → [" + latinTokens(corrected).join(", ") + "]";
+    }
     else if (lines(corrected) !== lines(text)) rejectReason = "изменились строки";
     else {
         const a = words(text);

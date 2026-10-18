@@ -56,6 +56,19 @@ html:not(.js-focus-mouse) textarea:focus-visible:not([data-custom-focus]),
   box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.55) inset !important;
 }
 
+/* Конструктор шаблонов — без колец фокуса вообще (ни правила выше, ни
+   браузерного outline): выбранная строка и так подсвечена, а кольцо на
+   каждом поле, плашке названия и перетаскиваемой строке было визуальным
+   шумом. Включается атрибутом data-no-focus-ring на корне страницы
+   (components/builder/TemplateBuilder.tsx). Оба правила с !important,
+   поэтому побеждает более специфичное: html:not(.focus-ring-forced) —
+   такого класса нет, это только добавка специфичности, чтобы селектор
+   был сильнее правила выше (у того html:not(.js-focus-mouse)). */
+html:not(.focus-ring-forced) [data-no-focus-ring] :is(input, textarea, select, button, a, [tabindex]):is(:focus, :focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 /* Safari рисует на input/textarea при фокусе собственное "свечение"
    вокруг рамки через нативный рендер поля (-webkit-appearance), отдельно
    от CSS outline/box-shadow — обычные focus:outline-none и

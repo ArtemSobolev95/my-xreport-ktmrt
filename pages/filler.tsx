@@ -3189,7 +3189,7 @@ for (const f of visibleFields) {
               title={selected || undefined}
               // текст + px-2.5 слева + место под шеврон справа + рамки
               style={{ width: measureTextPx(shown, selected ? 500 : 400) + 42 }}
-              className={`max-w-full appearance-none truncate cursor-pointer rounded-lg border pl-2.5 pr-7 py-0.5 text-sm leading-tight transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/40 ${
+              className={`max-w-full appearance-none truncate cursor-pointer rounded-lg border pl-2.5 pr-7 py-0.5 text-sm leading-tight transition-colors focus:outline-none ${
                 selected
                   ? 'border-amber-400/40 bg-amber-400/10 font-medium text-amber-400 hover:bg-amber-400/15'
                   : 'border-dashed border-white/25 bg-white/[0.03] text-zinc-400 hover:border-white/40 hover:text-zinc-200'

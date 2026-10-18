@@ -1414,7 +1414,8 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
     // Раскладка — как у страницы заполнения (lib/pageLayout.ts): липкая шапка
     // со строкой действий, док инструментов слева, строки полей по центру,
     // справа — быстрые кнопки выбранного поля и заметки шаблона.
-    <div className="min-h-screen bg-zinc-950 text-white">
+    // data-no-focus-ring — без колец фокуса на всей странице (styles/globals.css).
+    <div data-no-focus-ring className="min-h-screen bg-zinc-950 text-white">
       <div className="sticky top-0 z-50 bg-zinc-950 border-b border-white/10">
         <DynamicUserHeader />
         <div className={PAGE_COLUMNS_CLASS}>

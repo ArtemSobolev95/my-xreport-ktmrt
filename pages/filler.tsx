@@ -3166,29 +3166,45 @@ for (const f of visibleFields) {
         </div>
       )}
 
-      {f.type === 'select' && (
-        <div className={`flex items-baseline ${CONTENT_TEXT_CLASS} px-0`}>
-          <span aria-hidden="true" className="text-zinc-500 select-none">[</span>
-          <select
-            ref={el => { if (el) inputRefs.current[f.id] = el; }}
-            data-custom-focus
-            value={fieldsData[f.id] || ''}
-            onChange={e => updateField(f.id, e.target.value)}
-            onFocus={() => handleFocus(f.id, null)}
-            onBlur={handleBlur}
-            tabIndex={isSectionCollapsed ? -1 : 0}
-            onKeyDown={e => handleFieldTabNavigation(e, f.id)}
-            className={`max-w-full appearance-none bg-transparent border-0 px-1 py-0 cursor-pointer focus:outline-none ${
-              fieldsData[f.id] ? 'text-amber-400' : 'text-zinc-500'
-            }`}
-          >
-            <option value="" className="bg-zinc-900 text-zinc-400">выберите вариант…</option>
-            {f.options?.map((opt: string, i: number) => <option key={i} value={opt} className="bg-zinc-900 text-white">{opt}</option>)}
-          </select>
-          <span aria-hidden="true" className="text-zinc-500 select-none">]</span>
-          <ChevronDown size={12} className="ml-1 self-center text-zinc-500 pointer-events-none" aria-hidden="true" />
-        </div>
-      )}
+      {/* Список — заметный элемент выбора, а не текст в скобках: «таблетка»
+          с рамкой и шевроном. Пока не выбрано — пунктирная рамка и серый
+          текст (сразу видно, что выбор ещё не сделан), после выбора — amber,
+          как остальное введённое. Ширина — по выбранному варианту, а не по
+          самому длинному (так делает нативный select). Сам select нативный —
+          клавиатура (Tab, стрелки) и выпадающий список работают как прежде. */}
+      {f.type === 'select' && (() => {
+        const selected: string = fieldsData[f.id] || '';
+        const shown = selected || 'выберите вариант…';
+        return (
+          <div className="relative inline-flex max-w-full align-top">
+            <select
+              ref={el => { if (el) inputRefs.current[f.id] = el; }}
+              data-custom-focus
+              value={selected}
+              onChange={e => updateField(f.id, e.target.value)}
+              onFocus={() => handleFocus(f.id, null)}
+              onBlur={handleBlur}
+              tabIndex={isSectionCollapsed ? -1 : 0}
+              onKeyDown={e => handleFieldTabNavigation(e, f.id)}
+              title={selected || undefined}
+              // текст + px-2.5 слева + место под шеврон справа + рамки
+              style={{ width: measureTextPx(shown, selected ? 500 : 400) + 42 }}
+              className={`max-w-full appearance-none truncate cursor-pointer rounded-lg border pl-2.5 pr-7 py-0.5 text-sm leading-tight transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/40 ${
+                selected
+                  ? 'border-amber-400/40 bg-amber-400/10 font-medium text-amber-400 hover:bg-amber-400/15'
+                  : 'border-dashed border-white/25 bg-white/[0.03] text-zinc-400 hover:border-white/40 hover:text-zinc-200'
+              }`}
+            >
+              <option value="" className="bg-zinc-900 text-zinc-400">выберите вариант…</option>
+              {f.options?.map((opt: string, i: number) => <option key={i} value={opt} className="bg-zinc-900 text-white">{opt}</option>)}
+            </select>
+            <ChevronDown
+              aria-hidden="true"
+              className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${selected ? 'text-amber-400' : 'text-zinc-500'}`}
+            />
+          </div>
+        );
+      })()}
 
       {f.type === 'checkbox' && (
         <label

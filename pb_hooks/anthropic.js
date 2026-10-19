@@ -13,21 +13,21 @@
 // Переменные окружения:
 //   ANTHROPIC_API_KEY  — ключ API
 //   ANTHROPIC_MODEL    — необязательно, модель для всех маршрутов (по умолчанию claude-opus-5-5)
-//   ANTHROPIC_MODEL_SUGGEST, ANTHROPIC_MODEL_CORRECT — необязательно, модель
-//                        отдельно для подсказок / проверки (важнее ANTHROPIC_MODEL)
-//   ANTHROPIC_EFFORT_SUGGEST, ANTHROPIC_EFFORT_CORRECT — необязательно,
-//                        low | medium | high (по умолчанию low для обоих)
-//   ANTHROPIC_THINKING_SUGGEST, ANTHROPIC_THINKING_CORRECT — необязательно,
-//                        on | off: «размышление» модели перед ответом (по
-//                        умолчанию on для подсказок, off для проверки).
+//   ANTHROPIC_MODEL_SUGGEST, ANTHROPIC_MODEL_CORRECT, ANTHROPIC_MODEL_CONCLUDE —
+//                        необязательно, модель отдельно для подсказок /
+//                        проверки / автозаключения (важнее ANTHROPIC_MODEL)
+//   ANTHROPIC_EFFORT_<МАРШРУТ> — необязательно, low | medium | high (по
+//                        умолчанию low, у автозаключения medium)
+//   ANTHROPIC_THINKING_<МАРШРУТ> — необязательно, on | off: «размышление»
+//                        модели перед ответом (по умолчанию on, у проверки off).
 //                        Выключить можно у Claude Haiku 5.5 и Sonnet 5.5 —
 //                        главный выигрыш в задержке; у Opus 5.5 оно всегда
 //                        включено (остаётся effort).
 //   ANTHROPIC_BASE_URL — необязательно, адрес Messages API (для прокси/тестов)
 
 const DEFAULT_MODEL = "claude-opus-5-5";
-const DEFAULT_EFFORT = { SUGGEST: "low", CORRECT: "low" };
-const DEFAULT_THINKING = { SUGGEST: "on", CORRECT: "off" };
+const DEFAULT_EFFORT = { SUGGEST: "low", CORRECT: "low", CONCLUDE: "medium" };
+const DEFAULT_THINKING = { SUGGEST: "on", CORRECT: "off", CONCLUDE: "on" };
 // Сверх длины самого ответа — место под «размышление» модели: оно
 // учитывается в max_tokens.
 const THINKING_HEADROOM_TOKENS = 4000;
@@ -46,7 +46,7 @@ module.exports = {
         return !!$os.getenv("ANTHROPIC_API_KEY");
     },
 
-    // route — "SUGGEST" | "CORRECT".
+    // route — "SUGGEST" | "CORRECT" | "CONCLUDE".
     modelFor(route) {
         return $os.getenv("ANTHROPIC_MODEL_" + route) || $os.getenv("ANTHROPIC_MODEL") || DEFAULT_MODEL;
     },

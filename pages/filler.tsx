@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X } from 'lucide-react';
+import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X, Loader2 } from 'lucide-react';
 import type { BuilderField, QuickButtonGroup, Template } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
@@ -213,6 +213,10 @@ function FillerPage() {
   // исправленный вариант для конкретного текста. Показывается, пока текст
   // поля не изменился.
   const [corrections, setCorrections] = useState<Record<string, { original: string; corrected: string }>>({});
+  // Автозаключение (pb_hooks/conclude.pb.js): предложенный текст для поля
+  // «Заключение» — в попапе находок, вставляется только по команде врача.
+  const [conclusionDraft, setConclusionDraft] = useState<{ fieldId: string; text: string } | null>(null);
+  const [conclusionLoading, setConclusionLoading] = useState(false);
   const [phraseMemoryFieldId, setPhraseMemoryFieldId] = useState<string | null>(null);
   // Названия полей ЗАГЛАВНЫМИ (переключатель над полями) — настройка
   // внешнего вида, запоминается в этом браузере.
@@ -1120,6 +1124,7 @@ const handleClearDraft = async () => {
     setDismissedGhosts({});
     setAiGhost(null);
     setCorrections({});
+    setConclusionDraft(null);
   };
 
   // === ИИ-ПРОВЕРКА ПОЛЯ (опечатки, род/число/падеж) ===
@@ -1994,6 +1999,91 @@ const findings: Finding[] = useMemo(() => {
   }
   return result;
 }, [template, originalTemplate, fieldsData, deletedFieldIds]);
+
+// === АВТОЗАКЛЮЧЕНИЕ ===
+// Alt+Z или кнопка в попапе находок: модель формулирует заключение по
+// находкам словами врача (его прошлые заключения и фразы из памяти фраз).
+// Предложение появляется в том же попапе; Alt+Enter / «Вставить» заменяет
+// текст поля (отменяется Ctrl+Z), Esc / «Отклонить» — убирает. Уже
+// написанное в поле модель сохраняет и дополняет.
+const conclusionSeqRef = useRef(0);
+const conclusionDisabledRef = useRef(false);
+
+const requestConclusion = async (fieldId: string) => {
+  const field = template?.fields.find(f => f.id === fieldId);
+  if (!field || field.type !== 'conclusion' || !findings.length || conclusionDisabledRef.current) return;
+  const seq = ++conclusionSeqRef.current;
+  setConclusionDraft(null);
+  setConclusionLoading(true);
+  try {
+    const res = await pb.send<{ conclusion: string }>('/api/conclude', {
+      method: 'POST',
+      body: {
+        templateTitle: template?.title || '',
+        fieldLabel: field.label || 'Заключение',
+        findings: findings.map(x => `${x.section ? x.section + ' / ' : ''}${x.label ? x.label + ': ' : ''}${x.value}`).join('\n'),
+        report: finalPlainText,
+        current: typeof fieldsData[fieldId] === 'string' ? fieldsData[fieldId] : '',
+        recent: (phraseMemory.recent[fieldId] || []).slice(0, 6),
+        examples: selectExamples(phraseMemory.memory[fieldId], '', 30),
+        normal: field.placeholder || '',
+      },
+    });
+    if (seq !== conclusionSeqRef.current) return;
+    const text = typeof res.conclusion === 'string' ? res.conclusion.trim() : '';
+    if (text) setConclusionDraft({ fieldId, text });
+    else dialog.alert('ИИ не смог сформулировать заключение по этим находкам');
+  } catch (err: unknown) {
+    if (seq !== conclusionSeqRef.current) return;
+    if ((err as { status?: number })?.status === 503) conclusionDisabledRef.current = true;
+    dialog.alert('Не удалось получить заключение от ИИ. Попробуйте ещё раз.');
+    console.warn('[conclude] заключение не получено:', err);
+  } finally {
+    if (seq === conclusionSeqRef.current) setConclusionLoading(false);
+  }
+};
+
+const cancelConclusion = () => {
+  conclusionSeqRef.current++;
+  setConclusionLoading(false);
+  setConclusionDraft(null);
+};
+
+const insertConclusion = (fieldId: string) => {
+  if (conclusionDraft?.fieldId !== fieldId) return;
+  const text = conclusionDraft.text;
+  updateField(fieldId, text);
+  setConclusionDraft(null);
+  requestAnimationFrame(() => {
+    const el = inputRefs.current[fieldId] as HTMLTextAreaElement | null;
+    autoResize(el);
+    el?.focus();
+    el?.setSelectionRange(text.length, text.length);
+  });
+};
+
+// Клавиши автозаключения в поле «Заключение». true — событие обработано.
+// e.code, а не e.key: на macOS Option+Z даёт «Ω».
+const handleConclusionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: string): boolean => {
+  if (e.nativeEvent.isComposing || template?.fields.find(f => f.id === fieldId)?.type !== 'conclusion') return false;
+  const plain = !e.ctrlKey && !e.metaKey && !e.shiftKey;
+  if (e.altKey && plain && e.code === 'KeyZ') {
+    e.preventDefault();
+    requestConclusion(fieldId);
+    return true;
+  }
+  if (conclusionDraft?.fieldId === fieldId && e.altKey && plain && e.key === 'Enter') {
+    e.preventDefault();
+    insertConclusion(fieldId);
+    return true;
+  }
+  if ((conclusionDraft?.fieldId === fieldId || conclusionLoading) && !e.altKey && plain && e.key === 'Escape') {
+    e.preventDefault();
+    cancelConclusion();
+    return true;
+  }
+  return false;
+};
 
 // Горячие клавиши: Alt+C / Alt+P — переключить "Сравнение" / "Примечание"
 // (та же логика, что в onClick этих кнопок). Слушатель на window, а не на
@@ -3103,6 +3193,7 @@ for (const f of visibleFields) {
             }}
             onKeyDown={e => {
               if (handleGhostKeyDown(e, f.id)) return;
+              if (handleConclusionKeyDown(e, f.id)) return;
               if (handleCorrectionKeyDown(e, f.id)) return;
               handleFieldTabNavigation(e, f.id);
               if (!e.defaultPrevented) handleKeyDown(e, f.id);
@@ -3342,8 +3433,9 @@ for (const f of visibleFields) {
           exit={{ opacity: 0, y: 4, scale: 0.98 }}
           transition={{ duration: 0.16, ease: 'easeOut' }}
           onMouseDown={(e) => e.preventDefault()}
-          className="absolute bottom-full left-0 right-0 mb-2 z-40 max-h-[calc(50vh-7rem)] overflow-y-auto rounded-2xl bg-zinc-900 border border-white/10 shadow-2xl px-3.5 py-2.5"
+          className="absolute bottom-full left-0 right-0 mb-2 z-40 max-h-[calc(50vh-7rem)] flex flex-col rounded-2xl bg-zinc-900 border border-white/10 shadow-2xl"
         >
+          <div className="min-h-0 overflow-y-auto px-3.5 pt-2.5 pb-2">
           <div className="mb-1.5 flex items-baseline gap-2 text-[11px] text-zinc-500">
             Находки
             <span className="tabular-nums">{findings.length}</span>
@@ -3362,6 +3454,63 @@ for (const f of visibleFields) {
                 </div>
               </div>
             ))}
+          </div>
+          </div>
+
+          {/* Автозаключение — внизу попапа, ближе к полю; не прокручивается
+              вместе со списком находок. */}
+          <div className="shrink-0 border-t border-white/10 px-3.5 py-2 text-xs">
+            {conclusionDraft?.fieldId === f.id ? (
+              <>
+                <div className="mb-1 flex items-center gap-1.5 text-[11px] text-zinc-500">
+                  <Sparkles className="w-3 h-3 text-amber-400" aria-hidden="true" />
+                  Предлагаемое заключение
+                </div>
+                <div className="max-h-40 overflow-y-auto text-zinc-200 leading-snug whitespace-pre-wrap break-words">{conclusionDraft.text}</div>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => insertConclusion(f.id)}
+                    className="rounded-lg bg-amber-400 px-2.5 py-1 text-[11px] font-medium text-zinc-950 hover:bg-amber-300 transition-colors cursor-pointer"
+                  >
+                    {String(value).trim() ? 'Заменить текст' : 'Вставить'} <span className="opacity-60">Alt+Enter</span>
+                  </button>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => requestConclusion(f.id)}
+                    className="rounded-lg px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-white/10 transition-colors cursor-pointer"
+                  >
+                    Ещё вариант <span className="opacity-60">Alt+Z</span>
+                  </button>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={cancelConclusion}
+                    className="ml-auto rounded-lg px-2.5 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-white/10 transition-colors cursor-pointer"
+                  >
+                    Отклонить <span className="opacity-60">Esc</span>
+                  </button>
+                </div>
+              </>
+            ) : conclusionLoading ? (
+              <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" aria-hidden="true" />
+                Формулирую заключение… <span className="text-zinc-600">Esc — отменить</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => requestConclusion(f.id)}
+                className="flex items-center gap-1.5 rounded-lg px-1.5 py-0.5 -mx-1.5 text-[11px] text-zinc-300 hover:text-amber-300 hover:bg-white/5 transition-colors cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+                Сформулировать заключение
+                <span className="text-zinc-600">Alt+Z</span>
+              </button>
+            )}
           </div>
         </motion.div>
       )}

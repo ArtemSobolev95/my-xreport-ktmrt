@@ -1,0 +1,10 @@
+# Не нужно для сборки образа (Dockerfile ставит зависимости и собирает сам).
+node_modules
+.next
+out
+.git
+# Локальные данные PocketBase и секреты разработки — никогда не в образ.
+pocketbase_0
+pb_data
+.env*.local
+.env.pb.local

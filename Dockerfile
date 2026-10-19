@@ -1,19 +1,18 @@
-FROM alpine:latest
-
-# Устанавливаем Node.js + npm + всё необходимое
-RUN apk add --no-cache nodejs npm unzip ca-certificates curl
-
-# Актуальная версия PocketBase (май 2026)
-ARG PB_VERSION=0.37.5
-
-# Скачиваем и распаковываем PocketBase
-ADD https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip /tmp/pb.zip
-RUN unzip /tmp/pb.zip -d /pb/ && \
-    rm /tmp/pb.zip && \
-    chmod +x /pb/pocketbase
+# Двухэтапная сборка. Фронтенд собирается в отдельном образе с Node.js, а в
+# итоговый попадают только PocketBase, готовая статика (out/) и хуки с
+# миграциями — ~40 МБ вместо ~500: node_modules, Node.js и кэш .next
+# работающему приложению не нужны. Большой образ хранилище Amvera (harbor)
+# не принимало — загрузка обрывалась на ~474 МБ («unexpected EOF»).
 
 # === СБОРКА NEXT.JS ===
+FROM node:22-alpine AS build
 WORKDIR /app
+
+# Сначала только манифесты: слой с зависимостями кэшируется, пока они не
+# менялись.
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
+
 COPY . .
 
 # NEXT_PUBLIC_* переменные "запекаются" в статическую сборку на этом шаге —
@@ -31,13 +30,27 @@ ENV NEXT_PUBLIC_POCKETBASE_URL=/
 # в код/git его добавлять нельзя — его читает pb_hooks/main.pb.js.
 ENV NEXT_PUBLIC_HCAPTCHA_SITE_KEY=e972cf20-0e1e-4a12-81d8-bcf6350a8494
 
-# Устанавливаем зависимости и собираем фронтенд
-RUN npm ci --include=dev
 RUN npm run build
 
-# Копируем собранный Next.js в папку, которую PocketBase будет раздавать как статику
-RUN mkdir -p /pb/pb_public && \
-    cp -r out/* /pb/pb_public/ 2>/dev/null || true
+# === ИТОГОВЫЙ ОБРАЗ: PocketBase + статика ===
+FROM alpine:latest
+
+# ca-certificates — для HTTPS-запросов хуков к ИИ (Claude / YandexGPT) и hCaptcha.
+RUN apk add --no-cache ca-certificates
+
+# Актуальная версия PocketBase (май 2026)
+ARG PB_VERSION=0.37.5
+
+# Скачиваем и распаковываем PocketBase (unzip нужен только на этом шаге)
+ADD https://github.com/pocketbase/pocketbase/releases/download/v${PB_VERSION}/pocketbase_${PB_VERSION}_linux_amd64.zip /tmp/pb.zip
+RUN apk add --no-cache --virtual .unzip unzip && \
+    unzip /tmp/pb.zip -d /pb/ && \
+    rm /tmp/pb.zip && \
+    chmod +x /pb/pocketbase && \
+    apk del .unzip
+
+# Собранный Next.js — в папку, которую PocketBase раздаёт как статику
+COPY --from=build /app/out /pb/pb_public
 
 # Копируем папки миграций и хуков
 COPY pb_migrations /pb/pb_migrations/

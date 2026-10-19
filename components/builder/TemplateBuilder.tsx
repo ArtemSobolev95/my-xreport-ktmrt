@@ -811,7 +811,7 @@ function SortableField({
         className={`group relative rounded-lg px-2 transition-colors ${
           field.type === 'header' ? 'mt-5 mb-1 py-1.5' : 'py-1'
         } ${
-          isSelected ? 'bg-white/[0.05] ring-1 ring-inset ring-amber-400/40' : 'hover:bg-white/[0.02]'
+          isSelected ? 'bg-white/[0.05]' : 'hover:bg-white/[0.02]'
         } ${isDragging ? 'bg-zinc-900 shadow-2xl' : ''}`}
       >
       {field.type === 'header' ? (

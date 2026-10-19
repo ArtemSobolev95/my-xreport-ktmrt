@@ -58,6 +58,7 @@ routerAdd("POST", "/api/suggest", (e) => {
         "Use this doctor's wording and style: below are how they filled this field before and their typical phrases. Prefer them; treat template phrases as acceptable vocabulary.",
         "Do not invent numbers or measurements: if a number should come next, stop right before it.",
         "If there is no confident continuation, return an empty answer - not a single character. Never write explanations such as \"there is no continuation\".",
+        "Never describe the cursor, the field, the text or your reasoning, and never answer in another language than the field text: your answer is pasted into the report as is.",
     ].join("\n");
 
     const parts = [];
@@ -99,7 +100,19 @@ routerAdd("POST", "/api/suggest", (e) => {
     // Модель иногда вместо пустого ответа пишет пояснение («в данном случае
     // продолжения нет», "there is no continuation") — это не подсказка.
     const META_ANSWER = /(продолжени[яе]\s+(нет|отсутству)|нет\s+(подходящ|уместн|продолжени)|не\s+(могу|удаётся|удается)\s+(предлож|продолж|подобр)|невозможно\s+(предлож|продолж)|извин|к\s+сожалению|недостаточно\s+(данных|информац|контекст)|no\s+(suitable\s+|confident\s+|clear\s+)?continuation|(cannot|can't|unable\s+to)\s+(suggest|continue|complete|provide)|\bsorry\b|not\s+enough\s+(context|information))/i;
-    const text = META_ANSWER.test(res.text) ? "" : res.text;
+    // То же по-английски — о курсоре, поле, тексте: «the cursor is after a
+    // space», «nothing to add», «the text is complete». Без оборотов, которые
+    // бывают в английском протоколе («no further abnormality»).
+    const META_ANSWER_EN = /\b(cursor|nothing\s+(more\s+)?to\s+(add|suggest)|already\s+(complete|finished|ends)|(field|text|sentence|phrase)\s+(is|seems|appears|looks)\s+(complete|finished|empty)|empty\s+(answer|response|string)|n\/a)\b/i;
+    // Ответ на другом языке, чем текст врача: в русском протоколе — целые
+    // английские слова без единой кириллической буквы. Короткие термины
+    // латиницей (T2, STIR, PD) так не отсекаются: в них нет строчных слов.
+    const fieldText = textBefore + " " + recent.join(" ") + " " + examples.join(" ");
+    const wrongLanguage = /[\u0400-\u04FF]/.test(fieldText) && !/[\u0400-\u04FF]/.test(res.text) &&
+        (res.text.match(/\b[a-z]{3,}\b/g) || []).length >= 2;
+    const isMeta = META_ANSWER.test(res.text) || META_ANSWER_EN.test(res.text) || wrongLanguage;
+    if (isMeta && res.text.trim()) console.log("[suggest] отброшен ответ-пояснение:", res.text.slice(0, 120));
+    const text = isMeta ? "" : res.text;
 
     // model — для статистики на клиенте: точность моделей видна раздельно.
     return e.json(200, { text: text.slice(0, 300), model: model });

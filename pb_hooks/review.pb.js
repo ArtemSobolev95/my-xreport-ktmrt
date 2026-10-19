@@ -25,6 +25,10 @@ routerAdd("POST", "/api/review", (e) => {
     const clip = (v, max) => String(v == null ? "" : v).slice(0, max);
     const templateTitle = clip(body.templateTitle, 200);
     const report = clip(body.report, 10000);
+    // Язык замечаний — язык интерфейса (сейчас всегда русский), а не языка
+    // протокола: модель иногда отвечала по-английски.
+    const LANGUAGES = { ru: "Russian", en: "English" };
+    const language = LANGUAGES[clip(body.lang, 5)] || "Russian";
     // Поля, которые врач заполнил: { id, label, section, text }.
     const fields = (Array.isArray(body.fields) ? body.fields : [])
         .slice(0, 80)
@@ -48,7 +52,7 @@ routerAdd("POST", "/api/review", (e) => {
         "Do not comment on style, on how detailed the normal descriptions are, or on patient management. If there is nothing to report, return empty lists.",
         "Answer ONLY with JSON, no code fences: {\"edits\": [[\"field id\", \"wrong fragment\", \"fixed fragment\"], ...], \"issues\": [[\"field id or empty\", \"short description\"], ...]}.",
         "Copy each wrong fragment exactly as it appears in that field (a word or a few words); if it occurs more than once in the field, include a neighbouring word so it is unique. To remove a duplicate, include it in the fragment and leave it out of the fix.",
-        "Write issue descriptions in the language of the report, in one short sentence; point the issue to the field that should be changed (usually the conclusion), or leave the id empty.",
+        "Write issue descriptions ONLY in " + language + ", in one short sentence; point the issue to the field that should be changed (usually the conclusion), or leave the id empty.",
     ].join("\n");
 
     const parts = [];
@@ -90,7 +94,10 @@ routerAdd("POST", "/api/review", (e) => {
             const text = Array.isArray(x) ? x[1] : x && (x.text || x.message);
             return { field: typeof id === "string" ? id : "", text: clip(text, 400).trim() };
         })
-        .filter((x) => x.text);
+        .filter((x) => x.text)
+        // Замечание не на том языке (по-русски — без единой кириллической
+        // буквы) отбрасываем, а не показываем.
+        .filter((x) => language !== "Russian" || /[\u0400-\u04FF]/.test(x.text));
 
     return e.json(200, { corrections: corrections, issues: issues, model: ai.modelFor("CORRECT") });
 }, $apis.requireAuth("users"))

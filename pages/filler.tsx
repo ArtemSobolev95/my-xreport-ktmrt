@@ -2024,7 +2024,7 @@ const runReview = async (force = false) => {
       issues: { field: string; text: string }[];
     }>('/api/review', {
       method: 'POST',
-      body: { templateTitle: template.title || '', fields, report: finalPlainText },
+      body: { templateTitle: template.title || '', fields, report: finalPlainText, lang: 'ru' },
     });
     if (seq !== reviewSeqRef.current) return;
     const next: Record<string, { original: string; corrected: string }> = {};

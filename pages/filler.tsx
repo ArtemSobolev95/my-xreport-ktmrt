@@ -258,7 +258,8 @@ function FillerPage() {
   const inputRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>>({});
   const [initialized, setInitialized] = useState(false);
   const [newlyAddedId, setNewlyAddedId] = useState<string | null>(null);
-  const [removingId, setRemovingId] = useState<string | null>(null);
+  // Строки, которые сейчас плавно исчезают (удаление поля или раздела).
+  const [removingIds, setRemovingIds] = useState<string[]>([]);
   const [isComparisonActive, setIsComparisonActive] = useState(false);
   const [comparisonDates, setComparisonDates] = useState<string[]>([]);
   // Стабильные id дат — только для key анимации строк в модалке
@@ -844,18 +845,44 @@ useEffect(() => {
     });
   };
 
-    const removeField = (fieldId: string) => {
+    // Удаление строк протокола (поля или раздела целиком) — с анимацией,
+  // отменяется Ctrl+Z (saveToHistory). Значения удаляются вместе со
+  // служебными ключами поля (переменные и комментарий формулы).
+  const removeFields = (fieldIds: string[]) => {
+    if (!fieldIds.length) return;
     saveToHistory();
-    setRemovingId(fieldId);
+    setRemovingIds(prev => [...prev, ...fieldIds]);
+    if (activeFieldRef.current && fieldIds.includes(activeFieldRef.current)) {
+      setActiveFieldId(null);
+      activeFieldRef.current = null;
+    }
     setTimeout(() => {
-      setDeletedFieldIds(prev => [...prev, fieldId]);
+      setDeletedFieldIds(prev => [...prev, ...fieldIds.filter(id => !prev.includes(id))]);
       setFieldsData(prev => {
         const copy = { ...prev };
-        delete copy[fieldId];
+        for (const key of Object.keys(copy)) {
+          if (fieldIds.some(id => key === id || key.startsWith(`${id}_var_`) || key === formulaCommentKey(id))) delete copy[key];
+        }
         return copy;
       });
-      setRemovingId(null);
+      setRemovingIds(prev => prev.filter(id => !fieldIds.includes(id)));
     }, 200);
+  };
+
+  const removeField = (fieldId: string) => removeFields([fieldId]);
+
+  // Раздел целиком: заголовок и все поля до следующего заголовка.
+  const removeSection = (headerId: string) => {
+    if (!template) return;
+    const start = template.fields.findIndex(f => f.id === headerId);
+    if (start === -1) return;
+    const ids = [headerId];
+    for (let i = start + 1; i < template.fields.length; i++) {
+      const f = template.fields[i];
+      if (f.type === 'header') break;
+      if (!deletedFieldIds.includes(f.id)) ids.push(f.id);
+    }
+    removeFields(ids);
   };
 
   const resetToDefault = async () => {
@@ -3108,7 +3135,8 @@ for (const f of visibleFields) {
   {visibleFields.map((f: BuilderField) => {
     const parentHeaderId = f.type !== 'header' ? sectionHeaderMap.get(f.id) : null;
     const isSectionCollapsed = parentHeaderId ? collapsedHeaders.has(parentHeaderId) : false;
-    const isAnimatingOut = isSectionCollapsed || newlyAddedId === f.id || removingId === f.id;
+    const isRemoving = removingIds.includes(f.id);
+    const isAnimatingOut = isSectionCollapsed || newlyAddedId === f.id || isRemoving;
     // Кнопки в конце строки видны у активного поля, при наведении на
     // строку или фокусе внутри неё.
     const railVisibilityClass = activeFieldId === f.id
@@ -3125,7 +3153,7 @@ for (const f of visibleFields) {
         data-field-id={f.id}
         className={`grid group/card transition-all ${skipSectionTransition ? 'duration-0' : 'duration-200'} ease-out
           ${isSectionCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}
-          ${newlyAddedId === f.id || removingId === f.id ? 'opacity-0 grid-rows-[0fr]' : ''}
+          ${newlyAddedId === f.id || isRemoving ? 'opacity-0 grid-rows-[0fr]' : ''}
         `}
       >
       <div className={`min-h-0 min-w-0 ${isAnimatingOut ? 'overflow-hidden' : ''}`}>
@@ -3188,6 +3216,18 @@ for (const f of visibleFields) {
       {f.label}
     </h2>
     <div className="flex-1 h-px bg-white/10 ml-2" aria-hidden="true" />
+    {/* Удалить раздел целиком — видно при наведении/фокусе на заголовке. */}
+    <button
+      type="button"
+      tabIndex={-1}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={(e) => { e.stopPropagation(); removeSection(f.id); }}
+      aria-label={`Удалить раздел «${f.label || ''}»`}
+      title="Удалить раздел с полями (Ctrl+Z — вернуть)"
+      className="w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-[color,background-color,opacity] cursor-pointer opacity-0 group-hover:opacity-100 group-focus:opacity-100"
+    >
+      <Trash2 size={15} />
+    </button>
   </div>
 )}
 

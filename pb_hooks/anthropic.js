@@ -19,7 +19,8 @@
 //   ANTHROPIC_EFFORT_<МАРШРУТ> — необязательно, low | medium | high (по
 //                        умолчанию low, у автозаключения medium)
 //   ANTHROPIC_THINKING_<МАРШРУТ> — необязательно, on | off: «размышление»
-//                        модели перед ответом (по умолчанию on, у проверки off).
+//                        модели перед ответом (по умолчанию off у подсказок и
+//                        проверки, on у автозаключения).
 //                        Выключить можно у Claude Haiku 5.5 и Sonnet 5.5 —
 //                        главный выигрыш в задержке; у Opus 5.5 оно всегда
 //                        включено (остаётся effort).
@@ -27,7 +28,7 @@
 
 const DEFAULT_MODEL = "claude-opus-5-5";
 const DEFAULT_EFFORT = { SUGGEST: "low", CORRECT: "low", CONCLUDE: "medium" };
-const DEFAULT_THINKING = { SUGGEST: "on", CORRECT: "off", CONCLUDE: "on" };
+const DEFAULT_THINKING = { SUGGEST: "off", CORRECT: "off", CONCLUDE: "on" };
 // Сверх длины самого ответа — место под «размышление» модели: оно
 // учитывается в max_tokens.
 const THINKING_HEADROOM_TOKENS = 4000;

@@ -183,6 +183,41 @@ export function selectExamples(mem: FieldMemory | undefined, textBefore: string,
     .map(x => toModelText(x.t));
 }
 
+// === Подсказка из памяти, без модели ===
+// Если начало текущей фразы однозначно продолжается одной из частых фраз
+// врача, подсказка берётся прямо из памяти: мгновенно и без запроса к ИИ.
+// Только уверенный случай: фраза использовалась не меньше MIN_USES раз и
+// весит не меньше DOMINANCE от всех фраз с тем же началом; набрано не
+// меньше MIN_PREFIX символов. Иначе — null, и решает модель.
+const LOCAL_MIN_USES = 3;
+const LOCAL_MIN_PREFIX = 3;
+const LOCAL_DOMINANCE = 0.75;
+
+export function confidentPhrase(mem: FieldMemory | undefined, textBefore: string, avoid: string[] = [], now = Date.now()): string | null {
+  if (!mem) return null;
+  const parts = textBefore.split(SEPARATOR);
+  const current = parts[parts.length - 1] || '';
+  const currentKey = toKey(normalizePhrase(current));
+  if (currentKey.length < LOCAL_MIN_PREFIX || currentKey.includes(SLOT)) return null;
+  const avoidKeys = new Set(avoid.map(phraseKey));
+  let total = 0;
+  let best: { e: PhraseEntry; key: string; score: number } | null = null;
+  for (const [key, e] of Object.entries(mem)) {
+    if (key.length <= currentKey.length || !key.startsWith(currentKey)) continue;
+    const score = baseScore(e, now);
+    total += score;
+    if (!best || score > best.score) best = { e, key, score };
+  }
+  if (!best || best.e.c < LOCAL_MIN_USES || best.score < LOCAL_DOMINANCE * total) return null;
+  // Отклонённая подсказка хранится обрезанной (до числа) — сравниваем по началу.
+  const bestKey = best.key;
+  if ([...avoidKeys].some(k => k.length > currentKey.length && bestKey.startsWith(k))) return null;
+  // Дальше числа (слота) подсказка не идёт — размеры врач вводит сам.
+  const slot = best.e.t.indexOf(SLOT);
+  const phrase = slot === -1 ? best.e.t : best.e.t.slice(0, slot);
+  return phrase.trim().length > current.trim().length ? phrase : null;
+}
+
 // === Последние целые тексты поля ===
 // Фразы теряют структуру описания (порядок, связки, типичную длину), поэтому
 // модели показываем и несколько последних текстов поля целиком.

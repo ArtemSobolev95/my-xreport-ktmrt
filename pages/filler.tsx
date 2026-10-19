@@ -16,7 +16,7 @@ import { evaluateFormula } from '../lib/evaluateFormula';
 import { comparisonLine, formulaCommentKey, generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
 import { usePhraseMemory } from '../hooks/usePhraseMemory';
-import { firstWord, rankedPhrases, selectExamples, selectVocabulary, suggestedPhrase, sumStats, SLOT } from '../lib/phraseMemory';
+import { confidentPhrase, firstWord, rankedPhrases, selectExamples, selectVocabulary, suggestedPhrase, sumStats, SLOT } from '../lib/phraseMemory';
 import { toGhost } from '../lib/aiSuggest';
 import { wordDiff } from '../lib/textDiff';
 import { useDialog } from '../components/DialogProvider';
@@ -1602,31 +1602,21 @@ initializeCollapsedState(record.fields);
     ]
   );
 
-  // Уже заполненные пользователем поля протокола (кроме fieldId) — контекст
-  // для ИИ-подсказки. Только введённые значения: нормы-placeholder'ы в
-  // пустых полях модель только запутали бы.
-  const reportContextFor = (fieldId: string): string => {
-    if (!template) return '';
-    const lines: string[] = [];
-    for (const f of template.fields) {
-      if (f.id === fieldId || deletedFieldIds.includes(f.id)) continue;
-      const v = fieldsData[f.id];
-      const label = f.label || '';
-      if ((f.type === 'text' || f.type === 'conclusion' || f.type === 'select') && typeof v === 'string' && v.trim()) {
-        lines.push(`${label}: ${v.trim()}`);
-      } else if (f.type === 'number' && v !== undefined && v !== null && String(v).trim()) {
-        lines.push(`${label}: ${v}${f.unit ? ' ' + f.unit : ''}`);
-      } else if (f.type === 'checkbox' && v === true && f.checkedPhrase) {
-        lines.push(`${label}: ${f.checkedPhrase}`);
-      }
-    }
-    return lines.join('\n');
-  };
+  // Находки протокола (кроме поля fieldId) — контекст для ИИ-подсказки:
+  // «Раздел / Поле: значение». Нормы шаблона сюда не входят.
+  const findingsText = (fieldId: string): string =>
+    findingsRef.current
+      .filter(x => x.id !== fieldId)
+      .map(x => `${x.section ? x.section + ' / ' : ''}${x.label ? x.label + ': ' : ''}${x.value}`)
+      .join('\n')
+      .slice(0, 2500);
 
   // Запрос подсказки у модели: после паузы в наборе (AI_SUGGEST_DELAY_MS),
   // с кэшем по «поле + текст до курсора» и отбрасыванием устаревших ответов.
   // 503 (ключ не настроен на сервере) — выключаем подсказки до перезагрузки.
   const aiCacheRef = useRef<Map<string, { ghost: string; model: string }>>(new Map());
+  // Находки (объявлены ниже, useMemo findings) — для запроса подсказки.
+  const findingsRef = useRef<{ id: string; section: string; label: string; value: string }[]>([]);
   const aiRequestSeqRef = useRef(0);
   const aiDisabledRef = useRef(false);
   useEffect(() => {
@@ -1643,6 +1633,18 @@ initializeCollapsedState(record.fields);
     }
 
     const seq = ++aiRequestSeqRef.current;
+
+    // Частая фраза врача однозначно продолжает набранное — подсказка из
+    // памяти, без запроса к модели (в статистике — модель «memory»).
+    const local = confidentPhrase(phraseMemory.memory[fieldId], textBefore, phraseMemory.rejected[fieldId]);
+    const localGhost = local ? toGhost(textBefore, local) : '';
+    if (localGhost) {
+      aiCacheRef.current.set(cacheKey, { ghost: localGhost, model: 'memory' });
+      setAiGhost({ fieldId, textBefore, ghost: localGhost, model: 'memory' });
+      phraseMemory.recordSuggestStat(fieldId, 'memory', { requests: 1, shown: 1 });
+      return;
+    }
+
     const timer = setTimeout(async () => {
       justAcceptedAtRef.current = 0;
       // Контекст для персонализации: фразы пользователя, отобранные под
@@ -1667,14 +1669,18 @@ initializeCollapsedState(record.fields);
             fieldLabel: field.label || '',
             templateTitle: template?.title || '',
             isConclusion: field.type === 'conclusion',
-            examples: selectExamples(phraseMemory.memory[fieldId], textBefore, 30),
-            recent: (phraseMemory.recent[fieldId] || []).slice(0, 6),
+            // Меньше, но точнее: фразы отобраны под набранный текст, а
+            // структуру описания показывают 3 последних текста поля.
+            examples: selectExamples(phraseMemory.memory[fieldId], textBefore, 20),
+            recent: (phraseMemory.recent[fieldId] || []).slice(0, 3),
             vocabulary,
             avoid: (phraseMemory.rejected[fieldId] || []).slice(0, 10),
-            // «Заключению» нужен весь протокол (findings), остальным — уже
-            // заполненные соседние поля, чтобы им не противоречить.
-            context: field.type === 'conclusion' ? '' : reportContextFor(fieldId),
-            findings: field.type === 'conclusion' ? finalPlainText : '',
+            // Только находки — то, что врач изменил относительно нормы, а не
+            // весь протокол с нормами: короче и по делу. «Заключению» —
+            // все находки, остальным полям — находки других полей, чтобы им
+            // не противоречить.
+            context: field.type === 'conclusion' ? '' : findingsText(fieldId),
+            findings: field.type === 'conclusion' ? findingsText(fieldId) : '',
           },
         });
         const model = res.model || 'unknown';
@@ -1697,7 +1703,7 @@ initializeCollapsedState(record.fields);
     }, immediate ? 0 : AI_SUGGEST_DELAY_MS);
 
     return () => clearTimeout(timer);
-    // phraseMemory.memory/finalPlainText читаются в момент запроса, но
+    // phraseMemory.memory/находки читаются в момент запроса, но
     // перезапускать ожидание из-за их изменения не нужно.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ghostContext, ghost === null]);
@@ -1892,6 +1898,7 @@ const findings: Finding[] = useMemo(() => {
   }
   return result;
 }, [template, originalTemplate, fieldsData, deletedFieldIds]);
+findingsRef.current = findings;
 
 // === АВТОЗАКЛЮЧЕНИЕ ===
 // Alt+Z или кнопка в попапе находок: модель формулирует заключение по

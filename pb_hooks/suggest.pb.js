@@ -31,15 +31,15 @@ routerAdd("POST", "/api/suggest", (e) => {
     const fieldLabel = clip(body.fieldLabel, 200);
     const templateTitle = clip(body.templateTitle, 200);
     const isConclusion = body.isConclusion === true;
-    const findings = clip(body.findings, 4000);
+    const findings = clip(body.findings, 2500);
     const list = (v, maxItems, maxLen) => (Array.isArray(v) ? v : [])
         .slice(0, maxItems)
         .map((x) => clip(x, maxLen).trim())
         .filter(Boolean);
     // Фразы пользователя, отобранные под набранный текст (lib/phraseMemory.ts → selectExamples).
-    const examples = list(body.examples, 40, 200);
+    const examples = list(body.examples, 25, 200);
     // Последние целые тексты этого поля — как пользователь строит описание.
-    const recent = list(body.recent, 6, 1500);
+    const recent = list(body.recent, 3, 1000);
     // Заготовки шаблона для поля: норма (placeholder) и — только пока у поля
     // мало выученных фраз — подходящие к набранному фразы быстрых кнопок
     // (отбор — на клиенте).
@@ -47,7 +47,7 @@ routerAdd("POST", "/api/suggest", (e) => {
     // Подсказки, которые врач в этом поле отклонил или проигнорировал.
     const avoid = list(body.avoid, 10, 300);
     // Уже заполненные другие поля протокола — чтобы не противоречить им.
-    const context = clip(body.context, 3000);
+    const context = clip(body.context, 2500);
 
     const system = [
         "You help a radiologist write an imaging report faster: you complete the text of a report field, like an autocomplete suggestion while typing.",
@@ -73,13 +73,13 @@ routerAdd("POST", "/api/suggest", (e) => {
         parts.push("Template phrases for this field:\n" + vocabulary.map((x) => "- " + x).join("\n"));
     }
     if (context) {
-        parts.push("Already filled in other fields of this report (the continuation must not contradict it):\n" + context);
+        parts.push("Findings already described in other fields of this report (the continuation must not contradict them):\n" + context);
     }
     if (avoid.length) {
         parts.push("The doctor rejected these suggestions for this field - do not suggest them or anything close to them:\n" + avoid.map((x) => "- " + x).join("\n"));
     }
     if (isConclusion && findings) {
-        parts.push("Study findings (the conclusion must match them):\n" + findings);
+        parts.push("Study findings - what differs from normal (the conclusion must match them):\n" + findings);
     }
     parts.push("Field text, the cursor is marked \u27e8|\u27e9:\n" + textBefore + "\u27e8|\u27e9");
     // Курсор сразу после буквы — слово недописано. Без явного указания

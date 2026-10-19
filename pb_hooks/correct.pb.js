@@ -5,6 +5,10 @@
 // поля): опечатки и согласование — род, число, падеж. Возвращает
 // исправленный текст; показывать/применять правку решает пользователь.
 //
+// Модель отвечает не всем текстом заново, а коротким списком правок
+// [["было","стало"], …] — ответ в разы короче, и проверка приходит быстрее.
+// Правки применяются к тексту здесь.
+//
 // Медицинский текст: модель не должна «улучшать» описание. Поэтому ответ
 // проверяется здесь же и отбрасывается (возвращается исходный текст), если
 // изменились числа, аббревиатуры и термины с цифрами, число строк или
@@ -37,25 +41,52 @@ routerAdd("POST", "/api/correct", (e) => {
         "Keep line breaks and punctuation; change punctuation only if the phrase is grammatically wrong without it.",
         "Do NOT capitalize the first letter of the text, do NOT replace the Russian letter \u0435 with \u0451, do NOT replace hyphens with dashes, do NOT touch spaces around hyphens - keep them as the doctor wrote.",
         "Keep the text in its original language.",
-        "If there are no errors, return the text unchanged.",
-        "Return only the resulting text, without quotes or explanations.",
+        "Answer ONLY with a JSON array of edits: [[\"wrong fragment\", \"fixed fragment\"], ...].",
+        "Copy each wrong fragment exactly as it appears in the text (a word or a few words); if it occurs more than once, include a neighbouring word so it is unique.",
+        "To remove a duplicate, include it in the fragment and leave it out of the fix.",
+        "If there are no errors, answer [].",
+        "No explanations, no code fences.",
     ].join("\n");
     const user = (fieldLabel ? "Report field: " + fieldLabel + "\n\n" : "") + "Text:\n" + text;
 
-    // Ответ — тот же текст: токенов нужно примерно столько же, сколько во входе
-    // (~3 символа на токен), с запасом.
+    // Ответ — только правки: несколько десятков токенов, с запасом на
+    // длинный текст с множеством ошибок.
     const res = ai.complete(system, user, {
         route: "CORRECT",
-        maxTokens: Math.min(2000, Math.ceil(text.length / 2) + 50),
-        timeout: 20,
+        maxTokens: Math.min(800, Math.ceil(text.length / 4) + 60),
+        timeout: 15,
     });
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
     }
 
-    let corrected = res.text.replace(/^\s*((Текст|Text):\s*)?/, "").replace(/^["«»]+|["«»]+$/g, "");
-    // Модель обычно отрезает пробелы/переносы по краям — возвращаем исходные.
-    corrected = text.match(/^\s*/)[0] + corrected.trim() + text.match(/\s*$/)[0];
+    // Список правок — с запасом на обёртку (```json, пояснение вокруг).
+    let edits = [];
+    const raw = res.text.trim();
+    const json = raw.slice(raw.indexOf("["), raw.lastIndexOf("]") + 1);
+    try {
+        const parsed = JSON.parse(json || "[]");
+        if (Array.isArray(parsed)) edits = parsed;
+    } catch (err) {
+        console.log("[correct] не разобран список правок:", raw.slice(0, 200));
+    }
+    // Правки — по порядку: каждая ищется после предыдущей (так одинаковые
+    // фрагменты исправляются по очереди), иначе — с начала текста. Фрагмент,
+    // которого в тексте нет, пропускается.
+    let corrected = text;
+    let cursor = 0;
+    for (const edit of edits) {
+        const from = Array.isArray(edit) ? edit[0] : edit && edit.from;
+        const to = Array.isArray(edit) ? edit[1] : edit && edit.to;
+        if (typeof from !== "string" || typeof to !== "string" || !from || from === to) continue;
+        let at = corrected.indexOf(from, cursor);
+        if (at === -1) at = corrected.indexOf(from);
+        if (at === -1) continue;
+        corrected = corrected.slice(0, at) + to + corrected.slice(at + from.length);
+        cursor = at + to.length;
+    }
+    // Удалённый повтор оставляет двойной пробел — убирается ниже вместе с
+    // остальными.
 
     // Правки, которые врачу не нужны, модель иногда делает вопреки
     // инструкции — возвращаем их обратно сами:

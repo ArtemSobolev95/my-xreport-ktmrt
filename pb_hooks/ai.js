@@ -51,12 +51,18 @@ module.exports = {
     // Возвращает { ok: true, text } или { ok: false }.
     complete(system, user, options) {
         const settings = ROUTE_SETTINGS[options.route] || {};
-        return this.backend().complete(system, user, {
+        const model = this.modelFor(options.route);
+        const startedAt = Date.now();
+        const res = this.backend().complete(system, user, {
             route: options.route,
-            model: this.modelFor(options.route),
+            model: model,
             temperature: settings.temperature,
             maxTokens: options.maxTokens,
             timeout: options.timeout,
         });
+        // Время ответа модели — в логах, чтобы ускорение было видно цифрой:
+        // «[ai] CORRECT claude-haiku-5-5 640 мс».
+        console.log("[ai] " + options.route + " " + model + " " + (Date.now() - startedAt) + " мс" + (res.ok ? "" : " (ошибка)"));
+        return res;
     },
 };

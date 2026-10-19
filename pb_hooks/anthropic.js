@@ -16,14 +16,30 @@
 //   ANTHROPIC_MODEL_SUGGEST, ANTHROPIC_MODEL_CORRECT — необязательно, модель
 //                        отдельно для подсказок / проверки (важнее ANTHROPIC_MODEL)
 //   ANTHROPIC_EFFORT_SUGGEST, ANTHROPIC_EFFORT_CORRECT — необязательно,
-//                        low | medium | high (по умолчанию low / medium)
+//                        low | medium | high (по умолчанию low для обоих)
+//   ANTHROPIC_THINKING_SUGGEST, ANTHROPIC_THINKING_CORRECT — необязательно,
+//                        on | off: «размышление» модели перед ответом (по
+//                        умолчанию on для подсказок, off для проверки).
+//                        Выключить можно у Claude Haiku 5.5 и Sonnet 5.5 —
+//                        главный выигрыш в задержке; у Opus 5.5 оно всегда
+//                        включено (остаётся effort).
 //   ANTHROPIC_BASE_URL — необязательно, адрес Messages API (для прокси/тестов)
 
 const DEFAULT_MODEL = "claude-opus-5-5";
-const DEFAULT_EFFORT = { SUGGEST: "low", CORRECT: "medium" };
-// Сверх длины самого ответа — место под «размышление» модели: у текущих
-// моделей Claude оно включено и учитывается в max_tokens.
+const DEFAULT_EFFORT = { SUGGEST: "low", CORRECT: "low" };
+const DEFAULT_THINKING = { SUGGEST: "on", CORRECT: "off" };
+// Сверх длины самого ответа — место под «размышление» модели: оно
+// учитывается в max_tokens.
 const THINKING_HEADROOM_TOKENS = 4000;
+
+// Как выключить «размышление» у модели, если она это позволяет: у Haiku 5.5
+// — disabled (допустимо при effort не выше high), у Sonnet 5.5 — только
+// between_tools (без других полей thinking). null — выключить нельзя.
+const thinkingOffFor = (model) => {
+    if (/^claude-haiku-5/.test(model)) return { type: "disabled" };
+    if (/^claude-sonnet-5-5/.test(model)) return { type: "between_tools" };
+    return null;
+};
 
 module.exports = {
     isConfigured() {
@@ -49,12 +65,15 @@ module.exports = {
         };
         // temperature не передаём: у текущих моделей параметры сэмплирования
         // отклоняются; глубину и скорость задаёт effort.
+        const wantThinking = ($os.getenv("ANTHROPIC_THINKING_" + options.route) || DEFAULT_THINKING[options.route] || "on").toLowerCase() !== "off";
+        const thinkingOff = wantThinking ? null : thinkingOffFor(model);
         const body = {
             model: model,
-            max_tokens: options.maxTokens + THINKING_HEADROOM_TOKENS,
+            max_tokens: options.maxTokens + (thinkingOff ? 0 : THINKING_HEADROOM_TOKENS),
             system: system,
             messages: [{ role: "user", content: user }],
         };
+        if (thinkingOff) body.thinking = thinkingOff;
         // effort не поддерживает Claude Haiku 4.5 — для него не передаём.
         if (!/^claude-haiku-4/.test(model)) body.output_config = { effort: effort };
         // Если классификатор безопасности модели отклонит запрос (бывает и на

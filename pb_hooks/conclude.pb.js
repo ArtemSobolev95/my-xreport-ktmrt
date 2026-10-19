@@ -44,7 +44,8 @@ routerAdd("POST", "/api/conclude", (e) => {
     const system = [
         "You are a radiologist's assistant. Write the Conclusion (impression) section of a diagnostic imaging report based on its findings.",
         "Write in the language of the report. Copy the doctor's style: wording, order, abbreviations, punctuation, capitalization, how diagnoses are phrased and joined - follow their previous conclusions and typical phrases closely.",
-        "Include every significant finding, most clinically important first; group related findings. Use established diagnostic terms and classification grades only when the findings support them.",
+        "Include every significant finding, most clinically important first; group related findings.",
+        "Use the terminology of radiology literature and international structured reporting (RSNA RadReport templates, ACR lexicons) and established classifications and grades (e.g. Stoller, Outerbridge, Fleischner, TI-RADS, Bosniak) where the findings support them - phrased the way this doctor writes, in the report's language.",
         "Do not invent findings, measurements, sides or diagnoses that are not in the findings. Do not mention normal structures unless the doctor's previous conclusions usually do.",
         "Add recommendations only if the doctor's previous conclusions contain them.",
         "If the doctor has already started the conclusion, keep their text as is and complete it.",

@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X, Loader2 } from 'lucide-react';
+import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X, Loader2, TriangleAlert } from 'lucide-react';
 import type { BuilderField, QuickButtonGroup, Template } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
@@ -209,7 +209,7 @@ function FillerPage() {
   const [aiGhost, setAiGhost] = useState<{ fieldId: string; textBefore: string; ghost: string; model: string } | null>(null);
   // Скрытые по Esc: id поля → тексты до курсора, где подсказку не показывать.
   const [dismissedGhosts, setDismissedGhosts] = useState<Record<string, Set<string>>>({});
-  // ИИ-проверка поля (pb_hooks/correct.pb.js) при выходе из него: id поля →
+  // Исправления из проверки протокола (pb_hooks/review.pb.js): id поля →
   // исправленный вариант для конкретного текста. Показывается, пока текст
   // поля не изменился.
   const [corrections, setCorrections] = useState<Record<string, { original: string; corrected: string }>>({});
@@ -217,6 +217,10 @@ function FillerPage() {
   // «Заключение» — в попапе находок, вставляется только по команде врача.
   const [conclusionDraft, setConclusionDraft] = useState<{ fieldId: string; text: string } | null>(null);
   const [conclusionLoading, setConclusionLoading] = useState(false);
+  // Замечания по смыслу из проверки протокола (pb_hooks/review.pb.js):
+  // противоречия, право/лево, находки без заключения. field — id поля или ''.
+  const [reviewIssues, setReviewIssues] = useState<{ field: string; text: string }[]>([]);
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [phraseMemoryFieldId, setPhraseMemoryFieldId] = useState<string | null>(null);
   // Названия полей ЗАГЛАВНЫМИ (переключатель над полями) — настройка
   // внешнего вида, запоминается в этом браузере.
@@ -1124,119 +1128,8 @@ const handleClearDraft = async () => {
     setDismissedGhosts({});
     setAiGhost(null);
     setCorrections({});
+    setReviewIssues([]);
     setConclusionDraft(null);
-  };
-
-  // === ИИ-ПРОВЕРКА ПОЛЯ (опечатки, род/число/падеж) ===
-  // Запускается сама после паузы в наборе (CORRECTION_IDLE_MS) в активном
-  // текстовом поле / «Заключении». Ничего не заменяет: справа от строки
-  // всплывает исправленный вариант с подсвеченными правками — Alt+Enter /
-  // «Исправить» или Esc / «Не исправлять». Продолжили печатать — попап
-  // исчезает (текст уже не тот, что проверяли) и после новой паузы
-  // проверяется заново. Ответы кэшируются по тексту; отклонённая правка для
-  // того же текста больше не предлагается.
-  const correctionCacheRef = useRef<Map<string, string>>(new Map());
-  const dismissedCorrectionsRef = useRef<Set<string>>(new Set());
-  const correctionDisabledRef = useRef(false);
-
-  const setCorrection = (fieldId: string, original: string, corrected: string) => {
-    setCorrections(prev => {
-      const next = { ...prev };
-      if (corrected !== original && !dismissedCorrectionsRef.current.has(fieldId + '\u0000' + original)) {
-        next[fieldId] = { original, corrected };
-      } else {
-        delete next[fieldId];
-      }
-      return next;
-    });
-  };
-
-  const checkFieldGrammar = async (fieldId: string) => {
-    if (correctionDisabledRef.current) return;
-    const field = template?.fields.find(f => f.id === fieldId);
-    if (!field || (field.type !== 'text' && field.type !== 'conclusion')) return;
-    const text: string = typeof fieldsDataRef.current[fieldId] === 'string' ? fieldsDataRef.current[fieldId] : '';
-    if (!text.trim()) return;
-
-    const cached = correctionCacheRef.current.get(text);
-    if (cached !== undefined) {
-      setCorrection(fieldId, text, cached);
-      return;
-    }
-    try {
-      const res = await pb.send<{ corrected: string }>('/api/correct', {
-        method: 'POST',
-        body: { text, fieldLabel: field.label || (field.type === 'conclusion' ? 'Заключение' : '') },
-      });
-      const corrected = typeof res.corrected === 'string' ? res.corrected : text;
-      correctionCacheRef.current.set(text, corrected);
-      if (correctionCacheRef.current.size > 200) {
-        correctionCacheRef.current.delete(correctionCacheRef.current.keys().next().value!);
-      }
-      setCorrection(fieldId, text, corrected);
-    } catch (err: unknown) {
-      if ((err as { status?: number })?.status === 503) correctionDisabledRef.current = true;
-      else console.warn('[correct] проверка не выполнена:', err);
-    }
-  };
-
-  // Пауза в наборе в активном поле → проверка. Любое изменение текста
-  // перезапускает ожидание.
-  const activeFieldText: string = activeFieldId && typeof fieldsData[activeFieldId] === 'string' ? fieldsData[activeFieldId] : '';
-  useEffect(() => {
-    if (!activeFieldId || !activeFieldText.trim()) return;
-    const fieldId = activeFieldId;
-    const timer = setTimeout(() => checkFieldGrammar(fieldId), CORRECTION_IDLE_MS);
-    return () => clearTimeout(timer);
-    // checkFieldGrammar читает актуальный текст из fieldsDataRef.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFieldId, activeFieldText]);
-
-  // Попап — только у активной строки и только пока её текст тот же, что
-  // проверяли (начали печатать — исчез).
-  const visibleCorrection = (() => {
-    if (!activeFieldId) return null;
-    const c = corrections[activeFieldId];
-    if (!c || (fieldsData[activeFieldId] || '') !== c.original) return null;
-    return { fieldId: activeFieldId, ...c };
-  })();
-
-  // Клавиши попапа проверки. true — событие обработано.
-  const handleCorrectionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: string): boolean => {
-    if (visibleCorrection?.fieldId !== fieldId || e.nativeEvent.isComposing) return false;
-    if (e.key === 'Enter' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
-      e.preventDefault();
-      applyCorrection(fieldId);
-      return true;
-    }
-    if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-      e.preventDefault();
-      dismissCorrection(fieldId);
-      return true;
-    }
-    return false;
-  };
-
-  const applyCorrection = (fieldId: string) => {
-    const c = corrections[fieldId];
-    if (!c || (fieldsData[fieldId] || '') !== c.original) return;
-    updateField(fieldId, c.corrected);
-    setCorrections(prev => {
-      const next = { ...prev };
-      delete next[fieldId];
-      return next;
-    });
-    requestAnimationFrame(() => autoResize(inputRefs.current[fieldId] as HTMLTextAreaElement | null));
-  };
-
-  const dismissCorrection = (fieldId: string) => {
-    const c = corrections[fieldId];
-    if (c) dismissedCorrectionsRef.current.add(fieldId + '\u0000' + c.original);
-    setCorrections(prev => {
-      const next = { ...prev };
-      delete next[fieldId];
-      return next;
-    });
   };
 
   // Возврат фокуса в поле, которое было активно до открытия модалки
@@ -2085,6 +1978,149 @@ const handleConclusionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fi
   return false;
 };
 
+// === ИИ-ПРОВЕРКА ПРОТОКОЛА ===
+// Весь протокол одним запросом, когда он написан: сама — после паузы в
+// наборе в «Заключении» (CORRECTION_IDLE_MS), а также кнопкой в доке и
+// Alt+K. Ответ — исправления текста по полям (опечатки, согласование,
+// повторы, размеры) и замечания по смыслу (противоречия, право/лево,
+// находки без заключения). Всё — в правой панели; ничего не меняется без
+// врача. Исправление поля видно, пока текст поля тот же, что проверяли;
+// у активного поля — Alt+Enter / Esc. Протокол, который уже проверяли, не
+// отправляется повторно; отклонённое больше не предлагается.
+const dismissedCorrectionsRef = useRef<Set<string>>(new Set());
+const dismissedIssuesRef = useRef<Set<string>>(new Set());
+const reviewDisabledRef = useRef(false);
+const lastReviewKeyRef = useRef('');
+const reviewSeqRef = useRef(0);
+
+const runReview = async (force = false) => {
+  if (!template || reviewDisabledRef.current) return;
+  const fields: { id: string; label: string; section: string; text: string }[] = [];
+  let section = '';
+  for (const f of template.fields) {
+    if (deletedFieldIds.includes(f.id)) continue;
+    if (f.type === 'header') { section = f.label || ''; continue; }
+    const v = fieldsDataRef.current[f.id];
+    if ((f.type === 'text' || f.type === 'conclusion') && typeof v === 'string' && v.trim()) {
+      fields.push({ id: f.id, label: f.label || (f.type === 'conclusion' ? 'Заключение' : ''), section, text: v });
+    }
+  }
+  if (!fields.length) return;
+  const key = JSON.stringify([fields, finalPlainText]);
+  if (!force && key === lastReviewKeyRef.current) return;
+  lastReviewKeyRef.current = key;
+  const seq = ++reviewSeqRef.current;
+  setReviewLoading(true);
+  try {
+    const res = await pb.send<{
+      corrections: { field: string; original: string; corrected: string }[];
+      issues: { field: string; text: string }[];
+    }>('/api/review', {
+      method: 'POST',
+      body: { templateTitle: template.title || '', fields, report: finalPlainText },
+    });
+    if (seq !== reviewSeqRef.current) return;
+    const next: Record<string, { original: string; corrected: string }> = {};
+    for (const c of res.corrections || []) {
+      if (c && c.corrected !== c.original && !dismissedCorrectionsRef.current.has(c.field + '\u0000' + c.original)) {
+        next[c.field] = { original: c.original, corrected: c.corrected };
+      }
+    }
+    setCorrections(next);
+    setReviewIssues((res.issues || []).filter(x => x && x.text && !dismissedIssuesRef.current.has(x.text)));
+  } catch (err: unknown) {
+    if (seq !== reviewSeqRef.current) return;
+    lastReviewKeyRef.current = '';
+    if ((err as { status?: number })?.status === 503) reviewDisabledRef.current = true;
+    else console.warn('[review] проверка не выполнена:', err);
+    if (force) dialog.alert('Не удалось проверить протокол. Попробуйте ещё раз.');
+  } finally {
+    if (seq === reviewSeqRef.current) setReviewLoading(false);
+  }
+};
+const runReviewRef = useRef(runReview);
+runReviewRef.current = runReview;
+
+// Пауза в наборе в «Заключении» → проверка всего протокола.
+const activeFieldText: string = activeFieldId && typeof fieldsData[activeFieldId] === 'string' ? fieldsData[activeFieldId] : '';
+const activeIsConclusion = !!activeFieldId && template?.fields.find(f => f.id === activeFieldId)?.type === 'conclusion';
+useEffect(() => {
+  if (!activeIsConclusion || !activeFieldText.trim()) return;
+  const timer = setTimeout(() => runReviewRef.current(), CORRECTION_IDLE_MS);
+  return () => clearTimeout(timer);
+}, [activeIsConclusion, activeFieldText]);
+
+// Исправления, которые ещё актуальны (текст поля не меняли после проверки),
+// в порядке полей шаблона.
+const pendingCorrections = (template?.fields || [])
+  .filter(f => corrections[f.id] && (fieldsData[f.id] || '') === corrections[f.id].original)
+  .map(f => ({ fieldId: f.id, label: f.label || (f.type === 'conclusion' ? 'Заключение' : 'Поле'), ...corrections[f.id] }));
+
+const visibleCorrection = activeFieldId ? pendingCorrections.find(c => c.fieldId === activeFieldId) || null : null;
+
+// Клавиши исправления активного поля. true — событие обработано.
+const handleCorrectionKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: string): boolean => {
+  if (visibleCorrection?.fieldId !== fieldId || e.nativeEvent.isComposing) return false;
+  if (e.key === 'Enter' && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+    e.preventDefault();
+    applyCorrection(fieldId);
+    return true;
+  }
+  if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+    e.preventDefault();
+    dismissCorrection(fieldId);
+    return true;
+  }
+  return false;
+};
+
+const dropCorrection = (fieldId: string) => setCorrections(prev => {
+  const next = { ...prev };
+  delete next[fieldId];
+  return next;
+});
+
+const applyCorrection = (fieldId: string) => {
+  const c = corrections[fieldId];
+  if (!c || (fieldsData[fieldId] || '') !== c.original) return;
+  updateField(fieldId, c.corrected);
+  dropCorrection(fieldId);
+  requestAnimationFrame(() => autoResize(inputRefs.current[fieldId] as HTMLTextAreaElement | null));
+};
+
+const applyAllCorrections = () => {
+  for (const c of pendingCorrections) applyCorrection(c.fieldId);
+};
+
+const dismissCorrection = (fieldId: string) => {
+  const c = corrections[fieldId];
+  if (c) dismissedCorrectionsRef.current.add(fieldId + '\u0000' + c.original);
+  dropCorrection(fieldId);
+};
+
+const dismissIssue = (text: string) => {
+  dismissedIssuesRef.current.add(text);
+  setReviewIssues(prev => prev.filter(x => x.text !== text));
+};
+
+// Перейти к полю из панели проверки: раскрыть его раздел и поставить курсор.
+const goToField = (fieldId: string) => {
+  if (!template) return;
+  let headerId = '';
+  for (const f of template.fields) {
+    if (f.type === 'header') headerId = f.id;
+    if (f.id === fieldId) break;
+  }
+  if (headerId && collapsedHeaders.has(headerId)) {
+    setCollapsedHeaders(prev => {
+      const next = new Set(prev);
+      next.delete(headerId);
+      return next;
+    });
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => focusFieldElement(fieldId)));
+};
+
 // Горячие клавиши: Alt+C / Alt+P — переключить "Сравнение" / "Примечание"
 // (та же логика, что в onClick этих кнопок). Слушатель на window, а не на
 // конкретном элементе — они не привязаны к какому-то одному полю.
@@ -2104,6 +2140,13 @@ useEffect(() => {
         if (comparisonDates.length > 1) setIsMultipleComparison(true);
         setShowComparisonModal(true);
       }
+      return;
+    }
+
+    // Alt+K — проверить протокол (см. runReview).
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'KeyK') {
+      e.preventDefault();
+      runReviewRef.current(true);
       return;
     }
 
@@ -2956,6 +2999,7 @@ for (const f of visibleFields) {
         <aside className={DOCK_COLUMN_CLASS}>
           <div className={`sticky ${SIDE_PANEL_TOP_CLASS} ${DOCK_PANEL_CLASS}`}>
             <button onClick={copyToClipboard} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-amber-400 hover:text-amber-300 hover:bg-amber-400/10`} data-tip="Скопировать (Ctrl+Shift+C)"><Copy className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
+            <button onClick={() => runReview(true)} onMouseDown={(e) => e.preventDefault()} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Проверить протокол (Alt+K)"><SpellCheck className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <button onClick={downloadTxt} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Сохранить"><Download className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <div className="h-px w-5 bg-white/10 my-1" aria-hidden="true" />
             <button onClick={resetToDefault} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-red-400 hover:bg-white/10`} data-tip="Сбросить протокол (Ctrl+Shift+R)"><RotateCcw className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
@@ -3529,54 +3573,81 @@ for (const f of visibleFields) {
         {/* Справа: быстрые кнопки активного поля (Ctrl+1…9 — группы). */}
         <aside className={QUICK_COLUMN_CLASS}>
           <div className={`sticky ${SIDE_PANEL_TOP_CLASS}`}>
-            {/* ИИ-проверка активного поля — после паузы в наборе. В правой
-                панели, а не поверх строки: строка доходит до этой колонки, и
-                всплывающее окно закрывало бы быстрые кнопки. */}
-            {visibleCorrection && (
+            {/* ИИ-проверка протокола: исправления по полям и замечания по
+                смыслу. В правой панели, а не поверх строк — не закрывает
+                протокол; клики не уводят фокус из поля. */}
+            {(reviewLoading || pendingCorrections.length > 0 || reviewIssues.length > 0) && (
       <div
-        className="mb-2 rounded-xl bg-zinc-900 border border-amber-400/25 px-3 py-2.5 text-xs leading-snug"
+        className="mb-2 max-h-[55vh] overflow-y-auto rounded-xl bg-zinc-900 border border-amber-400/25 px-3 py-2.5 text-xs leading-snug"
         onMouseDown={(e) => e.preventDefault()}
       >
-        <div className="mb-1.5 text-[11px] text-zinc-500 truncate">
-          Исправление · <span className="text-zinc-300">{activeField?.label || 'поле'}</span>
+        <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
+          <SpellCheck className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+          <span className="flex-1">Проверка протокола</span>
+          {reviewLoading && <Loader2 className="w-3 h-3 animate-spin text-amber-400" aria-label="Проверяется" />}
+          {pendingCorrections.length > 1 && (
+            <button type="button" tabIndex={-1} onClick={applyAllCorrections} className="text-amber-400 hover:text-amber-300 cursor-pointer">
+              Исправить всё
+            </button>
+          )}
         </div>
-        <div className="flex items-start gap-2">
-          <SpellCheck className="w-3.5 h-3.5 mt-px shrink-0 text-amber-400" aria-hidden="true" />
-          <span className="flex-1 min-w-0 text-zinc-300 whitespace-pre-wrap break-words">
-            {wordDiff(visibleCorrection.original, visibleCorrection.corrected).map((seg, i) => (
-              <span key={i}>
-                {seg.deleted && (
-                  <><span className="line-through text-red-400/80" title="будет удалено">{seg.deleted}</span>{seg.text ? ' ' : ''}</>
-                )}
-                {seg.changed ? (
-                  <span
-                    className="text-amber-400 underline decoration-dotted underline-offset-2"
-                    title={seg.was ? `было: ${seg.was}` : 'добавлено'}
-                  >
-                    {seg.text}
-                  </span>
-                ) : seg.text}
-              </span>
-            ))}
-          </span>
-        </div>
-        <div className="mt-2 flex items-center justify-end gap-3">
-          <button
-            type="button"
-            tabIndex={-1}
-            onClick={() => dismissCorrection(visibleCorrection.fieldId)}
-            className="text-zinc-500 hover:text-white cursor-pointer"
-          >
-            Не исправлять <span className="text-[10px] text-zinc-600">Esc</span>
-          </button>
-          <button
-            type="button"
-            tabIndex={-1}
-            onClick={() => applyCorrection(visibleCorrection.fieldId)}
-            className="font-medium text-amber-400 hover:text-amber-300 cursor-pointer"
-          >
-            Исправить <span className="text-[10px] font-normal text-amber-400/60">Alt+Enter</span>
-          </button>
+        <div className="space-y-2">
+          {reviewIssues.map((issue) => {
+            const target = template?.fields.find(f => f.id === issue.field);
+            return (
+              <div key={issue.text} className="flex items-start gap-2 rounded-lg bg-amber-400/5 px-2 py-1.5">
+                <TriangleAlert className="w-3.5 h-3.5 mt-px shrink-0 text-amber-400" aria-hidden="true" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-zinc-200 break-words">{issue.text}</div>
+                  <div className="mt-1 flex items-center gap-3 text-[11px]">
+                    {target && (
+                      <button type="button" tabIndex={-1} onClick={() => goToField(target.id)} className="text-amber-400 hover:text-amber-300 cursor-pointer truncate">
+                        → {target.label || 'поле'}
+                      </button>
+                    )}
+                    <button type="button" tabIndex={-1} onClick={() => dismissIssue(issue.text)} className="ml-auto text-zinc-500 hover:text-white cursor-pointer">
+                      Пропустить
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {pendingCorrections.map((c) => {
+            const isActive = c.fieldId === activeFieldId;
+            return (
+              <div key={c.fieldId} className={`rounded-lg px-2 py-1.5 ${isActive ? 'bg-white/[0.06]' : ''}`}>
+                <button type="button" tabIndex={-1} onClick={() => goToField(c.fieldId)} className="mb-0.5 block max-w-full truncate text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer">
+                  {c.label}
+                </button>
+                <div className="text-zinc-300 whitespace-pre-wrap break-words">
+                  {wordDiff(c.original, c.corrected).map((seg, i) => (
+                    <span key={i}>
+                      {seg.deleted && (
+                        <><span className="line-through text-red-400/80" title="будет удалено">{seg.deleted}</span>{seg.text ? ' ' : ''}</>
+                      )}
+                      {seg.changed ? (
+                        <span
+                          className="text-amber-400 underline decoration-dotted underline-offset-2"
+                          title={seg.was ? `было: ${seg.was}` : 'добавлено'}
+                        >
+                          {seg.text}
+                        </span>
+                      ) : seg.text}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-1 flex items-center justify-end gap-3 text-[11px]">
+                  <button type="button" tabIndex={-1} onClick={() => dismissCorrection(c.fieldId)} className="text-zinc-500 hover:text-white cursor-pointer">
+                    Не исправлять{isActive && <span className="text-[10px] text-zinc-600"> Esc</span>}
+                  </button>
+                  <button type="button" tabIndex={-1} onClick={() => applyCorrection(c.fieldId)} className="font-medium text-amber-400 hover:text-amber-300 cursor-pointer">
+                    Исправить{isActive && <span className="text-[10px] font-normal text-amber-400/60"> Alt+Enter</span>}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
     )}

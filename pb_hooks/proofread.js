@@ -1,75 +1,33 @@
-/// <reference path="../pb_data/types.d.ts" />
-// pb_hooks/correct.pb.js
+// pb_hooks/proofread.js
 //
-// ИИ-проверка текстового поля в filler (вызывается, когда курсор уходит из
-// поля): опечатки и согласование — род, число, падеж. Возвращает
-// исправленный текст; показывать/применять правку решает пользователь.
+// Общая часть ИИ-проверки текста (pb_hooks/review.pb.js): применение
+// правок модели к тексту поля, их проверка и точные правила, которые модели
+// не доверяются. Не *.pb.js — подключается внутри обработчика:
+//   const proofread = require(`${__hooks}/proofread.js`)
 //
-// Модель отвечает не всем текстом заново, а коротким списком правок
-// [["было","стало"], …] — ответ в разы короче, и проверка приходит быстрее.
-// Правки применяются к тексту здесь.
-//
-// Медицинский текст: модель не должна «улучшать» описание. Поэтому ответ
-// проверяется здесь же и отбрасывается (возвращается исходный текст), если
-// изменились числа, аббревиатуры и термины с цифрами, число строк или
-// заменено слишком много слов.
-//
-// Провайдер (YandexGPT / Claude), вызов модели и лимит запросов — в
-// pb_hooks/ai.js. Инструкция — на английском, язык текста модель не меняет.
-routerAdd("POST", "/api/correct", (e) => {
-    const ai = require(`${__hooks}/ai.js`);
-    if (!ai.isConfigured()) {
-        return e.json(503, { message: "ИИ-проверка не настроена" });
-    }
-    // Проверка — после паузы в наборе: 20 в минуту с запасом.
-    if (ai.rateLimited("correct", e.auth.id, 20)) {
-        return e.json(429, { message: "Слишком много запросов" });
-    }
+// Медицинский текст: модель не должна «улучшать» описание. Поэтому правки
+// отбрасываются (остаётся исходный текст), если изменились числа,
+// аббревиатуры и термины с цифрами, число строк или заменено слишком много
+// слов. Размеры через пробел («12 8 мм» → «12х8 мм») и случайные повторы
+// исправляются точными правилами — и без модели.
 
-    const body = e.requestInfo().body || {};
-    const text = String(body.text == null ? "" : body.text);
-    const fieldLabel = String(body.fieldLabel == null ? "" : body.fieldLabel).slice(0, 200);
-    if (!text.trim() || text.length > 3000) {
-        return e.json(200, { corrected: text });
-    }
-
-    const system = [
-        "You are a proofreader of diagnostic imaging reports (radiography, CT, MRI).",
-        "Fix ONLY: typos and spelling; agreement of words in gender, number and case (in languages that have them); obvious grammatical errors; accidentally duplicated words or phrases.",
-        "Do not rephrase or add anything. Do not change the meaning, medical terms, word order, numbers or units.",
-        "Keep abbreviations and Latin-script terms (T2, STIR, PD, Stoller, CT, MRI) exactly as they are.",
-        "Keep line breaks and punctuation; change punctuation only if the phrase is grammatically wrong without it.",
-        "Do NOT capitalize the first letter of the text, do NOT replace the Russian letter \u0435 with \u0451, do NOT replace hyphens with dashes, do NOT touch spaces around hyphens - keep them as the doctor wrote.",
-        "Keep the text in its original language.",
-        "Answer ONLY with a JSON array of edits: [[\"wrong fragment\", \"fixed fragment\"], ...].",
-        "Copy each wrong fragment exactly as it appears in the text (a word or a few words); if it occurs more than once, include a neighbouring word so it is unique.",
-        "To remove a duplicate, include it in the fragment and leave it out of the fix.",
-        "If there are no errors, answer [].",
-        "No explanations, no code fences.",
-    ].join("\n");
-    const user = (fieldLabel ? "Report field: " + fieldLabel + "\n\n" : "") + "Text:\n" + text;
-
-    // Ответ — только правки: несколько десятков токенов, с запасом на
-    // длинный текст с множеством ошибок.
-    const res = ai.complete(system, user, {
-        route: "CORRECT",
-        maxTokens: Math.min(800, Math.ceil(text.length / 4) + 60),
-        timeout: 15,
-    });
-    if (!res.ok) {
-        return e.json(502, { message: "ИИ-сервис недоступен" });
-    }
-
-    // Список правок — с запасом на обёртку (```json, пояснение вокруг).
-    let edits = [];
-    const raw = res.text.trim();
-    const json = raw.slice(raw.indexOf("["), raw.lastIndexOf("]") + 1);
+// Разбор ответа модели: JSON, возможно обёрнутый в ```json или текст.
+// Возвращает объект/массив или fallback.
+const parseJson = (raw, fallback) => {
+    const text = String(raw || "").trim();
+    const first = text.search(/[\[{]/);
+    const last = Math.max(text.lastIndexOf("]"), text.lastIndexOf("}"));
+    if (first === -1 || last < first) return fallback;
     try {
-        const parsed = JSON.parse(json || "[]");
-        if (Array.isArray(parsed)) edits = parsed;
+        return JSON.parse(text.slice(first, last + 1));
     } catch (err) {
-        console.log("[correct] не разобран список правок:", raw.slice(0, 200));
+        return fallback;
     }
+};
+
+// text — исходный текст поля, edits — [["было","стало"]] или
+// [{from, to}], tag — для логов. Возвращает итоговый текст.
+const finalize = (text, edits, tag) => {
     // Правки — по порядку: каждая ищется после предыдущей (так одинаковые
     // фрагменты исправляются по очереди), иначе — с начала текста. Фрагмент,
     // которого в тексте нет, пропускается.
@@ -155,7 +113,7 @@ routerAdd("POST", "/api/correct", (e) => {
     }
 
     if (rejectReason) {
-        console.log("[correct] ответ модели отброшен:", rejectReason);
+        console.log("[" + tag + "] правка отброшена:", rejectReason);
     }
 
     // Размеры, набранные через пробел («12 8 мм», «12 8 5»), — через знак
@@ -190,6 +148,7 @@ routerAdd("POST", "/api/correct", (e) => {
         .replace(/([,;:])(?:[ \t]*\1)+/g, "$1")      // «,,» → «,»
         .replace(/(?<!\.)\.\.(?!\.)/g, ".")          // «..» → «.», многоточие не трогаем
         .replace(/(\S)[ \t]{2,}(?=\S)/g, "$1 ");     // двойные пробелы внутри строки
+    return deduped;
+};
 
-    return e.json(200, { corrected: deduped });
-}, $apis.requireAuth("users"))
+module.exports = { parseJson: parseJson, finalize: finalize };

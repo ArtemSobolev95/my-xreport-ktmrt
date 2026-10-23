@@ -30,6 +30,8 @@ migrate((app) => {
       { "name": "requests", "type": "number", "onlyInt": true },
       { "name": "input_tokens", "type": "number", "onlyInt": true },
       { "name": "output_tokens", "type": "number", "onlyInt": true },
+      // Стоимость в долларах по ценам из pb_hooks/ai.js (PRICES).
+      { "name": "cost_usd", "type": "number" },
       { "name": "created", "type": "autodate", "onCreate": true, "onUpdate": false },
       { "name": "updated", "type": "autodate", "onCreate": true, "onUpdate": true }
     ],

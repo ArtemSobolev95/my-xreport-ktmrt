@@ -20,6 +20,27 @@ const ROUTE_SETTINGS = {
     CONCLUDE: { temperature: 0.2 },
 };
 
+// Цены моделей, $ за 1 млн токенов (по данным владельца проекта, октябрь
+// 2026). Ключ — начало имени модели. tiers — по числу входных токенов
+// запроса: до upTo — первая цена, больше — следующая. Модель без цены —
+// стоимость 0 (токены всё равно учитываются). Цены меняются — правьте здесь.
+const PRICES = [
+    { model: "claude-haiku-5-5", tiers: [
+        { upTo: 100000, input: 0.10, output: 0.50 },
+        { upTo: Infinity, input: 0.50, output: 2.50 },
+    ] },
+    { model: "claude-opus-5-5", tiers: [
+        { upTo: Infinity, input: 4.00, output: 20.00 },
+    ] },
+];
+
+const costUsd = (model, input, output) => {
+    const price = PRICES.find((p) => String(model).indexOf(p.model) === 0);
+    if (!price) return 0;
+    const tier = price.tiers.find((t) => input <= t.upTo) || price.tiers[price.tiers.length - 1];
+    return (input * tier.input + output * tier.output) / 1e6;
+};
+
 module.exports = {
     provider() {
         return ($os.getenv("AI_PROVIDER") || "yandex").trim().toLowerCase() === "anthropic" ? "anthropic" : "yandex";
@@ -52,7 +73,7 @@ module.exports = {
     // Учёт расхода: запись ai_usage за день + пользователь + маршрут +
     // модель (миграция 0008), счётчики прибавляются. Ошибка учёта не должна
     // ломать сам ответ — только пишется в лог.
-    recordUsage(userId, route, model, input, output) {
+    recordUsage(userId, route, model, input, output, cost) {
         if (!userId) return;
         try {
             const day = new Date().toISOString().slice(0, 10);
@@ -70,6 +91,7 @@ module.exports = {
             rec.set("requests", (rec.getInt("requests") || 0) + 1);
             rec.set("input_tokens", (rec.getInt("input_tokens") || 0) + input);
             rec.set("output_tokens", (rec.getInt("output_tokens") || 0) + output);
+            rec.set("cost_usd", (rec.getFloat("cost_usd") || 0) + (cost || 0));
             $app.save(rec);
         } catch (err) {
             console.log("[ai] учёт расхода не записан:", err);
@@ -89,12 +111,13 @@ module.exports = {
             maxTokens: options.maxTokens,
             timeout: options.timeout,
         });
-        // Время ответа и токены — в логах: «[ai] SUGGEST claude-haiku-5-5
-        // 640 мс, 1120 → 14 токенов».
+        // Время ответа, токены и стоимость — в логах: «[ai] SUGGEST
+        // claude-haiku-5-5 640 мс, 1120 → 14 токенов, $0.000119».
         const usage = res.usage || { input: 0, output: 0 };
+        const cost = costUsd(model, usage.input, usage.output);
         console.log("[ai] " + options.route + " " + model + " " + (Date.now() - startedAt) + " мс" +
-            (res.ok ? ", " + usage.input + " → " + usage.output + " токенов" : " (ошибка)"));
-        if (res.ok) this.recordUsage(options.userId, options.route, model, usage.input, usage.output);
+            (res.ok ? ", " + usage.input + " → " + usage.output + " токенов, $" + cost.toFixed(6) : " (ошибка)"));
+        if (res.ok) this.recordUsage(options.userId, options.route, model, usage.input, usage.output, cost);
         return res;
     },
 };

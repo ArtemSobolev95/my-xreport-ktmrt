@@ -1345,13 +1345,55 @@ const handleClearDraft = async () => {
   }, [variantSelector?.fieldId]);
 
 
+  // «Сравнение» и «Примечание»: кнопка и Alt+C / Alt+P всегда открывают
+  // окно с уже введёнными данными (а не выключают функцию). Выключают её
+  // только «Отмена» в окне или «Применить» с пустыми данными; крестик и Esc
+  // просто закрывают окно, ничего не меняя.
+  const openComparison = () => {
+    if (comparisonDates.length === 0) setComparisonDates(['']);
+    if (comparisonDates.length > 1) setIsMultipleComparison(true);
+    setShowComparisonModal(true);
+  };
+
+  const comparisonHasValidDate = comparisonDates.some(d => isValidDateDDMMYYYY(d));
+  const comparisonIsEmpty = comparisonDates.every(d => !String(d || '').trim());
+
+  const applyComparison = () => {
+    const validDates = comparisonDates.filter(d => isValidDateDDMMYYYY(d));
+    if (validDates.length > 0) {
+      setComparisonDates(validDates);
+      setIsComparisonActive(true);
+    } else if (comparisonIsEmpty) {
+      // Даты стёрты — сравнение выключается.
+      setIsComparisonActive(false);
+    } else {
+      return; // дата введена не до конца — ждём
+    }
+    setShowComparisonModal(false);
+  };
+
+  const cancelComparison = () => {
+    setIsComparisonActive(false);
+    setShowComparisonModal(false);
+  };
+
   // Применить «Примечание»: точка в конце, если её нет, — и в протокол.
+  // Пустой текст — примечание выключается.
   const applyStateAfter = () => {
     let text = stateAfterText.trim();
-    if (!text) return;
+    if (!text) {
+      setIsStateAfterActive(false);
+      setShowStateAfterModal(false);
+      return;
+    }
     if (!/[.!?…]$/.test(text)) text += '.';
     setStateAfterText(text);
     setIsStateAfterActive(true);
+    setShowStateAfterModal(false);
+  };
+
+  const cancelStateAfter = () => {
+    setIsStateAfterActive(false);
     setShowStateAfterModal(false);
   };
 
@@ -2157,7 +2199,7 @@ const goToField = (fieldId: string) => {
   requestAnimationFrame(() => requestAnimationFrame(() => focusFieldElement(fieldId)));
 };
 
-// Горячие клавиши: Alt+C / Alt+P — переключить "Сравнение" / "Примечание"
+// Горячие клавиши: Alt+C / Alt+P — открыть "Сравнение" / "Примечание"
 // (та же логика, что в onClick этих кнопок). Слушатель на window, а не на
 // конкретном элементе — они не привязаны к какому-то одному полю.
 useEffect(() => {
@@ -2169,13 +2211,7 @@ useEffect(() => {
     // зажатом Option, хотя e.altKey для Option на Mac уже верно = true.
     if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyC') {
       e.preventDefault();
-      if (isComparisonActive) {
-        setIsComparisonActive(false);
-      } else {
-        if (comparisonDates.length === 0) setComparisonDates(['']);
-        if (comparisonDates.length > 1) setIsMultipleComparison(true);
-        setShowComparisonModal(true);
-      }
+      openComparison();
       return;
     }
 
@@ -2188,17 +2224,15 @@ useEffect(() => {
 
     if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyP') {
       e.preventDefault();
-      if (isStateAfterActive) {
-        setIsStateAfterActive(false);
-      } else {
-        setShowStateAfterModal(true);
-      }
+      setShowStateAfterModal(true);
     }
   };
 
   window.addEventListener('keydown', handleGlobalKeyDown);
   return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-}, [template, isComparisonActive, comparisonDates, isStateAfterActive]);
+  // openComparison зависит только от comparisonDates — она в списке.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+}, [template, comparisonDates]);
 
 // Плавная прокрутка списка фраз быстрых кнопок: на каждом кадре проходим
 // долю оставшегося пути до цели. Если цель сдвигается во время анимации
@@ -2967,16 +3001,7 @@ for (const f of visibleFields) {
           <div className="flex-1 min-w-0 flex items-center gap-2 py-2">
             <button
               tabIndex={-1}
-              onClick={() => {
-                if (isComparisonActive) {
-                  setIsComparisonActive(false);
-                  // даты и режим не очищаем — остаются в памяти
-                } else {
-                  if (comparisonDates.length === 0) setComparisonDates(['']);
-                  if (comparisonDates.length > 1) setIsMultipleComparison(true);
-                  setShowComparisonModal(true);
-                }
-              }}
+              onClick={openComparison}
               className={`${TOPBAR_BUTTON_CLASS} ${isComparisonActive ? TOPBAR_BUTTON_ACTIVE_CLASS : TOPBAR_BUTTON_IDLE_CLASS}`}
               aria-label="Сравнение (Alt+C)"
             >
@@ -2985,14 +3010,7 @@ for (const f of visibleFields) {
             </button>
             <button
               tabIndex={-1}
-              onClick={() => {
-                if (isStateAfterActive) {
-                  setIsStateAfterActive(false);
-                  // текст не очищаем
-                } else {
-                  setShowStateAfterModal(true);
-                }
-              }}
+              onClick={() => setShowStateAfterModal(true)}
               className={`${TOPBAR_BUTTON_CLASS} ${isStateAfterActive ? TOPBAR_BUTTON_ACTIVE_CLASS : TOPBAR_BUTTON_IDLE_CLASS}`}
               aria-label="Примечание (Alt+P)"
             >
@@ -3950,11 +3968,7 @@ for (const f of visibleFields) {
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();
-            const hasValidDate = comparisonDates.some(d => isValidDateDDMMYYYY(d));
-            if (hasValidDate) {
-              setIsComparisonActive(true);
-              setShowComparisonModal(false);
-            }
+            applyComparison();
           }
           if (e.key === 'Escape') {
             setShowComparisonModal(false);
@@ -4053,18 +4067,11 @@ for (const f of visibleFields) {
           </AnimatePresence>
         </ModalBody>
         <ModalFooter>
-          <ModalButton onClick={() => setShowComparisonModal(false)}>Отмена</ModalButton>
+          <ModalButton onClick={cancelComparison}>Отмена</ModalButton>
           <ModalButton
             variant="primary"
-            onClick={() => {
-              const validDates = comparisonDates.filter(d => isValidDateDDMMYYYY(d));
-              if (validDates.length > 0) {
-                setComparisonDates(validDates);
-                setIsComparisonActive(true);
-                setShowComparisonModal(false);
-              }
-            }}
-            disabled={!comparisonDates.some(d => isValidDateDDMMYYYY(d))}
+            onClick={applyComparison}
+            disabled={!comparisonHasValidDate && !(comparisonIsEmpty && isComparisonActive)}
           >
             Применить
           </ModalButton>
@@ -4151,8 +4158,8 @@ for (const f of visibleFields) {
           </p>
         </ModalBody>
         <ModalFooter>
-          <ModalButton onClick={() => setShowStateAfterModal(false)}>Отмена</ModalButton>
-          <ModalButton variant="primary" onClick={applyStateAfter} disabled={!stateAfterText.trim()}>
+          <ModalButton onClick={cancelStateAfter}>Отмена</ModalButton>
+          <ModalButton variant="primary" onClick={applyStateAfter} disabled={!stateAfterText.trim() && !isStateAfterActive}>
             Применить
           </ModalButton>
         </ModalFooter>

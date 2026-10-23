@@ -2128,6 +2128,17 @@ useEffect(() => {
   return () => clearTimeout(timer);
 }, [activeIsConclusion, activeFieldText]);
 
+// Пока на панели есть исправления или замечания, любое изменение протокола
+// (принятое исправление, правка поля) после паузы проверяется заново —
+// исправленное исчезает с панели, а не висит до следующей проверки.
+// Протокол, который уже проверяли, повторно не отправляется (runReview).
+const reviewHasResults = reviewIssues.length > 0 || Object.keys(corrections).length > 0;
+useEffect(() => {
+  if (!reviewHasResults) return;
+  const timer = setTimeout(() => runReviewRef.current(), CORRECTION_IDLE_MS);
+  return () => clearTimeout(timer);
+}, [fieldsData, isStateAfterActive, stateAfterText, reviewHasResults]);
+
 // Исправления, которые ещё актуальны (текст поля не меняли после проверки),
 // в порядке полей шаблона.
 const pendingCorrections = (template?.fields || [])

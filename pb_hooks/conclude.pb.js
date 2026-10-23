@@ -37,14 +37,19 @@ routerAdd("POST", "/api/conclude", (e) => {
     const recent = list(body.recent, 6, 1500);
     const examples = list(body.examples, 40, 200);
     const normal = clip(body.normal, 500);
+    // «Состояние после …» из примечания (операция, вмешательство) — первой
+    // строкой заключения. Предложение до точки перед следующим предложением
+    // (точки в датах «12.05.2024» его не обрывают).
+    const note = clip(body.note, 2000);
+    const stateAfter = ((note.match(/(?:^|[\n.!?]\s*)((?:состояние|сост\.)\s+после[^\n]*?)(?=\.\s+[А-ЯЁA-Z]|\.?\s*\n|\.?\s*$)/i) || [])[1] || "").trim().replace(/^./, (ch) => ch.toUpperCase());
     if (!findings.trim()) {
         return e.json(200, { conclusion: "", model: "" });
     }
 
     const system = [
         "You are a radiologist's assistant. Write the Conclusion (impression) section of a diagnostic imaging report based on its findings.",
-        "Write in the language of the report. Copy the doctor's style: wording, order, abbreviations, punctuation, capitalization, how diagnoses are phrased and joined - follow their previous conclusions and typical phrases closely.",
-        "Include every significant finding, most clinically important first; group related findings.",
+        "The conclusion is a short, generalized summary: diagnoses and key conclusions only. Do NOT repeat measurements, sizes, volumes, signal or density characteristics, locations in detail or other descriptive details - they stay in the descriptive part. Combine related findings into one diagnostic statement; name each clinically significant finding briefly, most important first.",
+        "Write in the language of the report. Follow the doctor's style: wording, abbreviations, how diagnoses are phrased and joined - but keep the conclusion generalized even if their previous conclusions are more detailed.",
         "Use the terminology of radiology literature and international structured reporting (RSNA RadReport templates, ACR lexicons) and established classifications and grades (e.g. Stoller, Outerbridge, Fleischner, TI-RADS, Bosniak) where the findings support them - phrased the way this doctor writes, in the report's language.",
         "Do not invent findings, measurements, sides or diagnoses that are not in the findings. Do not mention normal structures unless the doctor's previous conclusions usually do.",
         "Add recommendations only if the doctor's previous conclusions contain them.",
@@ -65,6 +70,7 @@ routerAdd("POST", "/api/conclude", (e) => {
     // это не находка.
     if (report) parts.push("Full report (normal values included; ignore any conclusion already in it - you are writing a new one):\n" + report);
     parts.push("Findings - what differs from normal in this study:\n" + findings);
+    if (stateAfter) parts.push("Start the conclusion with this line from the doctor's note, word for word: " + stateAfter);
     if (current.trim()) parts.push("The doctor has already written in the " + (fieldLabel || "Conclusion") + " field:\n" + current);
 
     const model = ai.modelFor("CONCLUDE");
@@ -72,10 +78,28 @@ routerAdd("POST", "/api/conclude", (e) => {
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
     }
-    const conclusion = res.text
+    let conclusion = res.text
         .trim()
         .replace(/^(\*\*)?(Заключение|Conclusion|Impression)(\*\*)?\s*:\s*/i, "")
         .replace(/^["«]+|["»]+$/g, "")
         .trim();
+    // «Состояние после …» — первым, даже если модель его пропустила или
+    // поставила не туда.
+    if (stateAfter && conclusion) {
+        const norm = (x) => x.toLowerCase().replace(/[\s.]+/g, " ").trim();
+        if (!norm(conclusion).startsWith(norm(stateAfter))) {
+            const at = norm(conclusion).indexOf(norm(stateAfter));
+            if (at === -1) conclusion = stateAfter.replace(/\.$/, "") + ". " + conclusion;
+            else {
+                // Модель поставила строку не первой — переносим в начало.
+                const re = new RegExp(stateAfter.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+") + "\\.?\\s*", "i");
+                const rest = conclusion.replace(re, "").trim();
+                conclusion = stateAfter.replace(/\.$/, "") + ". " + rest.charAt(0).toUpperCase() + rest.slice(1);
+            }
+        }
+    }
+    // Точку в конце поля протокол ставит сам; заглавная — в начале заключения.
+    conclusion = conclusion.replace(/(?<!\.)\.$/, "");
+    conclusion = conclusion.charAt(0).toUpperCase() + conclusion.slice(1);
     return e.json(200, { conclusion: conclusion.slice(0, 3000), model: model });
 }, $apis.requireAuth("users"))

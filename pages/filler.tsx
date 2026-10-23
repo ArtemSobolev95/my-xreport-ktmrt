@@ -1954,6 +1954,8 @@ const requestConclusion = async (fieldId: string) => {
         recent: (phraseMemory.recent[fieldId] || []).slice(0, 6),
         examples: selectExamples(phraseMemory.memory[fieldId], '', 30),
         normal: field.placeholder || '',
+        // «Состояние после …» из примечания — первым в заключении.
+        note: isStateAfterActive ? stateAfterText : '',
       },
     });
     if (seq !== conclusionSeqRef.current) return;
@@ -2029,14 +2031,14 @@ const reviewSeqRef = useRef(0);
 
 const runReview = async (force = false) => {
   if (!template || reviewDisabledRef.current) return;
-  const fields: { id: string; label: string; section: string; text: string }[] = [];
+  const fields: { id: string; label: string; section: string; text: string; isConclusion: boolean }[] = [];
   let section = '';
   for (const f of template.fields) {
     if (deletedFieldIds.includes(f.id)) continue;
     if (f.type === 'header') { section = f.label || ''; continue; }
     const v = fieldsDataRef.current[f.id];
     if ((f.type === 'text' || f.type === 'conclusion') && typeof v === 'string' && v.trim()) {
-      fields.push({ id: f.id, label: f.label || (f.type === 'conclusion' ? 'Заключение' : ''), section, text: v });
+      fields.push({ id: f.id, label: f.label || (f.type === 'conclusion' ? 'Заключение' : ''), section, text: v, isConclusion: f.type === 'conclusion' });
     }
   }
   if (!fields.length) return;

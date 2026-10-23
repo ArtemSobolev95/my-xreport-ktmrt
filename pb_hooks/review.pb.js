@@ -37,20 +37,22 @@ routerAdd("POST", "/api/review", (e) => {
             label: clip(f && f.label, 200),
             section: clip(f && f.section, 200),
             text: clip(f && f.text, 3000),
+            isConclusion: !!(f && f.isConclusion),
         }))
         .filter((f) => f.id && f.text.trim());
     if (!fields.length && !report.trim()) {
         return e.json(200, { corrections: [], issues: [] });
     }
 
+    // Проверка сдержанная: только то, что врач просил ловить, без замечаний
+    // по стилю, размерам и подробности описания.
     const system = [
-        "You check a diagnostic imaging report (radiography, CT, MRI) before the radiologist signs it. Two tasks.",
-        "1) Proofreading of each field: fix ONLY typos and spelling; agreement of words in gender, number and case (in languages that have them); obvious grammatical errors; accidentally duplicated words or phrases.",
-        "Do not rephrase or add anything. Do not change the meaning, medical terms, word order, numbers or units. Keep abbreviations and Latin-script terms (T2, STIR, PD, Stoller, CT, MRI) exactly as they are.",
-        "Do NOT capitalize the first letter of a field, do NOT replace the Russian letter е with ё, do NOT replace hyphens with dashes, do NOT touch spaces around hyphens.",
-        "2) Consistency of the report as a whole - report only real problems: contradictions between fields (e.g. \"no pathology\" next to a described lesion); left/right or sex mismatches; significant findings that are missing from the conclusion; diagnoses in the conclusion that the findings do not support; different measurements of the same structure.",
-        "Do not comment on style, on how detailed the normal descriptions are, or on patient management. If there is nothing to report, return empty lists.",
-        "Answer ONLY with JSON, no code fences: {\"edits\": [[\"field id\", \"wrong fragment\", \"fixed fragment\"], ...], \"issues\": [[\"field id or empty\", \"short description\"], ...]}.",
+        "You check a diagnostic imaging report (radiography, CT, MRI) before the radiologist signs it. Be restrained: report only real errors of the kinds listed below and ignore everything else (style, wording, level of detail, measurements, normal descriptions, patient management). When in doubt, say nothing.",
+        "1) Edits inside each field, only: wrong word endings - agreement in gender, number and case; obvious misspellings; punctuation errors inside the text (missing or extra commas). Accidentally duplicated words.",
+        "A period at the end of every field is added automatically - never add one. Capital and lowercase letters at the start of fields are handled automatically - do not change them.",
+        "Do not rephrase or add anything. Do not change the meaning, medical terms, word order, numbers or units. Keep abbreviations and Latin-script terms (T2, STIR, PD, Stoller, CT, MRI) exactly as they are. Do NOT replace the Russian letter \u0435 with \u0451, do NOT replace hyphens with dashes, do NOT touch spaces around hyphens.",
+        "2) Remarks, only two kinds: a clinically significant finding from the descriptive part that is missing from the conclusion; a side mismatch (right/left) between the description and the conclusion or between fields. No other remarks.",
+        "Answer ONLY with JSON, no code fences: {\"edits\": [[\"field id\", \"wrong fragment\", \"fixed fragment\"], ...], \"issues\": [[\"field id or empty\", \"short description\"], ...]}. If there is nothing to report, return empty lists.",
         "Copy each wrong fragment exactly as it appears in that field (a word or a few words); if it occurs more than once in the field, include a neighbouring word so it is unique. To remove a duplicate, include it in the fragment and leave it out of the fix.",
         "Write issue descriptions ONLY in " + language + ", in one short sentence; point the issue to the field that should be changed (usually the conclusion), or leave the id empty.",
     ].join("\n");
@@ -59,7 +61,7 @@ routerAdd("POST", "/api/review", (e) => {
     if (templateTitle) parts.push("Template: " + templateTitle);
     if (fields.length) {
         parts.push("Fields filled by the doctor (id, section / label, text):\n\n" + fields.map((f) =>
-            "[" + f.id + "] " + (f.section ? f.section + " / " : "") + (f.label || "field") + ":\n" + f.text).join("\n\n"));
+            "[" + f.id + "] " + (f.section ? f.section + " / " : "") + (f.label || "field") + (f.isConclusion ? " (CONCLUSION)" : "") + ":\n" + f.text).join("\n\n"));
     }
     if (report) parts.push("The whole report as it will be signed (normal values from the template included):\n" + report);
 
@@ -81,14 +83,29 @@ routerAdd("POST", "/api/review", (e) => {
         if (typeof id !== "string") continue;
         (editsByField[id] = editsByField[id] || []).push([from, to]);
     }
+    // Регистр и точка в конце — точными правилами, не моделью: текстовое
+    // поле начинается со строчной буквы (кроме аббревиатур: «МР-признаки»,
+    // «КТ»), заключение — с заглавной; точку в конце поля протокол ставит
+    // сам, поэтому добавленная моделью точка убирается.
+    const fixCase = (text, isConclusion) => {
+        const at = text.search(/\S/);
+        if (at === -1) return text;
+        const firstWord = (text.slice(at).match(/^[\p{L}\d]+/u) || [""])[0];
+        const isAbbreviation = firstWord.length >= 2 && firstWord === firstWord.toUpperCase() && /\p{L}/u.test(firstWord);
+        const ch = text[at];
+        const fixed = isConclusion ? ch.toUpperCase() : (isAbbreviation ? ch : ch.toLowerCase());
+        return text.slice(0, at) + fixed + text.slice(at + 1);
+    };
     const corrections = [];
     for (const f of fields) {
-        const corrected = proofread.finalize(f.text, editsByField[f.id] || [], "review");
+        let corrected = proofread.finalize(f.text, editsByField[f.id] || [], "review");
+        if (!/[.!?…]\s*$/.test(f.text)) corrected = corrected.replace(/(?<!\.)\.(\s*)$/, "$1");
+        corrected = fixCase(corrected, f.isConclusion);
         if (corrected !== f.text) corrections.push({ field: f.id, original: f.text, corrected: corrected });
     }
 
     const issues = (Array.isArray(answer.issues) ? answer.issues : [])
-        .slice(0, 12)
+        .slice(0, 6)
         .map((x) => {
             const id = Array.isArray(x) ? x[0] : x && x.field;
             const text = Array.isArray(x) ? x[1] : x && (x.text || x.message);

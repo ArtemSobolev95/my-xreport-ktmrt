@@ -51,7 +51,7 @@ routerAdd("POST", "/api/review", (e) => {
         "1) Edits inside each field, only: wrong word endings - agreement in gender, number and case; obvious misspellings; punctuation errors inside the text (missing or extra commas). Accidentally duplicated words.",
         "A period at the end of every field is added automatically - never add one. Capital and lowercase letters at the start of fields are handled automatically - do not change them.",
         "Do not rephrase or add anything. Do not change the meaning, medical terms, word order, numbers or units. Keep abbreviations and Latin-script terms (T2, STIR, PD, Stoller, CT, MRI) exactly as they are. Do NOT replace the Russian letter \u0435 with \u0451, do NOT replace hyphens with dashes, do NOT touch spaces around hyphens.",
-        "2) Remarks, only two kinds: a clinically significant finding from the descriptive part that is missing from the conclusion; a side mismatch (right/left) between the description and the conclusion or between fields. No other remarks.",
+        "2) Remarks, only three kinds: a) a clinically significant finding from the descriptive part that is missing from the conclusion; b) a side mismatch (right/left) between the description and the conclusion or between fields; c) missing essential information about a pathological finding that a radiologist is expected to state - e.g. the stage of an ischemic stroke, the size of a lesion, its localization or side, a classification grade. Only for pathological findings, only what is really expected for this finding, one remark per finding. No other remarks.",
         "Answer ONLY with JSON, no code fences: {\"edits\": [[\"field id\", \"wrong fragment\", \"fixed fragment\"], ...], \"issues\": [[\"field id or empty\", \"short description\"], ...]}. If there is nothing to report, return empty lists.",
         "Copy each wrong fragment exactly as it appears in that field (a word or a few words); if it occurs more than once in the field, include a neighbouring word so it is unique. To remove a duplicate, include it in the fragment and leave it out of the fix.",
         "Write issue descriptions ONLY in " + language + ", in one short sentence; point the issue to the field that should be changed (usually the conclusion), or leave the id empty.",
@@ -105,7 +105,7 @@ routerAdd("POST", "/api/review", (e) => {
     }
 
     const issues = (Array.isArray(answer.issues) ? answer.issues : [])
-        .slice(0, 6)
+        .slice(0, 8)
         .map((x) => {
             const id = Array.isArray(x) ? x[0] : x && x.field;
             const text = Array.isArray(x) ? x[1] : x && (x.text || x.message);

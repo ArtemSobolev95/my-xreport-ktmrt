@@ -988,7 +988,7 @@ const handleClearDraft = async () => {
     const isStateAfter = caret.fieldId === STATE_AFTER_FIELD_ID;
     if (isStateAfter) {
       const otherModalOpen = anyModalOpen && !(showStateAfterModal && !showComparisonModal && !showAbbrModal && !showNotesModal && !showSaveModal && phraseMemoryFieldId === null);
-      if (!showStateAfterModal || otherModalOpen) return null;
+      if (!showStateAfterModal || otherModalOpen || variantSelector) return null;
     } else {
       if (caret.fieldId !== activeFieldId) return null;
       if (variantSelector || pathNav || openQuickButtonGroupIdx !== null || anyModalOpen) return null;
@@ -2433,7 +2433,8 @@ const insertPhrase = (phrase: string) => {
     if (el) {
       el.focus();
       el.setSelectionRange(newCursorPos, newCursorPos);
-      autoResize(el);
+      // У «Примечания» своя высота (эффект по stateAfterText).
+      if (fieldId !== STATE_AFTER_FIELD_ID) autoResize(el);
       setTimeout(() => autoResize(el), 10);
     }
   });
@@ -2478,6 +2479,13 @@ const parseVariants = (text: string): { prefix: string; variants: string[] } | n
   return variants.length > 1 ? { prefix, variants } : null;
 };
 
+// Текст поля после сокращения: «Примечание» живёт в своём состоянии (окно),
+// остальные поля — в fieldsData.
+const setFieldText = (fieldId: string, text: string) => {
+  if (fieldId === STATE_AFTER_FIELD_ID) setStateAfterText(text);
+  else updateField(fieldId, text);
+};
+
 const selectVariant = (index: number) => {
   if (!variantSelector) return;
 
@@ -2503,7 +2511,7 @@ const currentValue = textarea.value;
 const newText = prefix + finalChosen + trigger + currentValue.substring(variantSelector.startPos);
 
   
-  updateField(fieldId, newText);
+  setFieldText(fieldId, newText);
 
   if (abbrKey) {
     recordUsage(abbrKey);
@@ -2516,7 +2524,8 @@ const newText = prefix + finalChosen + trigger + currentValue.substring(variantS
     if (el) {
       el.focus();
       el.setSelectionRange(newCursorPos, newCursorPos);
-      autoResize(el);
+      // У «Примечания» своя высота (эффект по stateAfterText).
+      if (fieldId !== STATE_AFTER_FIELD_ID) autoResize(el);
     }
   });
 
@@ -2585,7 +2594,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   const newCursorPos = beforeWord.length + replacement.length + 1;
 
   
-  updateField(fieldId, newText);
+  setFieldText(fieldId, newText);
 
   recordUsage(wordLower);
 
@@ -2594,7 +2603,8 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
     if (el) {
       el.focus();
       el.setSelectionRange(newCursorPos, newCursorPos);
-      autoResize(el);
+      // У «Примечания» своя высота (эффект по stateAfterText).
+      if (fieldId !== STATE_AFTER_FIELD_ID) autoResize(el);
     }
   });
 };
@@ -3092,7 +3102,8 @@ for (const f of visibleFields) {
         <main className="flex-1 min-w-0 pb-64">
           {variantSelector && (
             <div
-              className="fixed z-40 bg-zinc-900/90 backdrop-blur-md rounded-xl shadow-xl py-1 w-fit min-w-[160px] max-w-[420px]"
+              // Выше модальных окон (z-[999]): сокращения работают и в окне «Примечание».
+              className="fixed z-[1000] bg-zinc-900/90 backdrop-blur-md rounded-xl shadow-xl py-1 w-fit min-w-[160px] max-w-[420px]"
               style={{
                 top: variantSelector.position.top,
                 left: variantSelector.position.left,
@@ -4153,11 +4164,20 @@ for (const f of visibleFields) {
                 setCaret({ fieldId: STATE_AFTER_FIELD_ID, pos: t.selectionStart });
               }}
               onKeyDown={(e) => {
+                // Открыт выбор варианта сокращения — стрелки, Enter и Esc его
+                // (обработчик на window); Esc не должен закрыть окно.
+                if (variantSelector?.fieldId === STATE_AFTER_FIELD_ID && ['Enter', 'ArrowUp', 'ArrowDown', 'Escape'].includes(e.key)) {
+                  if (e.key === 'Escape') e.preventDefault();
+                  return;
+                }
                 if (handleGhostKeyDown(e, STATE_AFTER_FIELD_ID)) return;
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   applyStateAfter();
+                  return;
                 }
+                // Сокращения — как в полях протокола (пробел/знак после слова).
+                handleKeyDown(e, STATE_AFTER_FIELD_ID);
               }}
               placeholder="Например: состояние после артроскопии"
               className={`w-full bg-white/5 border border-white/10 rounded-xl ${STATE_AFTER_TEXT_CLASS} text-white placeholder:text-zinc-500 focus:outline-none focus:border-white/20 transition-[border-color,height] duration-200 ease-out resize-none`}

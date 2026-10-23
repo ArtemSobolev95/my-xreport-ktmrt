@@ -74,7 +74,7 @@ routerAdd("POST", "/api/conclude", (e) => {
     if (current.trim()) parts.push("The doctor has already written in the " + (fieldLabel || "Conclusion") + " field:\n" + current);
 
     const model = ai.modelFor("CONCLUDE");
-    const res = ai.complete(system, parts.join("\n\n"), { route: "CONCLUDE", maxTokens: 600, timeout: 40 });
+    const res = ai.complete(system, parts.join("\n\n"), { route: "CONCLUDE", maxTokens: 600, timeout: 40, userId: e.auth.id });
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
     }

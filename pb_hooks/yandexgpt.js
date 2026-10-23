@@ -69,10 +69,12 @@ module.exports = {
 
         // REST-ответ обёрнут в result; на всякий случай поддерживаем и без обёртки.
         const result = res.json.result || res.json;
+        const u = result.usage || {};
+        const usage = { input: Number(u.inputTextTokens) || 0, output: Number(u.completionTokens) || 0 };
         const alt = result.alternatives && result.alternatives[0];
         if (!alt || alt.status === "ALTERNATIVE_STATUS_CONTENT_FILTER" || !alt.message) {
-            return { ok: true, text: "" };
+            return { ok: true, text: "", usage: usage };
         }
-        return { ok: true, text: String(alt.message.text || "") };
+        return { ok: true, text: String(alt.message.text || ""), usage: usage };
     },
 };

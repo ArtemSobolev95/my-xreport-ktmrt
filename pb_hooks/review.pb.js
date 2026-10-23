@@ -65,7 +65,7 @@ routerAdd("POST", "/api/review", (e) => {
     }
     if (report) parts.push("The whole report as it will be signed (normal values from the template included):\n" + report);
 
-    const res = ai.complete(system, parts.join("\n\n"), { route: "CORRECT", maxTokens: 1500, timeout: 30 });
+    const res = ai.complete(system, parts.join("\n\n"), { route: "CORRECT", maxTokens: 1500, timeout: 30, userId: e.auth.id });
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
     }

@@ -1157,6 +1157,17 @@ const handleClearDraft = async () => {
     setCorrections({});
     setReviewIssues([]);
     setConclusionDraft(null);
+    reportCountedRef.current = false;
+  };
+
+  // Учёт расхода ИИ на одно исследование (pb_hooks/usage.pb.js): протокол
+  // засчитывается один раз — при первом копировании/сохранении после
+  // начала (или сброса) протокола.
+  const reportCountedRef = useRef(false);
+  const countReport = () => {
+    if (reportCountedRef.current) return;
+    reportCountedRef.current = true;
+    pb.send('/api/usage/report', { method: 'POST' }).catch(() => { /* учёт не критичен */ });
   };
 
   // Возврат фокуса в поле, которое было активно до открытия модалки
@@ -2590,6 +2601,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
 
   const copyToClipboard = () => {
     learnPhrasesFromReport();
+    countReport();
     navigator.clipboard.writeText(finalPlainText).then(
       () => showToast('Скопировано', 1300),
       () => showToast('Не удалось скопировать', 1300)
@@ -2605,6 +2617,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
     ].filter(Boolean);
     const filename = [...nameParts, 'Протокол'].join('_') + '.txt';
     learnPhrasesFromReport();
+    countReport();
     const blob = new Blob([finalPlainText], { type: 'text/plain' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);

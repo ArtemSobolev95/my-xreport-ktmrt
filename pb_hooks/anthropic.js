@@ -53,7 +53,7 @@ module.exports = {
     },
 
     // options: { route, maxTokens (длина самого ответа), timeout? }.
-    // Возвращает { ok: true, text } или { ok: false }.
+    // Возвращает { ok: true, text, usage: { input, output } } или { ok: false }.
     complete(system, user, options) {
         const model = this.modelFor(options.route);
         const effort = $os.getenv("ANTHROPIC_EFFORT_" + options.route) || DEFAULT_EFFORT[options.route] || "medium";
@@ -105,15 +105,23 @@ module.exports = {
             return { ok: false };
         }
 
+        // Токены — для учёта расхода (pb_hooks/ai.js). Входные — вместе с
+        // записью и чтением кэша, выходные — вместе с «размышлением».
+        const u = res.json.usage || {};
+        const usage = {
+            input: (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0),
+            output: u.output_tokens || 0,
+        };
+
         // Отказ (в том числе после запасной модели) — подсказки просто нет.
         if (res.json.stop_reason === "refusal") {
             console.log("[anthropic] отказ модели:", JSON.stringify(res.json.stop_details));
-            return { ok: true, text: "" };
+            return { ok: true, text: "", usage: usage };
         }
         const text = (res.json.content || [])
             .filter((b) => b && b.type === "text")
             .map((b) => b.text || "")
             .join("");
-        return { ok: true, text: text };
+        return { ok: true, text: text, usage: usage };
     },
 };

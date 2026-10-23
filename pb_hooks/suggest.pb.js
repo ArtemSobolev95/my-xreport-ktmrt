@@ -93,7 +93,7 @@ routerAdd("POST", "/api/suggest", (e) => {
     }
 
     const model = ai.modelFor("SUGGEST");
-    const res = ai.complete(system, parts.join("\n\n"), { route: "SUGGEST", maxTokens: 60 });
+    const res = ai.complete(system, parts.join("\n\n"), { route: "SUGGEST", maxTokens: 60, userId: e.auth.id });
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
     }

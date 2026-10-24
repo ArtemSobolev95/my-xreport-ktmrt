@@ -23,6 +23,7 @@ import { useDialog } from '../components/DialogProvider';
 import SelectPill from '../components/SelectPill';
 import CollapseRow from '../components/CollapseRow';
 import SmoothHeight from '../components/SmoothHeight';
+import { recordTemplateUse } from '../lib/templateUsage';
 import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../components/AnimatedModal';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
@@ -1496,6 +1497,8 @@ if (Array.isArray(record.fields)) {
 
       const typedRecord = record as unknown as Template;
       setOriginalTemplate(JSON.parse(JSON.stringify(typedRecord)));
+      // Для порядка списка шаблонов: сверху — чем пользуются (lib/templateUsage.ts).
+      recordTemplateUse(typedRecord.id);
       setTemplate(typedRecord);
 
     

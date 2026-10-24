@@ -1367,17 +1367,22 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
       };
 
       try {
+        let savedId = editingId;
         if (editingId && !saveAsNew) {
           await pb.collection('templates').update(editingId, payload);
         } else {
           const newRecord = await pb.collection('templates').create(payload);
+          savedId = newRecord.id;
           setEditingId(newRecord.id);
           setOwnerId(user?.id ?? null);
         }
         setTemplateTitle(title);
         setIsPublic(willBePublic);
         setSavedSnapshot(JSON.stringify({ title, fields, isPublic: willBePublic, notes: templateNotes }));
-        router.push('/');
+        // После сохранения — сразу к заполнению этого шаблона, а не в
+        // список: исправил, сохранил, заполняешь дальше (черновик протокола
+        // в filler сохраняется).
+        router.push(`/filler?id=${savedId}`);
       } catch (err: unknown) {
      console.error("Ошибка сохранения шаблона:", err);
      const errorMessage = err instanceof Error ? err.message : String(err);

@@ -4202,7 +4202,9 @@ for (const f of visibleFields) {
                 // Сокращения — как в полях протокола (пробел/знак после слова).
                 handleKeyDown(e, STATE_AFTER_FIELD_ID);
               }}
-              placeholder="Например: состояние после артроскопии"
+              // Пока видна ИИ-подсказка — без placeholder'а, иначе они
+              // накладываются друг на друга в пустом поле.
+              placeholder={ghost?.fieldId === STATE_AFTER_FIELD_ID ? '' : 'Например: состояние после артроскопии'}
               className={`w-full bg-white/5 border border-white/10 rounded-xl ${STATE_AFTER_TEXT_CLASS} text-white placeholder:text-zinc-500 focus:outline-none focus:border-white/20 transition-[border-color,height] duration-200 ease-out resize-none`}
               rows={3}
             />

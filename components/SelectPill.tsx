@@ -148,8 +148,8 @@ const SelectPill = forwardRef<HTMLButtonElement, SelectPillProps>(function Selec
         className={`relative max-w-full truncate text-left cursor-pointer rounded-lg border pl-2.5 pr-7 py-0.5 text-sm leading-tight transition-colors focus:outline-none ${
           value
             ? 'border-amber-400/40 bg-amber-400/10 font-medium text-amber-400 hover:bg-amber-400/15'
-            : 'border-dashed border-white/25 bg-white/[0.03] text-zinc-400 hover:border-white/40 hover:text-zinc-200'
-        } ${open ? (value ? 'bg-amber-400/15' : 'border-white/40 text-zinc-200') : ''}`}
+            : 'border-white/10 bg-white/[0.06] text-zinc-400 hover:bg-white/10 hover:text-zinc-200'
+        } ${open ? (value ? 'bg-amber-400/15' : 'bg-white/10 text-zinc-200') : ''}`}
       >
         {shown}
         <ChevronDown

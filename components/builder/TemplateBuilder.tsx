@@ -7,7 +7,7 @@ import {
   Trash2, ChevronRight, ChevronDown, ClipboardCheck,
   Heading, Type, List, Calculator,
   Plus, Minus, ImagePlus, Link, Copy, Circle, CircleDot, ArrowLeft, ArrowRight, Save,
-  LayoutList, MousePointerClick, Globe,
+  LayoutList, MousePointerClick, Globe, Check,
 } from 'lucide-react';
 import {
   DndContext,
@@ -991,6 +991,12 @@ function TemplateBuilder() {
   const dialog = useDialog();
   const user = pb.authStore.record;
   const { edit } = router.query;
+  // id только что сохранённого нового шаблона: смена ?edit= на него — не
+  // повод перезагружать шаблон (см. performSave).
+  const justSavedIdRef = useRef<string | null>(null);
+  // Короткая отметка «Сохранено» в шапке после сохранения.
+  const [justSaved, setJustSaved] = useState(false);
+  const justSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [templateTitle, setTemplateTitle] = useState("Новый шаблон");
   const [fields, setFields] = useState<BuilderField[]>([]);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
@@ -1158,6 +1164,7 @@ function TemplateBuilder() {
   );
 
   useEffect(() => {
+  if (edit && edit === justSavedIdRef.current) return;
   if (edit) {
     setEditingId(edit as string);
 
@@ -1379,10 +1386,17 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
         setTemplateTitle(title);
         setIsPublic(willBePublic);
         setSavedSnapshot(JSON.stringify({ title, fields, isPublic: willBePublic, notes: templateNotes }));
-        // После сохранения — сразу к заполнению этого шаблона, а не в
-        // список: исправил, сохранил, заполняешь дальше (черновик протокола
-        // в filler сохраняется).
-        router.push(`/filler?id=${savedId}`);
+        setJustSaved(true);
+        if (justSavedTimerRef.current) clearTimeout(justSavedTimerRef.current);
+        justSavedTimerRef.current = setTimeout(() => setJustSaved(false), 2500);
+        // После сохранения остаёмся в конструкторе этого же шаблона. Новый
+        // шаблон получает id в адресе (?edit=…), чтобы обновление страницы
+        // открывало его же; заново грузить его с сервера не нужно —
+        // содержимое уже на экране (justSavedIdRef пропускает загрузку).
+        if (savedId && savedId !== edit) {
+          justSavedIdRef.current = savedId;
+          router.replace(`/builder?edit=${savedId}`, undefined, { shallow: true });
+        }
       } catch (err: unknown) {
      console.error("Ошибка сохранения шаблона:", err);
      const errorMessage = err instanceof Error ? err.message : String(err);
@@ -1438,6 +1452,12 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
                 <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-500">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
                   Не сохранено
+                </span>
+              )}
+              {!isDirty && justSaved && (
+                <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-emerald-400">
+                  <Check className="w-3.5 h-3.5" />
+                  Сохранено
                 </span>
               )}
               {/* Публичность — свойство шаблона; применяется при сохранении,

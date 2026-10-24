@@ -20,6 +20,7 @@ import { confidentPhrase, firstWord, rankedPhrases, selectExamples, selectVocabu
 import { toGhost } from '../lib/aiSuggest';
 import { changePairs } from '../lib/textDiff';
 import { useDialog } from '../components/DialogProvider';
+import SelectPill from '../components/SelectPill';
 import CollapseRow from '../components/CollapseRow';
 import SmoothHeight from '../components/SmoothHeight';
 import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../components/AnimatedModal';
@@ -255,7 +256,7 @@ function FillerPage() {
 } | null>(null);
   const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
-  const inputRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>>({});
+  const inputRefs = useRef<Record<string, HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>>({});
   const [initialized, setInitialized] = useState(false);
   const [newlyAddedId, setNewlyAddedId] = useState<string | null>(null);
   // Строки, которые сейчас плавно исчезают (удаление поля или раздела).
@@ -3419,44 +3420,21 @@ for (const f of visibleFields) {
       )}
 
       {/* Список — заметный элемент выбора, а не текст в скобках: «таблетка»
-          с рамкой и шевроном. Пока не выбрано — пунктирная рамка и серый
-          текст (сразу видно, что выбор ещё не сделан), после выбора — amber,
-          как остальное введённое. Ширина — по выбранному варианту, а не по
-          самому длинному (так делает нативный select). Сам select нативный —
-          клавиатура (Tab, стрелки) и выпадающий список работают как прежде. */}
-      {f.type === 'select' && (() => {
-        const selected: string = fieldsData[f.id] || '';
-        const shown = selected || 'выберите вариант…';
-        return (
-          <div className="relative inline-flex max-w-full align-top">
-            <select
-              ref={el => { if (el) inputRefs.current[f.id] = el; }}
-              data-custom-focus
-              value={selected}
-              onChange={e => updateField(f.id, e.target.value)}
-              onFocus={() => handleFocus(f.id, null)}
-              onBlur={handleBlur}
-              tabIndex={isSectionCollapsed ? -1 : 0}
-              onKeyDown={e => handleFieldTabNavigation(e, f.id)}
-              title={selected || undefined}
-              // текст + px-2.5 слева + место под шеврон справа + рамки
-              style={{ width: measureTextPx(shown, selected ? 500 : 400) + 42 }}
-              className={`max-w-full appearance-none truncate cursor-pointer rounded-lg border pl-2.5 pr-7 py-0.5 text-sm leading-tight transition-colors focus:outline-none ${
-                selected
-                  ? 'border-amber-400/40 bg-amber-400/10 font-medium text-amber-400 hover:bg-amber-400/15'
-                  : 'border-dashed border-white/25 bg-white/[0.03] text-zinc-400 hover:border-white/40 hover:text-zinc-200'
-              }`}
-            >
-              <option value="" className="bg-zinc-900 text-zinc-400">выберите вариант…</option>
-              {f.options?.map((opt: string, i: number) => <option key={i} value={opt} className="bg-zinc-900 text-white">{opt}</option>)}
-            </select>
-            <ChevronDown
-              aria-hidden="true"
-              className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 ${selected ? 'text-amber-400' : 'text-zinc-500'}`}
-            />
-          </div>
-        );
-      })()}
+          с рамкой и шевроном (components/SelectPill.tsx). Пока не выбрано —
+          пунктирная рамка и серый текст, после выбора — amber, как остальное
+          введённое. Выпадающий список — свой, в стиле приложения. */}
+      {f.type === 'select' && (
+        <SelectPill
+          ref={el => { if (el) inputRefs.current[f.id] = el; }}
+          value={fieldsData[f.id] || ''}
+          options={f.options || []}
+          onChange={v => updateField(f.id, v)}
+          onFocus={() => handleFocus(f.id, null)}
+          onBlur={handleBlur}
+          tabIndex={isSectionCollapsed ? -1 : 0}
+          onKeyDown={e => handleFieldTabNavigation(e, f.id)}
+        />
+      )}
 
       {f.type === 'checkbox' && (
         <label

@@ -11,6 +11,7 @@
 // качество: у Claude по умолчанию «размышление» включено (effort medium).
 routerAdd("POST", "/api/conclude", (e) => {
     const ai = require(`${__hooks}/ai.js`);
+    const style = require(`${__hooks}/style.js`);
     if (!ai.isConfigured()) {
         return e.json(503, { message: "ИИ-заключение не настроено" });
     }
@@ -52,10 +53,11 @@ routerAdd("POST", "/api/conclude", (e) => {
         "Write in the language of the report. Follow the doctor's style: wording, abbreviations, how diagnoses are phrased and joined - but keep the conclusion generalized even if their previous conclusions are more detailed.",
         "Use the terminology of radiology literature and international structured reporting (RSNA RadReport templates, ACR lexicons) and established classifications and grades (e.g. Stoller, Outerbridge, Fleischner, TI-RADS, Bosniak) where the findings support them - phrased the way this doctor writes, in the report's language.",
         "Do not invent findings, measurements, sides or diagnoses that are not in the findings. Do not mention normal structures unless the doctor's previous conclusions usually do.",
+        "Leave out findings the doctor described as of doubtful, uncertain or no clinical significance, as incidental or as a variant of normal.",
         "Add recommendations only if the doctor's previous conclusions contain them.",
         "If the doctor has already started the conclusion, keep their text as is and complete it.",
         "Return only the conclusion text, without a heading, quotes or explanations.",
-    ].join("\n");
+    ].concat(style.FORBIDDEN).join("\n");
 
     const parts = [];
     if (templateTitle) parts.push("Template: " + templateTitle);

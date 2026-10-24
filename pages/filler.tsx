@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X, Loader2, TriangleAlert } from 'lucide-react';
+import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X, Loader2, Check } from 'lucide-react';
 import type { BuilderField, QuickButtonGroup, Template } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
@@ -18,7 +18,7 @@ import { useAbbreviations } from '../hooks/useAbbreviations';
 import { usePhraseMemory } from '../hooks/usePhraseMemory';
 import { confidentPhrase, firstWord, rankedPhrases, selectExamples, selectVocabulary, suggestedPhrase, sumStats, SLOT } from '../lib/phraseMemory';
 import { toGhost } from '../lib/aiSuggest';
-import { wordDiff } from '../lib/textDiff';
+import { changePairs } from '../lib/textDiff';
 import { useDialog } from '../components/DialogProvider';
 import CollapseRow from '../components/CollapseRow';
 import SmoothHeight from '../components/SmoothHeight';
@@ -219,7 +219,7 @@ function FillerPage() {
   const [conclusionLoading, setConclusionLoading] = useState(false);
   // Замечания по смыслу из проверки протокола (pb_hooks/review.pb.js):
   // противоречия, право/лево, находки без заключения. field — id поля или ''.
-  const [reviewIssues, setReviewIssues] = useState<{ field: string; text: string }[]>([]);
+  const [reviewIssues, setReviewIssues] = useState<{ field: string; kind: string; text: string }[]>([]);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [phraseMemoryFieldId, setPhraseMemoryFieldId] = useState<string | null>(null);
   // Названия полей ЗАГЛАВНЫМИ (переключатель над полями) — настройка
@@ -2103,7 +2103,7 @@ const runReview = async (force = false) => {
   try {
     const res = await pb.send<{
       corrections: { field: string; original: string; corrected: string }[];
-      issues: { field: string; text: string }[];
+      issues: { field: string; kind?: string; text: string }[];
     }>('/api/review', {
       method: 'POST',
       body: { templateTitle: template.title || '', fields, report: finalPlainText, lang: 'ru' },
@@ -2116,7 +2116,9 @@ const runReview = async (force = false) => {
       }
     }
     setCorrections(next);
-    setReviewIssues((res.issues || []).filter(x => x && x.text && !dismissedIssuesRef.current.has(x.text)));
+    setReviewIssues((res.issues || [])
+      .filter(x => x && x.text && !dismissedIssuesRef.current.has(x.text))
+      .map(x => ({ field: x.field || '', kind: x.kind || '', text: x.text })));
   } catch (err: unknown) {
     if (seq !== reviewSeqRef.current) return;
     lastReviewKeyRef.current = '';
@@ -2201,6 +2203,19 @@ const dismissCorrection = (fieldId: string) => {
 const dismissIssue = (text: string) => {
   dismissedIssuesRef.current.add(text);
   setReviewIssues(prev => prev.filter(x => x.text !== text));
+};
+
+// Скрыть всё, что сейчас на панели проверки (как «Пропустить» у каждого).
+const dismissAllReview = () => {
+  for (const c of pendingCorrections) dismissCorrection(c.fieldId);
+  for (const x of reviewIssues) dismissIssue(x.text);
+};
+
+// Виды замечаний проверки (pb_hooks/review.pb.js) — короткая метка и цвет.
+const REVIEW_ISSUE_KINDS: Record<string, { label: string; className: string }> = {
+  missing: { label: 'Нет в заключении', className: 'text-amber-300 bg-amber-400/10' },
+  side: { label: 'Сторона', className: 'text-red-300 bg-red-400/10' },
+  detail: { label: 'Не хватает данных', className: 'text-sky-300 bg-sky-400/10' },
 };
 
 // Перейти к полю из панели проверки: раскрыть его раздел и поставить курсор.
@@ -3680,77 +3695,107 @@ for (const f of visibleFields) {
                 протокол; клики не уводят фокус из поля. */}
             {(reviewLoading || pendingCorrections.length > 0 || reviewIssues.length > 0) && (
       <div
-        className="mb-2 max-h-[55vh] overflow-y-auto rounded-xl bg-zinc-900 border border-amber-400/25 px-3 py-2.5 text-xs leading-snug"
+        className="mb-2 max-h-[55vh] overflow-y-auto rounded-xl bg-zinc-900 border border-white/10 shadow-2xl text-xs leading-snug"
         onMouseDown={(e) => e.preventDefault()}
       >
-        <div className="mb-1.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
+        {/* Шапка: что это, идёт ли проверка, действия над всем сразу. */}
+        <div className="sticky top-0 z-10 flex items-center gap-1.5 bg-zinc-900 px-3 pt-2 pb-1.5 text-[11px] text-zinc-500">
           <SpellCheck className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
-          <span className="flex-1">Проверка протокола</span>
+          <span className="flex-1">Проверка</span>
           {reviewLoading && <Loader2 className="w-3 h-3 animate-spin text-amber-400" aria-label="Проверяется" />}
           {pendingCorrections.length > 1 && (
-            <button type="button" tabIndex={-1} onClick={applyAllCorrections} className="text-amber-400 hover:text-amber-300 cursor-pointer">
+            <button type="button" tabIndex={-1} onClick={applyAllCorrections} className="rounded px-1 text-amber-400 hover:text-amber-300 hover:bg-white/5 cursor-pointer">
               Исправить всё
             </button>
           )}
+          {(pendingCorrections.length > 0 || reviewIssues.length > 0) && (
+            <button type="button" tabIndex={-1} onClick={dismissAllReview} title="Скрыть всё" aria-label="Скрыть всё" className="w-5 h-5 flex items-center justify-center rounded text-zinc-500 hover:text-white hover:bg-white/10 cursor-pointer">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
-        <div className="space-y-2">
-          {reviewIssues.map((issue) => {
-            const target = template?.fields.find(f => f.id === issue.field);
-            return (
-              <div key={issue.text} className="flex items-start gap-2 rounded-lg bg-amber-400/5 px-2 py-1.5">
-                <TriangleAlert className="w-3.5 h-3.5 mt-px shrink-0 text-amber-400" aria-hidden="true" />
-                <div className="flex-1 min-w-0">
-                  <div className="text-zinc-200 break-words">{issue.text}</div>
-                  <div className="mt-1 flex items-center gap-3 text-[11px]">
-                    {target && (
-                      <button type="button" tabIndex={-1} onClick={() => goToField(target.id)} className="text-amber-400 hover:text-amber-300 cursor-pointer truncate">
-                        → {target.label || 'поле'}
-                      </button>
+
+        {/* Замечания по смыслу: метка вида + коротко что; клик — к полю. */}
+        {reviewIssues.length > 0 && (
+          <ul className="px-1.5 pb-1.5">
+            {reviewIssues.map((issue) => {
+              const target = template?.fields.find(f => f.id === issue.field);
+              const kind = REVIEW_ISSUE_KINDS[issue.kind];
+              return (
+                <li key={issue.text} className="group/issue flex items-start gap-1 rounded-lg px-1.5 py-1 hover:bg-white/[0.04]">
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => target && goToField(target.id)}
+                    title={target ? `Перейти: ${target.label || 'поле'}` : undefined}
+                    className={`flex-1 min-w-0 text-left ${target ? 'cursor-pointer' : 'cursor-default'}`}
+                  >
+                    {kind && (
+                      <span className={`mr-1.5 inline-block rounded px-1 py-px text-[10px] font-medium align-[1px] ${kind.className}`}>{kind.label}</span>
                     )}
-                    <button type="button" tabIndex={-1} onClick={() => dismissIssue(issue.text)} className="ml-auto text-zinc-500 hover:text-white cursor-pointer">
-                      Пропустить
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {pendingCorrections.map((c) => {
-            const isActive = c.fieldId === activeFieldId;
-            return (
-              <div key={c.fieldId} className={`rounded-lg px-2 py-1.5 ${isActive ? 'bg-white/[0.06]' : ''}`}>
-                <button type="button" tabIndex={-1} onClick={() => goToField(c.fieldId)} className="mb-0.5 block max-w-full truncate text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer">
-                  {c.label}
-                </button>
-                <div className="text-zinc-300 whitespace-pre-wrap break-words">
-                  {wordDiff(c.original, c.corrected).map((seg, i) => (
-                    <span key={i}>
-                      {seg.deleted && (
-                        <><span className="line-through text-red-400/80" title="будет удалено">{seg.deleted}</span>{seg.text ? ' ' : ''}</>
-                      )}
-                      {seg.changed ? (
-                        <span
-                          className="text-amber-400 underline decoration-dotted underline-offset-2"
-                          title={seg.was ? `было: ${seg.was}` : 'добавлено'}
-                        >
-                          {seg.text}
-                        </span>
-                      ) : seg.text}
-                    </span>
-                  ))}
-                </div>
-                <div className="mt-1 flex items-center justify-end gap-3 text-[11px]">
-                  <button type="button" tabIndex={-1} onClick={() => dismissCorrection(c.fieldId)} className="text-zinc-500 hover:text-white cursor-pointer">
-                    Не исправлять{isActive && <span className="text-[10px] text-zinc-600"> Esc</span>}
+                    <span className="text-zinc-200 break-words">{issue.text}</span>
                   </button>
-                  <button type="button" tabIndex={-1} onClick={() => applyCorrection(c.fieldId)} className="font-medium text-amber-400 hover:text-amber-300 cursor-pointer">
-                    Исправить{isActive && <span className="text-[10px] font-normal text-amber-400/60"> Alt+Enter</span>}
+                  <button type="button" tabIndex={-1} onClick={() => dismissIssue(issue.text)} title="Пропустить" aria-label="Пропустить" className="w-5 h-5 shrink-0 flex items-center justify-center rounded text-zinc-600 opacity-0 group-hover/issue:opacity-100 hover:text-white hover:bg-white/10 cursor-pointer">
+                    <X className="w-3 h-3" />
                   </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {/* Исправления текста: только изменения «было → стало» по полям. */}
+        {pendingCorrections.length > 0 && (
+          <ul className={`px-1.5 pb-1.5 ${reviewIssues.length > 0 ? 'border-t border-white/5 pt-1.5' : ''}`}>
+            {pendingCorrections.map((c) => {
+              const isActive = c.fieldId === activeFieldId;
+              return (
+                <li key={c.fieldId} className={`group/fix flex items-start gap-1 rounded-lg px-1.5 py-1 ${isActive ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'}`}>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => goToField(c.fieldId)}
+                    title={`Перейти: ${c.label}`}
+                    className="flex-1 min-w-0 text-left cursor-pointer"
+                  >
+                    <span className="block truncate text-[10px] text-zinc-500">{c.label}</span>
+                    {changePairs(c.original, c.corrected).map((pair, i) => (
+                      <span key={i} className="mr-2 inline-block break-words">
+                        {pair.from && <span className="text-zinc-500 line-through decoration-red-400/70">{pair.from}</span>}
+                        {pair.from && pair.to && <span className="mx-1 text-zinc-600">→</span>}
+                        {pair.to && <span className="text-amber-400">{pair.to}</span>}
+                      </span>
+                    ))}
+                  </button>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => dismissCorrection(c.fieldId)}
+                    title={isActive ? 'Не исправлять (Esc)' : 'Не исправлять'}
+                    aria-label="Не исправлять"
+                    className={`w-5 h-5 shrink-0 flex items-center justify-center rounded text-zinc-600 hover:text-white hover:bg-white/10 cursor-pointer ${isActive ? '' : 'opacity-0 group-hover/fix:opacity-100'}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => applyCorrection(c.fieldId)}
+                    title={isActive ? 'Исправить (Alt+Enter)' : 'Исправить'}
+                    aria-label="Исправить"
+                    className="w-5 h-5 shrink-0 flex items-center justify-center rounded text-amber-400 hover:text-zinc-950 hover:bg-amber-400 cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {reviewLoading && pendingCorrections.length === 0 && reviewIssues.length === 0 && (
+          <div className="px-3 pb-2 text-[11px] text-zinc-500">Проверяю протокол…</div>
+        )}
       </div>
     )}
           <div className="rounded-2xl bg-zinc-900/75 border border-white/10 shadow-2xl p-2">

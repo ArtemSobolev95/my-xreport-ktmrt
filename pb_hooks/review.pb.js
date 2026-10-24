@@ -14,6 +14,7 @@
 routerAdd("POST", "/api/review", (e) => {
     const ai = require(`${__hooks}/ai.js`);
     const proofread = require(`${__hooks}/proofread.js`);
+    const style = require(`${__hooks}/style.js`);
     if (!ai.isConfigured()) {
         return e.json(503, { message: "ИИ-проверка не настроена" });
     }
@@ -48,14 +49,15 @@ routerAdd("POST", "/api/review", (e) => {
     // по стилю, размерам и подробности описания.
     const system = [
         "You check a diagnostic imaging report (radiography, CT, MRI) before the radiologist signs it. Be restrained: report only real errors of the kinds listed below and ignore everything else (style, wording, level of detail, measurements, normal descriptions, patient management). When in doubt, say nothing.",
-        "1) Edits inside each field, only: wrong word endings - agreement in gender, number and case; obvious misspellings; punctuation errors inside the text (missing or extra commas). Accidentally duplicated words.",
+        "1) Edits inside each field, only: wrong word endings - agreement in gender, number and case; obvious misspellings; punctuation errors inside the text (missing or extra commas). Accidentally duplicated words. Forbidden phrasings (below) - rewrite them with a minimal edit, keeping the grammar correct.",
         "A period at the end of every field is added automatically - never add one. Capital and lowercase letters at the start of fields are handled automatically - do not change them.",
         "Do not rephrase or add anything. Do not change the meaning, medical terms, word order, numbers or units. Keep abbreviations and Latin-script terms (T2, STIR, PD, Stoller, CT, MRI) exactly as they are. Do NOT replace the Russian letter \u0435 with \u0451, do NOT replace hyphens with dashes, do NOT touch spaces around hyphens.",
-        "2) Remarks, only three kinds: a) a clinically significant finding from the descriptive part that is missing from the conclusion; b) a side mismatch (right/left) between the description and the conclusion or between fields; c) missing essential information about a pathological finding that a radiologist is expected to state - e.g. the stage of an ischemic stroke, the size of a lesion, its localization or side, a classification grade. Only for pathological findings, only what is really expected for this finding, one remark per finding. No other remarks.",
-        "Answer ONLY with JSON, no code fences: {\"edits\": [[\"field id\", \"wrong fragment\", \"fixed fragment\"], ...], \"issues\": [[\"field id or empty\", \"short description\"], ...]}. If there is nothing to report, return empty lists.",
+        "2) Remarks, only three kinds: \"missing\" - a clinically significant finding from the descriptive part that is missing from the conclusion (NOT if the doctor described it as of doubtful, uncertain or no clinical significance, as incidental or as a variant of normal); \"side\" - a side mismatch (right/left) between the description and the conclusion or between fields; \"detail\" - missing essential information about a pathological finding that a radiologist is expected to state, e.g. the stage of an ischemic stroke, the size of a lesion, its localization or side, a classification grade (only for pathological findings, only what is really expected for this finding, one remark per finding). No other remarks.",
+        "Answer ONLY with JSON, no code fences: {\"edits\": [[\"field id\", \"wrong fragment\", \"fixed fragment\"], ...], \"issues\": [[\"field id or empty\", \"missing|side|detail\", \"short description\"], ...]}. If there is nothing to report, return empty lists.",
         "Copy each wrong fragment exactly as it appears in that field (a word or a few words); if it occurs more than once in the field, include a neighbouring word so it is unique. To remove a duplicate, include it in the fragment and leave it out of the fix.",
-        "Write issue descriptions ONLY in " + language + ", in one short sentence; point the issue to the field that should be changed (usually the conclusion), or leave the id empty.",
-    ].join("\n");
+        "Write issue descriptions ONLY in " + language + ", in one short sentence without repeating the kind (e.g. \"Киста Бейкера\", \"Описание справа, в заключении слева\", \"Не указана стадия инфаркта\"); point the issue to the field that should be changed (usually the conclusion), or leave the id empty.",
+        "Forbidden phrasings:",
+    ].concat(style.FORBIDDEN).join("\n");
 
     const parts = [];
     if (templateTitle) parts.push("Template: " + templateTitle);
@@ -107,9 +109,17 @@ routerAdd("POST", "/api/review", (e) => {
     const issues = (Array.isArray(answer.issues) ? answer.issues : [])
         .slice(0, 8)
         .map((x) => {
-            const id = Array.isArray(x) ? x[0] : x && x.field;
-            const text = Array.isArray(x) ? x[1] : x && (x.text || x.message);
-            return { field: typeof id === "string" ? id : "", text: clip(text, 400).trim() };
+            // [id, kind, text] (или старый формат [id, text]).
+            const KINDS = ["missing", "side", "detail"];
+            const arr = Array.isArray(x) ? x : null;
+            const id = arr ? arr[0] : x && x.field;
+            const kind = arr ? (arr.length >= 3 ? arr[1] : "") : x && x.kind;
+            const text = arr ? arr[arr.length >= 3 ? 2 : 1] : x && (x.text || x.message);
+            return {
+                field: typeof id === "string" ? id : "",
+                kind: KINDS.indexOf(kind) !== -1 ? kind : "",
+                text: clip(text, 400).trim(),
+            };
         })
         .filter((x) => x.text)
         // Замечание не на том языке (по-русски — без единой кириллической

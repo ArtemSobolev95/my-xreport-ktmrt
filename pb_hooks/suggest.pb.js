@@ -15,6 +15,7 @@
 // модель отвечает на языке самого текста поля.
 routerAdd("POST", "/api/suggest", (e) => {
     const ai = require(`${__hooks}/ai.js`);
+    const style = require(`${__hooks}/style.js`);
     if (!ai.isConfigured()) {
         return e.json(503, { message: "ИИ-подсказки не настроены" });
     }
@@ -60,7 +61,7 @@ routerAdd("POST", "/api/suggest", (e) => {
         "Do not invent numbers or measurements: if a number should come next, stop right before it.",
         "If there is no confident continuation, return an empty answer - not a single character. Never write explanations such as \"there is no continuation\".",
         "Never describe the cursor, the field, the text or your reasoning, and never answer in another language than the field text: your answer is pasted into the report as is.",
-    ].join("\n");
+    ].concat(style.FORBIDDEN).join("\n");
 
     const parts = [];
     if (templateTitle) parts.push("Template: " + templateTitle);

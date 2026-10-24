@@ -59,3 +59,36 @@ export function wordDiff(original: string, corrected: string): DiffSegment[] {
   if (trailingDeleted.length) segments.push({ text: '', changed: false, deleted: trailingDeleted.join(' ') });
   return segments;
 }
+
+// Только изменения — пары «было → стало» (для компактного показа в панели
+// проверки): подряд идущие изменённые слова — одна пара; удалённые слова —
+// пара с пустым «стало».
+export function changePairs(original: string, corrected: string): { from: string; to: string }[] {
+  const pairs: { from: string; to: string }[] = [];
+  let from: string[] = [];
+  let to: string[] = [];
+  const flush = () => {
+    if (from.length || to.length) pairs.push({ from: from.join(' '), to: to.join(' ') });
+    from = [];
+    to = [];
+  };
+  for (const seg of wordDiff(original, corrected)) {
+    if (/^\s+$/.test(seg.text)) continue;
+    if (seg.deleted && !seg.changed) {
+      // Удалённое (например, повтор) — с соседним словом, чтобы было видно
+      // где: «рога рога → рога».
+      flush();
+      pairs.push({ from: `${seg.deleted} ${seg.text}`.trim(), to: seg.text });
+      continue;
+    }
+    if (seg.deleted) from.push(seg.deleted);
+    if (seg.changed) {
+      if (seg.was) from.push(seg.was);
+      to.push(seg.text);
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return pairs;
+}

@@ -364,6 +364,15 @@ const handleComparisonDateChange = (e: React.ChangeEvent<HTMLInputElement>, inde
 
   // === Состояние сворачивания разделов (по заголовкам) ===
 const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(new Set());
+// Сенсорный экран (телефон/планшет) — см. touchBridgeIds ниже.
+const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+useEffect(() => {
+  const mq = window.matchMedia('(pointer: coarse)');
+  setIsCoarsePointer(mq.matches);
+  const onChange = () => setIsCoarsePointer(mq.matches);
+  mq.addEventListener('change', onChange);
+  return () => mq.removeEventListener('change', onChange);
+}, []);
 const [skipSectionTransition, setSkipSectionTransition] = useState(false);
 
   // === Работа с черновиком в localStorage ===
@@ -3018,6 +3027,33 @@ for (const f of visibleFields) {
 
   const activeField = template?.fields?.find((f: BuilderField) => f.id === activeFieldId);
 
+  // «Мостики» между разделами для стрелок ˄ ˅ над экранной клавиатурой
+  // (iOS Safari, Android): они переходят только по полям, доступным для
+  // фокуса, а у полей свёрнутых разделов tabIndex=-1 — и стрелки упирались в
+  // границу раздела. На сенсорных экранах первое поле следующего раздела и
+  // последнее поле предыдущего остаются в порядке фокуса; получив фокус,
+  // поле само раскрывает свой раздел (handleFocus). На десктопе не нужно:
+  // Tab между разделами ведёт handleFieldTabNavigation.
+  const touchBridgeIds = new Set<string>();
+  if (isCoarsePointer && activeFieldId) {
+    const sections: string[][] = [];
+    for (const f of visibleFields) {
+      if (f.type === 'header') { sections.push([]); continue; }
+      if (f.type === 'notes') continue;
+      if (sections.length === 0) sections.push([]);
+      sections[sections.length - 1].push(f.id);
+    }
+    const idx = sections.findIndex(ids => ids.includes(activeFieldId));
+    if (idx !== -1) {
+      const next = sections.slice(idx + 1).find(ids => ids.length > 0);
+      const prev = sections.slice(0, idx).reverse().find(ids => ids.length > 0);
+      if (next) touchBridgeIds.add(next[0]);
+      if (prev) touchBridgeIds.add(prev[prev.length - 1]);
+    }
+  }
+  const fieldTabIndex = (fieldId: string, sectionCollapsed: boolean) =>
+    !sectionCollapsed || touchBridgeIds.has(fieldId) ? 0 : -1;
+
   // Колонка названий — общая в разделе: по самой широкой плашке его полей,
   // но не больше 40% строки (дальше название прокручивается в своём поле).
   // По разделу, а не по всему шаблону: одно длинное название где-то ниже
@@ -3252,6 +3288,12 @@ for (const f of visibleFields) {
                 top: variantSelector.position.top,
                 left: variantSelector.position.left,
               }}
+              // Нажатие на вариант не должно уводить фокус из поля. Иначе
+              // поле теряло фокус, iOS Safari прятал клавиатуру (выезжала
+              // нижняя панель с адресом), а selectVariant тут же ставил фокус
+              // обратно — клавиатура и панель «моргали». На десктопе так же
+              // убирает лишнее blur → focus.
+              onMouseDown={(e) => e.preventDefault()}
             >
               {variantSelector.variants.map((variant, index) => (
                 <button
@@ -3494,7 +3536,7 @@ for (const f of visibleFields) {
             }}
             onFocus={(e) => handleFocus(f.id, e.target)}
             onBlur={handleBlur}
-            tabIndex={isSectionCollapsed ? -1 : 0}
+            tabIndex={fieldTabIndex(f.id, isSectionCollapsed)}
             rows={1}
             className={`w-full bg-transparent border-0 ${CONTENT_TEXT_CLASS} text-amber-400 caret-amber-400 placeholder:text-zinc-500 focus:outline-none resize-none`}
             placeholder={ghost?.fieldId === f.id ? '' : (f.placeholder || 'Введите значение')}
@@ -3539,7 +3581,7 @@ for (const f of visibleFields) {
             value={fieldsData[f.id] || ''}
             onChange={e => handleInputChange(f.id, e.target.value)}
             onFocus={(e) => handleFocus(f.id, e.target)}
-            tabIndex={isSectionCollapsed ? -1 : 0}
+            tabIndex={fieldTabIndex(f.id, isSectionCollapsed)}
             onKeyDown={e => handleFieldTabNavigation(e, f.id)}
             onBlur={handleBlur}
             style={{ width: numberInputWidth(String(fieldsData[f.id] || f.placeholder || '0.00')) }}
@@ -3563,7 +3605,7 @@ for (const f of visibleFields) {
           onChange={v => updateField(f.id, v)}
           onFocus={() => handleFocus(f.id, null)}
           onBlur={handleBlur}
-          tabIndex={isSectionCollapsed ? -1 : 0}
+          tabIndex={fieldTabIndex(f.id, isSectionCollapsed)}
           onKeyDown={e => handleFieldTabNavigation(e, f.id)}
         />
       )}
@@ -3582,7 +3624,7 @@ for (const f of visibleFields) {
               onChange={e => updateField(f.id, e.target.checked)}
               onFocus={() => handleFocus(f.id, null)}
               onBlur={handleBlur}
-              tabIndex={isSectionCollapsed ? -1 : 0}
+              tabIndex={fieldTabIndex(f.id, isSectionCollapsed)}
               onKeyDown={e => handleFieldTabNavigation(e, f.id)}
               className="peer sr-only"
             />
@@ -3624,7 +3666,7 @@ for (const f of visibleFields) {
                 onChange={e => updateField(`${f.id}_var_${i}`, e.target.value)}
                 onFocus={() => handleFocus(f.id, null)}
                 onBlur={handleBlur}
-                tabIndex={isSectionCollapsed ? -1 : 0}
+                tabIndex={fieldTabIndex(f.id, isSectionCollapsed)}
                 onKeyDown={e => handleFieldTabNavigation(e, f.id, { index: i, total: (f.variables || []).length + 1 })}
                 style={{ width: numberInputWidth(String(fieldsData[`${f.id}_var_${i}`] || '0.00')) }}
                 className="mx-[2px] bg-transparent border-0 p-0 text-center tabular-nums text-amber-400 caret-amber-400 placeholder:text-zinc-500 focus:outline-none"
@@ -3656,7 +3698,7 @@ for (const f of visibleFields) {
                   onChange={e => handleInputChange(key, e.target.value)}
                   onFocus={() => handleFocus(f.id, null)}
                   onBlur={handleBlur}
-                  tabIndex={isSectionCollapsed ? -1 : 0}
+                  tabIndex={fieldTabIndex(f.id, isSectionCollapsed)}
                   onKeyDown={e => handleFieldTabNavigation(e, f.id, { index: vars, total: vars + 1 })}
                   placeholder="+ комментарий"
                   style={{ width: measureTextPx(comment || '+ комментарий', 400) + 3 }}
@@ -3947,110 +3989,161 @@ for (const f of visibleFields) {
       </div>
 
       {/* ====== МОБИЛЬНАЯ НИЖНЯЯ ЗОНА (< lg) ======
-          Одна прижатая к низу стопка (снизу вверх):
-          1) панель действий с подписями — скрыта, пока открыта экранная
-             клавиатура (html.kb-open, см. styles/globals.css);
-          2) лента чипов: группы быстрых кнопок активного поля и «Проверка»;
-             при открытой клавиатуре лента прилегает прямо к ней;
-          3) раскрытый список — фразы группы / проверка / меню «Ещё».
-          onMouseDown preventDefault — нажатия не уводят фокус из поля, и
-          клавиатура не закрывается при вставке фразы. */}
+          Снизу вверх:
+          1) панель действий с подписями во всю ширину — скрыта, пока открыта
+             экранная клавиатура (html.kb-open, см. styles/globals.css);
+          2) парящая стеклянная карточка: подпись поля и вкладки групп
+             быстрых кнопок (+ «Проверка»); над вкладками раскрывается список
+             — фразы группы / проверка / меню «Ещё». Под карточкой текст
+             протокола затемняется и размывается (backdrop-filter).
+          При открытой клавиатуре вся зона встаёт нижним краем на верх
+          клавиатуры (--vv-bottom). onMouseDown preventDefault — нажатия не
+          уводят фокус из поля, и клавиатура не закрывается. */}
       {(() => {
         const groups: QuickButtonGroup[] = activeFieldId ? (activeField?.quickButtons || []) : [];
         const showStrip = groups.length > 0 || reviewVisible;
         const openGroup = mobilePanel?.kind === 'group' ? groups[mobilePanel.idx] : undefined;
         const panelOpen = mobilePanel !== null && (mobilePanel.kind !== 'group' || !!openGroup);
+        const cardVisible = showStrip || panelOpen;
         const closePanel = () => setMobilePanel(null);
         const menuAction = (fn: () => void) => () => { closePanel(); fn(); };
-        // Вкладка группы в ленте: текст со стрелкой, без «таблеток» — лента
-        // выглядит частью клавиатуры, а не набором кнопок на карточке.
-        const TAB_CLASS = 'shrink-0 h-11 px-3 inline-flex items-center gap-1 text-[14px] whitespace-nowrap transition-colors cursor-pointer active:bg-white/5';
-        const ACTION_CLASS = 'flex-1 min-w-0 h-14 flex flex-col items-center justify-center gap-0.5 text-[11px] transition-colors cursor-pointer active:bg-white/5';
+        const reviewCount = pendingCorrections.length + reviewIssues.length;
+        const caption = groups.length > 0
+          ? (activeField?.label || 'Быстрые кнопки')
+          : mobilePanel?.kind === 'more' ? 'Действия' : 'Проверка протокола';
+        const PILL_CLASS = 'shrink-0 h-10 px-4 inline-flex items-center gap-1.5 rounded-full text-[14px] whitespace-nowrap transition-colors cursor-pointer';
         const ROW_CLASS = 'w-full flex items-center gap-3 px-4 py-3 text-left text-[15px] leading-snug active:bg-white/10 cursor-pointer';
+        const ACTION_CLASS = 'flex-1 min-w-0 h-14 flex flex-col items-center justify-center gap-0.5 text-[11px] transition-colors cursor-pointer active:bg-white/5';
+        const SPRING = { type: 'spring' as const, stiffness: 520, damping: 40, mass: 0.8 };
         return (
-          // Один сплошной блок во всю ширину: список, лента, действия —
-          // общий фон и тонкие разделители, без скруглений и зазоров.
           <div
             data-mobile-bottom
-            // Над клавиатурой без кнопок поля — ничего (действия скрыты, см.
-            // globals.css), иначе осталась бы пустая полоска с тенью.
-            className={`lg:hidden fixed inset-x-0 bottom-0 z-40 bg-zinc-900 border-t border-white/10 shadow-[0_-12px_32px_rgba(0,0,0,0.45)] ${showStrip || panelOpen ? '' : '[.kb-open_&]:hidden'}`}
+            className="lg:hidden fixed inset-x-0 bottom-0 z-40 pointer-events-none"
             onMouseDown={(e) => e.preventDefault()}
           >
-            {panelOpen && (
-              <div className="max-h-[min(18rem,calc(var(--vv-height,100dvh)-12rem))] overflow-y-auto overscroll-contain divide-y divide-white/[0.06] border-b border-white/10">
-                {mobilePanel?.kind === 'group' && openGroup && (openGroup.phrases || []).filter(Boolean).map((phrase, pIdx) => (
-                  <button
-                    key={pIdx}
-                    type="button"
-                    tabIndex={-1}
-                    onClick={() => { insertPhrase(phrase); closePanel(); }}
-                    className={`${ROW_CLASS} text-zinc-100`}
-                  >
-                    {phrase}
-                  </button>
-                ))}
-                {mobilePanel?.kind === 'review' && (reviewVisible
-                  ? renderReviewPanel('py-1')
-                  : <div className="px-4 py-3 text-sm text-zinc-500">Замечаний нет</div>)}
-                {mobilePanel?.kind === 'more' && (
-                  <>
-                    <button type="button" tabIndex={-1} onClick={menuAction(openPhraseMemory)} className={`${ROW_CLASS} text-zinc-200`}><Sparkles className="w-[18px] h-[18px] text-zinc-500" strokeWidth={1.75} />Выученные фразы поля</button>
-                    <button type="button" tabIndex={-1} onClick={menuAction(() => setShowAbbrModal(true))} className={`${ROW_CLASS} text-zinc-200`}><Settings className="w-[18px] h-[18px] text-zinc-500" strokeWidth={1.75} />Автокоррекции</button>
-                    <button type="button" tabIndex={-1} onClick={menuAction(goToTemplateEditor)} className={`${ROW_CLASS} text-zinc-200`}><Pencil className="w-[18px] h-[18px] text-zinc-500" strokeWidth={1.75} />Редактировать шаблон</button>
-                    <button type="button" tabIndex={-1} onClick={menuAction(goToTemplateList)} className={`${ROW_CLASS} text-zinc-200`}><Home className="w-[18px] h-[18px] text-zinc-500" strokeWidth={1.75} />К списку шаблонов</button>
-                    <button type="button" tabIndex={-1} onClick={menuAction(resetToDefault)} className={`${ROW_CLASS} text-red-400`}><RotateCcw className="w-[18px] h-[18px]" strokeWidth={1.75} />Сбросить протокол</button>
-                  </>
-                )}
-              </div>
-            )}
-
-            {showStrip && (
-              <div className="flex items-stretch px-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                {reviewVisible && (
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={() => setMobilePanel(p => (p?.kind === 'review' ? null : { kind: 'review' }))}
-                    className={`${TAB_CLASS} gap-1.5 text-amber-400 ${mobilePanel?.kind === 'review' ? 'bg-white/5' : ''}`}
-                  >
-                    {reviewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <SpellCheck className="w-4 h-4" strokeWidth={1.75} />}
-                    Проверка
-                    {pendingCorrections.length + reviewIssues.length > 0 && (
-                      <span className="min-w-5 h-5 px-1 inline-flex items-center justify-center rounded-full bg-amber-400 text-zinc-950 text-[11px] font-semibold tabular-nums">
-                        {pendingCorrections.length + reviewIssues.length}
-                      </span>
+            <AnimatePresence initial={false}>
+              {cardVisible && (
+                <motion.div
+                  key="quick-card"
+                  initial={{ opacity: 0, y: 24, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 24, scale: 0.96 }}
+                  transition={SPRING}
+                  style={{ transformOrigin: '50% 100%' }}
+                  className="pointer-events-auto mx-2 mb-2 rounded-[22px] overflow-hidden border border-white/[0.12] bg-zinc-900/60 backdrop-blur-2xl backdrop-saturate-150 backdrop-brightness-[0.45] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.06)]"
+                >
+                  {/* Раскрытый список — плавно по высоте; содержимое при
+                      переключении групп/меню сменяется лёгким наплывом. */}
+                  <AnimatePresence initial={false}>
+                    {panelOpen && (
+                      <motion.div
+                        key="panel"
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                        className="overflow-hidden"
+                      >
+                        <motion.div
+                          key={mobilePanel?.kind === 'group' ? `g${mobilePanel.idx}` : mobilePanel?.kind}
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.18 }}
+                          className="max-h-[min(20rem,calc(var(--vv-height,100dvh)-14rem))] overflow-y-auto overscroll-contain divide-y divide-white/[0.07] border-b border-white/10"
+                        >
+                          {mobilePanel?.kind === 'group' && openGroup && (openGroup.phrases || []).filter(Boolean).map((phrase, pIdx) => (
+                            <button
+                              key={pIdx}
+                              type="button"
+                              tabIndex={-1}
+                              onClick={() => { insertPhrase(phrase); closePanel(); }}
+                              className={`${ROW_CLASS} text-zinc-50`}
+                            >
+                              {phrase}
+                            </button>
+                          ))}
+                          {mobilePanel?.kind === 'review' && (reviewVisible
+                            ? renderReviewPanel('py-1 [&_.sticky]:bg-transparent')
+                            : <div className="px-4 py-3 text-sm text-zinc-400">Замечаний нет</div>)}
+                          {mobilePanel?.kind === 'more' && (
+                            <>
+                              <button type="button" tabIndex={-1} onClick={menuAction(openPhraseMemory)} className={`${ROW_CLASS} text-zinc-100`}><Sparkles className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />Выученные фразы поля</button>
+                              <button type="button" tabIndex={-1} onClick={menuAction(() => setShowAbbrModal(true))} className={`${ROW_CLASS} text-zinc-100`}><Settings className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />Автокоррекции</button>
+                              <button type="button" tabIndex={-1} onClick={menuAction(goToTemplateEditor)} className={`${ROW_CLASS} text-zinc-100`}><Pencil className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />Редактировать шаблон</button>
+                              <button type="button" tabIndex={-1} onClick={menuAction(goToTemplateList)} className={`${ROW_CLASS} text-zinc-100`}><Home className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />К списку шаблонов</button>
+                              <button type="button" tabIndex={-1} onClick={menuAction(resetToDefault)} className={`${ROW_CLASS} text-red-400`}><RotateCcw className="w-[18px] h-[18px]" strokeWidth={1.75} />Сбросить протокол</button>
+                            </>
+                          )}
+                        </motion.div>
+                      </motion.div>
                     )}
-                  </button>
-                )}
-                {reviewVisible && groups.length > 0 && <span className="shrink-0 w-px my-3 bg-white/10" aria-hidden="true" />}
-                {groups.map((group, gIdx) => {
-                  const phrases = (group.phrases || []).filter(Boolean);
-                  const isSingle = phrases.length === 1;
-                  const isOpen = mobilePanel?.kind === 'group' && mobilePanel.idx === gIdx;
-                  return (
-                    <button
-                      key={group.id}
-                      type="button"
-                      tabIndex={-1}
-                      onClick={() => {
-                        if (isSingle) { insertPhrase(phrases[0]); return; }
-                        setMobilePanel(p => (p?.kind === 'group' && p.idx === gIdx ? null : { kind: 'group', idx: gIdx }));
-                      }}
-                      className={`${TAB_CLASS} ${isOpen ? 'text-amber-400' : 'text-zinc-200'}`}
-                    >
-                      {isSingle && <Plus className="w-3.5 h-3.5 text-zinc-500" />}
-                      {group.label || 'Группа'}
-                      {!isSingle && <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? 'rotate-180' : 'text-zinc-500'}`} />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+                  </AnimatePresence>
+
+                  {/* Подпись и вкладки. key — активное поле: при переходе к
+                      другому полю содержимое мягко сменяется, а сама карточка
+                      остаётся на месте (не исчезает и не прыгает). */}
+                  <motion.div
+                    key={activeFieldId || 'none'}
+                    initial={{ opacity: 0, x: 10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                  >
+                    <div className="flex items-center gap-2 px-4 pt-3 pb-1">
+                      <span className="flex-1 min-w-0 truncate text-[12px] font-medium tracking-wide text-zinc-400">
+                        {caption}
+                      </span>
+                      {panelOpen && (
+                        <button type="button" tabIndex={-1} onClick={closePanel} aria-label="Закрыть" className="-my-1 -mr-2 w-8 h-8 flex items-center justify-center rounded-full text-zinc-400 active:bg-white/10 cursor-pointer">
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                    {showStrip && (
+                      <div className="flex items-center gap-2 px-3 pt-1 pb-3 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                        {reviewVisible && (
+                          <button
+                            type="button"
+                            tabIndex={-1}
+                            onClick={() => setMobilePanel(p => (p?.kind === 'review' ? null : { kind: 'review' }))}
+                            className={`${PILL_CLASS} ${mobilePanel?.kind === 'review' ? 'bg-amber-400 text-zinc-950' : 'bg-amber-400/15 text-amber-300 active:bg-amber-400/25'}`}
+                          >
+                            {reviewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <SpellCheck className="w-4 h-4" strokeWidth={1.75} />}
+                            Проверка
+                            {reviewCount > 0 && <span className="tabular-nums font-semibold">{reviewCount}</span>}
+                          </button>
+                        )}
+                        {groups.map((group, gIdx) => {
+                          const phrases = (group.phrases || []).filter(Boolean);
+                          const isSingle = phrases.length === 1;
+                          const isOpen = mobilePanel?.kind === 'group' && mobilePanel.idx === gIdx;
+                          return (
+                            <button
+                              key={group.id}
+                              type="button"
+                              tabIndex={-1}
+                              onClick={() => {
+                                if (isSingle) { insertPhrase(phrases[0]); return; }
+                                setMobilePanel(p => (p?.kind === 'group' && p.idx === gIdx ? null : { kind: 'group', idx: gIdx }));
+                              }}
+                              className={`${PILL_CLASS} ${isOpen ? 'bg-white text-zinc-950' : 'bg-white/[0.09] text-zinc-100 active:bg-white/20'}`}
+                            >
+                              {isSingle && <Plus className="w-4 h-4 opacity-60" />}
+                              {group.label || 'Группа'}
+                              {!isSingle && <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : 'opacity-50'}`} />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {!showStrip && <div className="h-2" />}
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <nav
               data-mobile-dock
-              className={`flex items-stretch pb-[env(safe-area-inset-bottom)] ${showStrip || panelOpen ? 'border-t border-white/10' : ''}`}
+              className="pointer-events-auto flex items-stretch pb-[env(safe-area-inset-bottom)] bg-zinc-900/70 backdrop-blur-2xl backdrop-saturate-150 border-t border-white/10"
             >
               <button type="button" tabIndex={-1} onClick={copyToClipboard} className={`${ACTION_CLASS} text-amber-400`}>
                 <Copy className="w-5 h-5" strokeWidth={1.75} />

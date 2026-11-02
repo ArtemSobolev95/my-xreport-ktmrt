@@ -142,6 +142,11 @@ function HomePage() {
 
 
   const filteredTemplates = templates.filter(t => matchesLayoutSearch(t.title, searchTerm));
+  // Выделение — всегда в пределах текущего списка. Пока список фильтруется,
+  // уходящие строки (AnimatePresence) проезжают под неподвижным курсором, и
+  // их onMouseEnter выставлял номер, которого в новом списке уже нет — Enter
+  // тогда ничего не открывал, а выделение пропадало.
+  const activeIndex = Math.min(selectedIndex, Math.max(filteredTemplates.length - 1, 0));
 
   const openFiller = (t: TemplateListItem) => router.push(`/filler?id=${t.id}`);
   const openBuilder = (t: TemplateListItem) => router.push(`/builder?edit=${t.id}`);
@@ -151,13 +156,13 @@ function HomePage() {
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setSelectedIndex(prev => Math.min(prev + 1, Math.max(filteredTemplates.length - 1, 0)));
+      setSelectedIndex(Math.min(activeIndex + 1, Math.max(filteredTemplates.length - 1, 0)));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setSelectedIndex(prev => Math.max(prev - 1, 0));
+      setSelectedIndex(Math.max(activeIndex - 1, 0));
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      const selected = filteredTemplates[selectedIndex];
+      const selected = filteredTemplates[activeIndex];
       if (selected) (e.shiftKey ? openBuilder : openFiller)(selected);
     } else if (e.key === 'Escape') {
       e.preventDefault();
@@ -207,9 +212,9 @@ function HomePage() {
 
   // Прокрутка выбранного шаблона в видимую область
   useEffect(() => {
-    const el = document.querySelector(`[data-template-index="${selectedIndex}"]`) as HTMLElement | null;
+    const el = document.querySelector(`[data-template-index="${activeIndex}"]`) as HTMLElement | null;
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [selectedIndex]);
+  }, [activeIndex]);
 
   // Меню «⋯» закрывается кликом мимо.
   useEffect(() => {
@@ -288,7 +293,7 @@ function HomePage() {
             <div className="flex flex-col gap-0.5">
               <AnimatePresence initial={false} mode="popLayout">
                 {filteredTemplates.flatMap((t, idx) => {
-                  const isSelected = idx === selectedIndex;
+                  const isSelected = idx === activeIndex;
                   const mine = isMine(t);
                   const nodes = [];
                   if (showGroupLabels && idx === 0 && mineCount > 0) {

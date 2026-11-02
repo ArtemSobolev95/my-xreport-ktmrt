@@ -1,4 +1,5 @@
 import type { QuickButtonGroup } from '../types/builder';
+import { randomId } from './randomId';
 
 /**
  * Мигрирует старый формат quickButtons (Group → Subgroup → phrases)
@@ -12,10 +13,10 @@ export function migrateQuickButtons(groups: any[] | undefined | null): QuickButt
     // Уже новый формат
     if (Array.isArray(g.phrases)) {
       return {
-        // crypto.randomUUID(), не Date.now() — .map() перебирает группы
+        // randomId(), не Date.now() — .map() перебирает группы
         // синхронно, и для нескольких групп без id подряд в одном шаблоне
         // Date.now() легко вернёт одно и то же значение (разрешение — 1мс).
-        id: g.id || crypto.randomUUID(),
+        id: g.id || randomId(),
         label: g.label || '',
         isExpanded: g.isExpanded ?? true,
         phrases: g.phrases.length > 0 ? g.phrases : [''],
@@ -33,7 +34,7 @@ export function migrateQuickButtons(groups: any[] | undefined | null): QuickButt
     });
 
     return {
-      id: g.id || crypto.randomUUID(),
+      id: g.id || randomId(),
       label: g.label || '',
       isExpanded: g.isExpanded ?? true,
       phrases: phrases.length > 0 ? phrases : [''],

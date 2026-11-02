@@ -12,6 +12,8 @@
 #   ANTHROPIC_API_KEY=...
 #
 # PB_DIR — каталог данных (по умолчанию pocketbase_0/pb_data).
+# PB_HTTP — адрес:порт (по умолчанию только этот компьютер; npm run pb:lan
+# слушает 0.0.0.0, чтобы открыть с телефона в той же Wi-Fi сети).
 cd "$(dirname "$0")/.." || exit 1
 if [ -f .env.pb.local ]; then
   set -a
@@ -19,7 +21,7 @@ if [ -f .env.pb.local ]; then
   set +a
 fi
 exec ./pocketbase_0/pocketbase serve \
-  --http=127.0.0.1:8090 \
+  --http="${PB_HTTP:-127.0.0.1:8090}" \
   --dir="${PB_DIR:-pocketbase_0/pb_data}" \
   --migrationsDir=pb_migrations \
   --hooksDir=pb_hooks

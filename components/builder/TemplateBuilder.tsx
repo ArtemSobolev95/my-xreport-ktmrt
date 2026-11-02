@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { useRouter } from 'next/router';
 import pb from '../../lib/pocketbase';
 pb.autoCancellation(false);
@@ -7,7 +7,7 @@ import {
   Trash2, ChevronRight, ChevronDown, ClipboardCheck,
   Heading, Type, List, Calculator,
   Plus, Minus, ImagePlus, Link, Copy, Circle, CircleDot, ArrowLeft, ArrowRight, Save,
-  LayoutList, MousePointerClick, Globe, Check,
+  LayoutList, MousePointerClick, Globe, Check, PanelBottomOpen, X,
 } from 'lucide-react';
 import {
   DndContext,
@@ -39,17 +39,18 @@ import dynamic from 'next/dynamic';
 import { migrateQuickButtons } from '../../lib/migrateQuickButtons';
 import { migrateLegacyField } from '../../lib/migrateFieldTypes';
 import { LABELS_UPPERCASE_KEY, LABEL_CHIP_PADDING_PX, labelColumnWidth, measureLabelPx, measureTextPx, sectionLabelWidths } from '../../lib/fieldLabels';
-import { DOCK_BUTTON_CLASS, DOCK_COLUMN_CLASS, DOCK_PANEL_CLASS, PAGE_COLUMNS_CLASS, SIDE_PANEL_TOP_CLASS } from '../../lib/pageLayout';
+import { DOCK_ASIDE_CLASS, DOCK_BUTTON_CLASS, DOCK_COLUMN_CLASS, DOCK_PANEL_CLASS, DOCK_SEPARATOR_CLASS, PAGE_COLUMNS_CLASS, SIDE_ASIDE_CLASS } from '../../lib/pageLayout';
 import { evaluateFormula } from '../../lib/evaluateFormula';
 import { useDialog } from '../DialogProvider';
 import CollapseRow from '../CollapseRow';
 import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../AnimatedModal';
+import { randomId } from '../../lib/randomId';
 
 
 
-// Правая панель конструктора шире, чем на странице заполнения: здесь
-// группы быстрых кнопок редактируются, а не только выбираются.
-const RIGHT_COLUMN_CLASS = 'w-96 shrink-0';
+// Правая панель конструктора (w-96) шире, чем на странице заполнения: здесь
+// группы быстрых кнопок редактируются, а не только выбираются. На мобильном
+// она открывается кнопкой в нижнем доке поверх полей.
 
 // Должен создаваться один раз на уровне модуля, а не внутри тела
 // компонента: dynamic() возвращает НОВЫЙ компонент при каждом вызове, и
@@ -99,7 +100,7 @@ const NOTES_ACTION_CLASS = 'inline-flex items-center gap-1.5 h-7 px-2.5 rounded-
 // зеркала, иначе разойдутся переносы и «]» встанет не туда.
 const ROW_TEXT_BASE_CLASS = 'py-0.5 text-sm leading-tight';
 const ROW_TEXT_CLASS = `pl-[8px] pr-1 ${ROW_TEXT_BASE_CLASS}`;
-const ROW_ACTION_CLASS = 'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 transition-[opacity,color]';
+const ROW_ACTION_CLASS = 'opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 pointer-coarse:opacity-100 transition-[opacity,color]';
 
 // Одна перетаскиваемая строка варианта в инструменте "Список" — своя ручка
 // (DragDot) слева вместо кнопок вверх/вниз: перетаскивание мышью проще
@@ -128,7 +129,7 @@ function SortableOption({
 
   return (
     <div ref={setNodeRef} style={style} className="group/row flex items-center gap-2">
-      <div {...attributes} {...listeners} className="w-4 h-4 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white transition-colors">
+      <div {...attributes} {...listeners} className="w-4 h-4 flex items-center justify-center shrink-0 touch-none cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white transition-colors">
         <DragDot />
       </div>
 
@@ -191,7 +192,7 @@ function SortableNoteLink({
 
   return (
     <div ref={setNodeRef} style={style} className="group/row flex items-center gap-2">
-      <div {...attributes} {...listeners} className="w-4 h-4 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white transition-colors">
+      <div {...attributes} {...listeners} className="w-4 h-4 flex items-center justify-center shrink-0 touch-none cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white transition-colors">
         <DragDot />
       </div>
 
@@ -398,18 +399,18 @@ function SortableQuickButtonGroup({
   };
 
   const phrases = group.phrases || [];
-  const [phraseIds, setPhraseIds] = useState<string[]>(() => phrases.map(() => crypto.randomUUID()));
+  const [phraseIds, setPhraseIds] = useState<string[]>(() => phrases.map(() => randomId()));
   // Страховка на случай, если фразы поменялись не через хендлеры ниже:
   // "adjusting state during rendering", не useEffect (как deleteConfirm в
   // filler.tsx) — иначе один рендер прошёл бы с несовпадающими key.
   if (phraseIds.length !== phrases.length) {
-    setPhraseIds(phrases.map(() => crypto.randomUUID()));
+    setPhraseIds(phrases.map(() => randomId()));
   }
   // Только что добавленная фраза получает фокус — чтобы сразу печатать.
   const [focusPhraseId, setFocusPhraseId] = useState<string | null>(null);
 
   const addPhraseAfter = (pIndex: number) => {
-    const newId = crypto.randomUUID();
+    const newId = randomId();
     onChange(g => { g.phrases.splice(pIndex + 1, 0, ''); });
     setPhraseIds(ids => [...ids.slice(0, pIndex + 1), newId, ...ids.slice(pIndex + 1)]);
     setFocusPhraseId(newId);
@@ -446,7 +447,7 @@ function SortableQuickButtonGroup({
         <div
           {...attributes}
           {...listeners}
-          className="w-4 h-4 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing text-zinc-400 hover:text-white transition-colors"
+          className="w-4 h-4 flex items-center justify-center shrink-0 touch-none cursor-grab active:cursor-grabbing text-zinc-400 hover:text-white transition-colors"
         >
           <DragDot />
         </div>
@@ -650,7 +651,7 @@ function SortableField({
   // add/remove/reorder-хендлерами ниже — никакой синхронизации с
   // field.options по длине не требуется, так как оба массива меняются
   // ТОЛЬКО вместе, этими же хендлерами.
-  const [optionIds, setOptionIds] = useState<string[]>(() => (field.options || []).map(() => crypto.randomUUID()));
+  const [optionIds, setOptionIds] = useState<string[]>(() => (field.options || []).map(() => randomId()));
   const optionSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -664,7 +665,7 @@ function SortableField({
 
   const handleAddOption = () => {
     onUpdate(field.id, { options: [...(field.options || []), ''] });
-    setOptionIds(prev => [...prev, crypto.randomUUID()]);
+    setOptionIds(prev => [...prev, randomId()]);
   };
 
   const handleRemoveOption = (index: number) => {
@@ -705,16 +706,16 @@ function SortableField({
   // (CollapseRow): по индексу при удалении из середины исчезала бы
   // последняя строка, а не удалённая. Меняются только вместе с variables
   // в add/remove ниже (как optionIds у "Список").
-  const [variableIds, setVariableIds] = useState<string[]>(() => (field.variables || []).map(() => crypto.randomUUID()));
+  const [variableIds, setVariableIds] = useState<string[]>(() => (field.variables || []).map(() => randomId()));
   if (variableIds.length !== (field.variables || []).length) {
-    setVariableIds((field.variables || []).map(() => crypto.randomUUID()));
+    setVariableIds((field.variables || []).map(() => randomId()));
   }
 
   const addVariable = () => {
     const currentVars = field.variables || [];
     const newVarName = String.fromCharCode(97 + currentVars.length);
     onUpdate(field.id, { variables: [...currentVars, { name: newVarName, value: '0' }] });
-    setVariableIds(ids => [...ids, crypto.randomUUID()]);
+    setVariableIds(ids => [...ids, randomId()]);
   };
 
   const removeVariable = (index: number) => {
@@ -747,7 +748,7 @@ function SortableField({
     }`}>
       <div
         {...listeners}
-        className="w-6 h-6 flex items-center justify-center cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white rounded-md hover:bg-white/10 transition-colors"
+        className="w-6 h-6 flex items-center justify-center touch-none cursor-grab active:cursor-grabbing text-zinc-500 hover:text-white rounded-md hover:bg-white/10 transition-colors"
         aria-label="Перетащить"
       >
         <DragDot />
@@ -836,9 +837,11 @@ function SortableField({
         </div>
       ) : (
         <>
-        <div className="flex items-start gap-2">
+        {/* Узкий экран (< sm): название над содержимым, как на странице
+            заполнения; с sm — колонка названий шириной --label-w. */}
+        <div className="flex flex-wrap sm:flex-nowrap items-start gap-x-2 gap-y-0.5" style={{ '--label-w': labelWidth } as CSSProperties}>
           {/* Название поля — редактируемая плашка; колонка общая в разделе */}
-          <div className="shrink-0 flex items-start gap-1 pt-px" style={{ width: labelWidth }}>
+          <div className="max-sm:flex-1 max-sm:min-w-0 sm:shrink-0 sm:w-[var(--label-w)] flex items-start gap-1 pt-px">
             <input
               type="text"
               value={field.label || ''}
@@ -850,10 +853,10 @@ function SortableField({
                 uppercase ? 'uppercase tracking-wide' : ''
               }`}
             />
-            <span className="py-0.5 text-sm text-zinc-500 select-none">:</span>
+            <span className="max-sm:hidden py-0.5 text-sm text-zinc-500 select-none">:</span>
           </div>
 
-          <div className="flex-1 min-w-0">
+          <div className="max-sm:order-last max-sm:basis-full flex-1 min-w-0">
             {(field.type === 'text' || field.type === 'conclusion') && (
               <BracketTextarea
                 value={field.placeholder || ''}
@@ -906,8 +909,8 @@ function SortableField({
         <AnimatePresence initial={false}>
           {isSelected && (field.type === 'select' || field.type === 'formula') && (
             <CollapseRow key="editor">
-              <div className="pt-1.5 pb-1" style={{ paddingLeft: labelWidth }}>
-                <div className="ml-2 rounded-xl bg-white/[0.03] border border-white/10 px-3 py-2">
+              <div className="pt-1.5 pb-1 sm:pl-[var(--label-w)]" style={{ '--label-w': labelWidth } as CSSProperties}>
+                <div className="sm:ml-2 rounded-xl bg-white/[0.03] border border-white/10 px-3 py-2">
                   {field.type === 'select' ? (
                     <DndContext
                       sensors={optionSensors}
@@ -1000,6 +1003,9 @@ function TemplateBuilder() {
   const [templateTitle, setTemplateTitle] = useState("Новый шаблон");
   const [fields, setFields] = useState<BuilderField[]>([]);
   const [selectedFieldId, setSelectedFieldId] = useState<string | null>(null);
+  // Мобильный: правая панель (быстрые кнопки, заметки) — всплывающая
+  // карточка над нижним доком, открывается/закрывается кнопкой в доке.
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   // Публичный шаблон виден всем вошедшим пользователям, но менять его может
@@ -1064,7 +1070,7 @@ function TemplateBuilder() {
       }
 
       const newGroup: QuickButtonGroup = {
-        id: crypto.randomUUID(),
+        id: randomId(),
         label: '',
         isExpanded: true,
         phrases: [''],
@@ -1105,7 +1111,7 @@ function TemplateBuilder() {
   const withNotesField = (list: BuilderField[]): BuilderField[] => {
     const notes = templateNotes.split('\n').filter(Boolean).join('\n');
     if (!notes) return list;
-    if (!notesFieldIdRef.current) notesFieldIdRef.current = crypto.randomUUID();
+    if (!notesFieldIdRef.current) notesFieldIdRef.current = randomId();
     return [...list, { id: notesFieldIdRef.current, type: 'notes', label: 'Заметки', notes }];
   };
 
@@ -1210,13 +1216,13 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
 
   const addField = (type: FieldType) => {
     let newField: BuilderField = {
-      // crypto.randomUUID(), не Date.now() — при быстрых повторных кликах
+      // randomId(), не Date.now() — при быстрых повторных кликах
       // (например, двойной клик по "Добавить") Date.now() легко возвращает
       // одно и то же значение для двух полей подряд (разрешение — 1мс), из-за
       // чего два разных поля получали одинаковый id → React путал их как
       // один и тот же элемент по ключу, что выглядело как "дублирование
       // карточки со сдвигом" и ломало анимацию именно того поля.
-      id: crypto.randomUUID(),
+      id: randomId(),
       type,
       // У "Заключения" название почти всегда одно и то же — сразу
       // подставляем его, остальные поля начинают с пустого названия.
@@ -1281,7 +1287,7 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
     const newField: BuilderField = {
       ...JSON.parse(JSON.stringify(original)),
       // См. комментарий в addField — тот же риск коллизии id при частых кликах.
-      id: 'text-' + crypto.randomUUID(),
+      id: 'text-' + randomId(),
     };
 
     const newFields = [
@@ -1439,25 +1445,26 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
         <DynamicUserHeader />
         <div className={PAGE_COLUMNS_CLASS}>
           <div className={DOCK_COLUMN_CLASS} aria-hidden="true" />
-          <div className="flex-1 min-w-0 flex items-center gap-2 py-2">
+          <div className="flex-1 min-w-0 flex items-center gap-1.5 sm:gap-2 py-2">
             <button
               onClick={goToList}
+              aria-label="К списку шаблонов"
               className="h-8 -ml-2.5 px-2.5 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4" />
-              Шаблоны
+              <span className="hidden sm:inline">Шаблоны</span>
             </button>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex items-center gap-1.5 sm:gap-2 min-w-0">
               {isDirty && (
-                <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-500">
+                <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-zinc-500" title="Не сохранено">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                  Не сохранено
+                  <span className="hidden sm:inline">Не сохранено</span>
                 </span>
               )}
               {!isDirty && justSaved && (
                 <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-emerald-400">
                   <Check className="w-3.5 h-3.5" />
-                  Сохранено
+                  <span className="hidden sm:inline">Сохранено</span>
                 </span>
               )}
               {/* Публичность — свойство шаблона; применяется при сохранении,
@@ -1474,14 +1481,15 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
                   title={isPublic ? 'Виден всем пользователям. Нажмите, чтобы сделать личным' : 'Виден только вам. Нажмите, чтобы сделать публичным'}
                 >
                   <Globe className="w-3.5 h-3.5" strokeWidth={1.75} />
-                  {isPublic ? 'Публичный' : 'Личный'}
+                  <span className="hidden sm:inline">{isPublic ? 'Публичный' : 'Личный'}</span>
                 </button>
               )}
               <button
                 onClick={goToFiller}
+                aria-label="Заполнить"
                 className="h-8 px-3 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
               >
-                Заполнить
+                <span className="hidden sm:inline">Заполнить</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
               <button
@@ -1490,19 +1498,19 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
                 className="h-8 px-3.5 shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-lg text-sm font-medium bg-amber-400 text-zinc-950 hover:bg-amber-300 disabled:opacity-50 transition-colors cursor-pointer"
               >
                 <Save className="w-4 h-4" />
-                {isOwner ? 'Сохранить' : 'Сохранить копию'}
+                {isOwner ? 'Сохранить' : <><span className="sm:hidden">Копия</span><span className="hidden sm:inline">Сохранить копию</span></>}
               </button>
             </div>
           </div>
-          <div className={RIGHT_COLUMN_CLASS} aria-hidden="true" />
+          <div className="hidden lg:block w-96 shrink-0" aria-hidden="true" />
         </div>
       </div>
 
-      <div className={`${PAGE_COLUMNS_CLASS} pt-6 pb-40`}>
+      <div className={`${PAGE_COLUMNS_CLASS} pt-4 lg:pt-6 pb-40`}>
         {/* Док слева — добавление полей: новое поле встаёт сразу после
             выбранного, а если ничего не выбрано — в конец шаблона. */}
-        <aside className={DOCK_COLUMN_CLASS}>
-          <div className={`sticky ${SIDE_PANEL_TOP_CLASS} ${DOCK_PANEL_CLASS}`}>
+        <aside className={DOCK_ASIDE_CLASS}>
+          <div data-mobile-dock className={DOCK_PANEL_CLASS}>
             {availableFields.map(item => (
               <button
                 key={item.type}
@@ -1514,6 +1522,17 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
                 {item.icon}
               </button>
             ))}
+            {/* Только на мобильном: правой колонки нет, панель быстрых
+                кнопок и заметок открывается поверх полей. */}
+            <div className={`${DOCK_SEPARATOR_CLASS} lg:hidden`} aria-hidden="true" />
+            <button
+              onClick={() => setMobilePanelOpen(v => !v)}
+              aria-pressed={mobilePanelOpen}
+              aria-label="Быстрые кнопки и заметки"
+              className={`${DOCK_BUTTON_CLASS} lg:hidden ${mobilePanelOpen ? 'text-amber-400 bg-amber-400/10' : 'text-zinc-400 hover:text-white hover:bg-white/10'}`}
+            >
+              <PanelBottomOpen className={TOOL_ICON_CLASS} strokeWidth={1.75} />
+            </button>
           </div>
         </aside>
 
@@ -1577,8 +1596,21 @@ setSavedSnapshot(JSON.stringify({ title: record.title || "Новый шабло�
 
         {/* Справа: быстрые кнопки выбранного поля и заметки шаблона. Своя
             прокрутка — панель липкая и не выше экрана. */}
-        <aside className={RIGHT_COLUMN_CLASS}>
-          <div className={`sticky ${SIDE_PANEL_TOP_CLASS} max-h-[calc(100vh-8.5rem)] flex flex-col rounded-2xl bg-zinc-900/75 border border-white/10 shadow-2xl overflow-hidden`}>
+        <aside className={`${SIDE_ASIDE_CLASS} lg:w-96`}>
+          <div
+            data-mobile-sheet
+            className={`lg:sticky lg:top-28 lg:max-h-[calc(100vh-8.5rem)] max-lg:fixed max-lg:inset-x-2 max-lg:z-40 max-lg:max-h-[min(60vh,calc(var(--vv-height,100dvh)-6rem))] max-lg:bg-zinc-900/95 max-lg:backdrop-blur-md ${mobilePanelOpen ? '' : 'max-lg:hidden'} flex flex-col rounded-2xl bg-zinc-900/75 border border-white/10 shadow-2xl overflow-hidden`}
+          >
+            <div className="lg:hidden shrink-0 flex items-center justify-between pl-4 pr-2 pt-2 text-xs text-zinc-500">
+              Быстрые кнопки и заметки
+              <button
+                onClick={() => setMobilePanelOpen(false)}
+                aria-label="Закрыть панель"
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
         {selectedFieldId && ['text', 'conclusion'].includes(fields.find(f => f.id === selectedFieldId)?.type || '') ? (
   <div className="flex-1 min-h-0 overflow-auto p-4 [scrollbar-gutter:stable]">
     {(() => {

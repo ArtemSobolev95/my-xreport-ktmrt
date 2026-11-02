@@ -1,16 +1,16 @@
 'use client';
-import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, type CSSProperties } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X, Loader2, Check } from 'lucide-react';
+import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X, Loader2, Check, MoreHorizontal } from 'lucide-react';
 import type { BuilderField, QuickButtonGroup, Template } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
 import { migrateQuickButtons } from '../lib/migrateQuickButtons';
 import { convertLegacyValue, isLegacyFieldType, migrateLegacyField } from '../lib/migrateFieldTypes';
-import { DOCK_BUTTON_CLASS, DOCK_COLUMN_CLASS, DOCK_PANEL_CLASS, PAGE_COLUMNS_CLASS, SIDE_PANEL_TOP_CLASS } from '../lib/pageLayout';
+import { DOCK_BUTTON_CLASS, DOCK_COLUMN_CLASS, DOCK_PANEL_CLASS, DOCK_SEPARATOR_CLASS, PAGE_COLUMNS_CLASS } from '../lib/pageLayout';
 import { LABELS_UPPERCASE_KEY, LABEL_CHIP_PADDING_PX, LABEL_COLON_PX, measureLabelPx, measureTextPx } from '../lib/fieldLabels';
 import { evaluateFormula } from '../lib/evaluateFormula';
 import { comparisonLine, formulaCommentKey, generateReport } from '../lib/generateReport';
@@ -25,6 +25,8 @@ import CollapseRow from '../components/CollapseRow';
 import SmoothHeight from '../components/SmoothHeight';
 import { recordTemplateUse } from '../lib/templateUsage';
 import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../components/AnimatedModal';
+import { randomId } from '../lib/randomId';
+import { copyText } from '../lib/clipboard';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
 
@@ -111,9 +113,9 @@ const CORRECTION_IDLE_MS = 1000;
 const COLD_START_PHRASES = 10;
 
 // Раскладка страницы (док слева, строки по центру) — lib/pageLayout.ts;
-// справа — панель быстрых кнопок.
-const QUICK_COLUMN_CLASS = 'w-72 shrink-0';
-const TOPBAR_BUTTON_CLASS = 'h-8 px-3 inline-flex items-center text-xs font-medium rounded-lg border transition-colors cursor-pointer';
+// справа — панель быстрых кнопок шириной w-72 (на мобильном — всплывающая
+// над нижним доком).
+const TOPBAR_BUTTON_CLASS = 'h-8 px-3 shrink-0 whitespace-nowrap inline-flex items-center text-xs font-medium rounded-lg border transition-colors cursor-pointer';
 const TOPBAR_BUTTON_ACTIVE_CLASS = 'bg-amber-400/10 border-amber-400 text-amber-400';
 const TOPBAR_BUTTON_IDLE_CLASS = 'bg-white/5 border-white/10 text-white hover:bg-white/10 hover:border-white/20';
 // Шрифт и отступы содержимого строки. Общие у textarea и её прозрачного
@@ -271,7 +273,7 @@ function FillerPage() {
   // (черновик, сброс, "Применить") — пересоздаёт.
   const [comparisonDateIds, setComparisonDateIds] = useState<string[]>([]);
   if (comparisonDateIds.length !== comparisonDates.length) {
-    setComparisonDateIds(comparisonDates.map(() => crypto.randomUUID()));
+    setComparisonDateIds(comparisonDates.map(() => randomId()));
   }
   const [isMultipleComparison, setIsMultipleComparison] = useState(false);
   const [isStateAfterActive, setIsStateAfterActive] = useState(false);
@@ -285,6 +287,16 @@ function FillerPage() {
   // должен меняться от наведения курсора) — раскрытие по hover убрано,
   // список раскрывается только по клику на группу.
   const [openQuickButtonGroupIdx, setOpenQuickButtonGroupIdx] = useState<number | null>(null);
+  // Мобильный: что раскрыто над нижней лентой — фразы группы быстрых кнопок,
+  // результаты проверки или меню «Ещё» (null — ничего).
+  const [mobilePanel, setMobilePanel] = useState<
+    { kind: 'group'; idx: number } | { kind: 'review' } | { kind: 'more' } | null
+  >(null);
+  // Фразы другой группы другого поля показывать не нужно — при смене поля
+  // раскрытая группа закрывается.
+  useEffect(() => {
+    setMobilePanel(prev => (prev?.kind === 'group' ? null : prev));
+  }, [activeFieldId]);
   const quickButtonGroupRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
 
@@ -805,10 +817,10 @@ useEffect(() => {
   if (!template) return;
   saveToHistory();
 
-  // crypto.randomUUID(), не Date.now() — при быстрых повторных кликах
+  // randomId(), не Date.now() — при быстрых повторных кликах
   // Date.now() легко возвращает одно и то же значение для двух полей
   // подряд (разрешение — 1мс), и React путает их как один элемент по ключу.
-  const newId = 'text-' + crypto.randomUUID();
+  const newId = 'text-' + randomId();
   const newField: BuilderField = { 
     id: newId, 
     type: 'text',
@@ -2631,7 +2643,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   const copyToClipboard = () => {
     learnPhrasesFromReport();
     countReport();
-    navigator.clipboard.writeText(finalPlainText).then(
+    copyText(finalPlainText).then(
       () => showToast('Скопировано', 1300),
       () => showToast('Не удалось скопировать', 1300)
     );
@@ -2722,7 +2734,7 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   const rowId = (map: Map<string, string>, name: string) => {
     let id = map.get(name);
     if (!id) {
-      id = crypto.randomUUID();
+      id = randomId();
       map.set(name, id);
     }
     return id;
@@ -3021,6 +3033,116 @@ for (const f of visibleFields) {
     
 
 
+  // ИИ-проверка протокола: исправления по полям и замечания по смыслу. На
+  // десктопе — карточка в правой панели, на мобильном — во всплывающем
+  // списке нижней ленты (чип «Проверка»). Клики не уводят фокус из поля.
+  const reviewVisible = reviewLoading || pendingCorrections.length > 0 || reviewIssues.length > 0;
+  const renderReviewPanel = (className: string) => (
+      <div
+        className={`text-xs leading-snug ${className}`}
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        {/* Шапка: что это, идёт ли проверка, действия над всем сразу. */}
+        <div className="sticky top-0 z-10 flex items-center gap-1.5 bg-zinc-900 px-3 pt-2 pb-1.5 text-[11px] text-zinc-500">
+          <SpellCheck className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
+          <span className="flex-1">Проверка</span>
+          {reviewLoading && <Loader2 className="w-3 h-3 animate-spin text-amber-400" aria-label="Проверяется" />}
+          {pendingCorrections.length > 1 && (
+            <button type="button" tabIndex={-1} onClick={applyAllCorrections} className="rounded px-1 text-amber-400 hover:text-amber-300 hover:bg-white/5 cursor-pointer">
+              Исправить всё
+            </button>
+          )}
+          {(pendingCorrections.length > 0 || reviewIssues.length > 0) && (
+            <button type="button" tabIndex={-1} onClick={dismissAllReview} title="Скрыть всё" aria-label="Скрыть всё" className="w-5 h-5 flex items-center justify-center rounded text-zinc-500 hover:text-white hover:bg-white/10 cursor-pointer">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Замечания по смыслу: метка вида + коротко что; клик — к полю. */}
+        {reviewIssues.length > 0 && (
+          <ul className="px-1.5 pb-1.5">
+            {reviewIssues.map((issue) => {
+              const target = template?.fields.find(f => f.id === issue.field);
+              const kind = REVIEW_ISSUE_KINDS[issue.kind];
+              return (
+                <li key={issue.text} className="group/issue flex items-start gap-1 rounded-lg px-1.5 py-1 hover:bg-white/[0.04]">
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => target && goToField(target.id)}
+                    title={target ? `Перейти: ${target.label || 'поле'}` : undefined}
+                    className={`flex-1 min-w-0 text-left ${target ? 'cursor-pointer' : 'cursor-default'}`}
+                  >
+                    {kind && (
+                      <span className={`mr-1.5 inline-block rounded px-1 py-px text-[10px] font-medium align-[1px] ${kind.className}`}>{kind.label}</span>
+                    )}
+                    <span className="text-zinc-200 break-words">{issue.text}</span>
+                  </button>
+                  <button type="button" tabIndex={-1} onClick={() => dismissIssue(issue.text)} title="Пропустить" aria-label="Пропустить" className="w-5 h-5 shrink-0 flex items-center justify-center rounded text-zinc-600 opacity-0 group-hover/issue:opacity-100 hover:text-white hover:bg-white/10 cursor-pointer">
+                    <X className="w-3 h-3" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {/* Исправления текста: только изменения «было → стало» по полям. */}
+        {pendingCorrections.length > 0 && (
+          <ul className={`px-1.5 pb-1.5 ${reviewIssues.length > 0 ? 'border-t border-white/5 pt-1.5' : ''}`}>
+            {pendingCorrections.map((c) => {
+              const isActive = c.fieldId === activeFieldId;
+              return (
+                <li key={c.fieldId} className={`group/fix flex items-start gap-1 rounded-lg px-1.5 py-1 ${isActive ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'}`}>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => goToField(c.fieldId)}
+                    title={`Перейти: ${c.label}`}
+                    className="flex-1 min-w-0 text-left cursor-pointer"
+                  >
+                    <span className="block truncate text-[10px] text-zinc-500">{c.label}</span>
+                    {changePairs(c.original, c.corrected).map((pair, i) => (
+                      <span key={i} className="mr-2 inline-block break-words">
+                        {pair.from && <span className="text-zinc-500 line-through decoration-red-400/70">{pair.from}</span>}
+                        {pair.from && pair.to && <span className="mx-1 text-zinc-600">→</span>}
+                        {pair.to && <span className="text-amber-400">{pair.to}</span>}
+                      </span>
+                    ))}
+                  </button>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => dismissCorrection(c.fieldId)}
+                    title={isActive ? 'Не исправлять (Esc)' : 'Не исправлять'}
+                    aria-label="Не исправлять"
+                    className={`w-5 h-5 shrink-0 flex items-center justify-center rounded text-zinc-600 hover:text-white hover:bg-white/10 cursor-pointer ${isActive ? '' : 'opacity-0 group-hover/fix:opacity-100'}`}
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => applyCorrection(c.fieldId)}
+                    title={isActive ? 'Исправить (Alt+Enter)' : 'Исправить'}
+                    aria-label="Исправить"
+                    className="w-5 h-5 shrink-0 flex items-center justify-center rounded text-amber-400 hover:text-zinc-950 hover:bg-amber-400 cursor-pointer"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {reviewLoading && pendingCorrections.length === 0 && reviewIssues.length === 0 && (
+          <div className="px-3 pb-2 text-[11px] text-zinc-500">Проверяю протокол…</div>
+        )}
+      </div>
+  );
+
   return (
     // [overflow-anchor:none] — браузерная привязка прокрутки (scroll
     // anchoring) выключена: всю прокрутку при раскрытии/сворачивании
@@ -3051,7 +3173,9 @@ for (const f of visibleFields) {
             ровно над колонкой полей. */}
         <div className={PAGE_COLUMNS_CLASS}>
           <div className={DOCK_COLUMN_CLASS} aria-hidden="true" />
-          <div className="flex-1 min-w-0 flex items-center gap-2 py-2">
+          {/* На узком экране кнопки не помещаются — строка прокручивается
+              по горизонтали (без видимой полосы), подсказки Alt+… скрыты. */}
+          <div className="flex-1 min-w-0 flex items-center gap-2 py-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <button
               tabIndex={-1}
               onClick={openComparison}
@@ -3059,7 +3183,7 @@ for (const f of visibleFields) {
               aria-label="Сравнение (Alt+C)"
             >
               Сравнение
-              <span className="ml-1.5 text-[10px] font-normal text-zinc-500">Alt+C</span>
+              <span className="hidden lg:inline ml-1.5 text-[10px] font-normal text-zinc-500">Alt+C</span>
             </button>
             <button
               tabIndex={-1}
@@ -3068,7 +3192,7 @@ for (const f of visibleFields) {
               aria-label="Примечание (Alt+P)"
             >
               Примечание
-              <span className="ml-1.5 text-[10px] font-normal text-zinc-500">Alt+P</span>
+              <span className="hidden lg:inline ml-1.5 text-[10px] font-normal text-zinc-500">Alt+P</span>
             </button>
             {/* Видна всегда; без заметок — приглушена, окно подскажет, где их
                 добавить. */}
@@ -3088,7 +3212,7 @@ for (const f of visibleFields) {
               tabIndex={-1}
               onMouseDown={(e) => e.preventDefault()}
               onClick={toggleLabelsUppercase}
-              className="ml-auto inline-flex items-center gap-2 h-8 px-2 rounded-lg text-xs text-zinc-400 hover:text-white transition-colors cursor-pointer"
+              className="ml-auto shrink-0 inline-flex items-center gap-2 h-8 px-2 rounded-lg text-xs text-zinc-400 hover:text-white transition-colors cursor-pointer"
               title="Названия полей заглавными буквами"
             >
               <span className={`relative w-7 h-4 rounded-full transition-colors ${labelsUppercase ? 'bg-amber-400' : 'bg-white/15'}`}>
@@ -3097,22 +3221,23 @@ for (const f of visibleFields) {
               ЗАГЛАВНЫЕ
             </button>
           </div>
-          <div className={QUICK_COLUMN_CLASS} aria-hidden="true" />
+          <div className="hidden lg:block w-72 shrink-0" aria-hidden="true" />
         </div>
       </div>
 
       <div className={`${PAGE_COLUMNS_CLASS} pt-6 pb-8`}>
         {/* Док слева: действия с протоколом. Не фокусируются по Tab. */}
-        <aside className={DOCK_COLUMN_CLASS}>
-          <div className={`sticky ${SIDE_PANEL_TOP_CLASS} ${DOCK_PANEL_CLASS}`}>
+        {/* На мобильном вместо дока — нижняя панель (MobileBottomBar ниже). */}
+        <aside className="hidden lg:block w-12 shrink-0">
+          <div className={DOCK_PANEL_CLASS}>
             <button onClick={copyToClipboard} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-amber-400 hover:text-amber-300 hover:bg-amber-400/10`} data-tip="Скопировать (Ctrl+Shift+C)"><Copy className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <button onClick={() => runReview(true)} onMouseDown={(e) => e.preventDefault()} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Проверить протокол (Alt+K)"><SpellCheck className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <button onClick={downloadTxt} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Сохранить"><Download className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
-            <div className="h-px w-5 bg-white/10 my-1" aria-hidden="true" />
+            <div className={DOCK_SEPARATOR_CLASS} aria-hidden="true" />
             <button onClick={resetToDefault} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-red-400 hover:bg-white/10`} data-tip="Сбросить протокол (Ctrl+Shift+R)"><RotateCcw className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <button onClick={() => setShowAbbrModal(true)} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Автокоррекции"><Settings className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <button onClick={openPhraseMemory} onMouseDown={(e) => e.preventDefault()} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Выученные фразы поля"><Sparkles className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
-            <div className="h-px w-5 bg-white/10 my-1" aria-hidden="true" />
+            <div className={DOCK_SEPARATOR_CLASS} aria-hidden="true" />
             <button onClick={goToTemplateEditor} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="Редактировать шаблон (Ctrl+Shift+E)"><Pencil className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
             <button onClick={goToTemplateList} tabIndex={-1} className={`${DOCK_BUTTON_CLASS} text-zinc-400 hover:text-white hover:bg-white/10`} data-tip="К списку шаблонов (Ctrl+Shift+H)"><Home className="w-[18px] h-[18px]" strokeWidth={1.75} /></button>
           </div>
@@ -3298,7 +3423,7 @@ for (const f of visibleFields) {
       onClick={(e) => { e.stopPropagation(); removeSection(f.id); }}
       aria-label={`Удалить раздел «${f.label || ''}»`}
       title="Удалить раздел с полями (Ctrl+Z — вернуть)"
-      className="w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-[color,background-color,opacity] cursor-pointer opacity-0 group-hover:opacity-100 group-focus:opacity-100"
+      className="w-6 h-6 flex items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-[color,background-color,opacity] cursor-pointer opacity-0 group-hover:opacity-100 group-focus:opacity-100 pointer-coarse:opacity-100"
     >
       <Trash2 size={15} />
     </button>
@@ -3307,13 +3432,17 @@ for (const f of visibleFields) {
 
       {/* === СТРОКА ПОЛЯ === */}
 {f.type !== 'header' && (
-  <div className={`relative flex items-start gap-2 px-2 py-1 rounded-lg transition-colors ${
+  // Узкий экран (< sm): название — отдельной строкой над содержимым
+  // (рядом остаются кнопки +/удалить), иначе колонка названий в 40%
+  // ширины обрезает названия и сжимает текст в узкий столбик. С sm —
+  // прежняя раскладка в строку: ширина колонки из --label-w.
+  <div className={`relative flex flex-wrap sm:flex-nowrap items-start gap-x-2 gap-y-0.5 px-2 py-1 rounded-lg transition-colors ${
     activeFieldId === f.id ? 'bg-white/[0.04]' : 'hover:bg-white/[0.02]'
   }`}>
     {/* Название поля — редактируемое, на сером фоне */}
     <div
-      className="shrink-0 flex items-start gap-1 pt-px"
-      style={{ width: `min(${(sectionLabelPx.get(parentHeaderId ?? null) || 0) + LABEL_COLON_PX}px, 40%)` }}
+      className="max-sm:flex-1 max-sm:min-w-0 sm:shrink-0 sm:w-[var(--label-w)] flex items-start gap-1 pt-px"
+      style={{ '--label-w': `min(${(sectionLabelPx.get(parentHeaderId ?? null) || 0) + LABEL_COLON_PX}px, 40%)` } as CSSProperties}
     >
       <input
         type="text"
@@ -3330,11 +3459,11 @@ for (const f of visibleFields) {
           labelsUppercase ? 'uppercase tracking-wide' : ''
         }`}
       />
-      <span className="py-0.5 text-sm text-zinc-500 select-none">:</span>
+      <span className="max-sm:hidden py-0.5 text-sm text-zinc-500 select-none">:</span>
     </div>
 
     {/* Содержимое в [ ] */}
-    <div className="flex-1 min-w-0">
+    <div className="max-sm:order-last max-sm:basis-full flex-1 min-w-0">
       {(f.type === 'text' || f.type === 'conclusion') && (
         <div className="relative">
           <span aria-hidden="true" className={BRACKET_OPEN_CLASS}>[</span>
@@ -3669,116 +3798,14 @@ for (const f of visibleFields) {
         </main>
 
         {/* Справа: быстрые кнопки активного поля (Ctrl+1…9 — группы). */}
-        <aside className={QUICK_COLUMN_CLASS}>
-          <div className={`sticky ${SIDE_PANEL_TOP_CLASS}`}>
+        {/* На мобильном панели нет — быстрые кнопки и проверка в нижней
+            ленте (см. ниже). */}
+        <aside className="hidden lg:block w-72 shrink-0">
+          <div className="sticky top-28">
             {/* ИИ-проверка протокола: исправления по полям и замечания по
                 смыслу. В правой панели, а не поверх строк — не закрывает
                 протокол; клики не уводят фокус из поля. */}
-            {(reviewLoading || pendingCorrections.length > 0 || reviewIssues.length > 0) && (
-      <div
-        className="mb-2 max-h-[55vh] overflow-y-auto rounded-xl bg-zinc-900 border border-white/10 shadow-2xl text-xs leading-snug"
-        onMouseDown={(e) => e.preventDefault()}
-      >
-        {/* Шапка: что это, идёт ли проверка, действия над всем сразу. */}
-        <div className="sticky top-0 z-10 flex items-center gap-1.5 bg-zinc-900 px-3 pt-2 pb-1.5 text-[11px] text-zinc-500">
-          <SpellCheck className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
-          <span className="flex-1">Проверка</span>
-          {reviewLoading && <Loader2 className="w-3 h-3 animate-spin text-amber-400" aria-label="Проверяется" />}
-          {pendingCorrections.length > 1 && (
-            <button type="button" tabIndex={-1} onClick={applyAllCorrections} className="rounded px-1 text-amber-400 hover:text-amber-300 hover:bg-white/5 cursor-pointer">
-              Исправить всё
-            </button>
-          )}
-          {(pendingCorrections.length > 0 || reviewIssues.length > 0) && (
-            <button type="button" tabIndex={-1} onClick={dismissAllReview} title="Скрыть всё" aria-label="Скрыть всё" className="w-5 h-5 flex items-center justify-center rounded text-zinc-500 hover:text-white hover:bg-white/10 cursor-pointer">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-
-        {/* Замечания по смыслу: метка вида + коротко что; клик — к полю. */}
-        {reviewIssues.length > 0 && (
-          <ul className="px-1.5 pb-1.5">
-            {reviewIssues.map((issue) => {
-              const target = template?.fields.find(f => f.id === issue.field);
-              const kind = REVIEW_ISSUE_KINDS[issue.kind];
-              return (
-                <li key={issue.text} className="group/issue flex items-start gap-1 rounded-lg px-1.5 py-1 hover:bg-white/[0.04]">
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={() => target && goToField(target.id)}
-                    title={target ? `Перейти: ${target.label || 'поле'}` : undefined}
-                    className={`flex-1 min-w-0 text-left ${target ? 'cursor-pointer' : 'cursor-default'}`}
-                  >
-                    {kind && (
-                      <span className={`mr-1.5 inline-block rounded px-1 py-px text-[10px] font-medium align-[1px] ${kind.className}`}>{kind.label}</span>
-                    )}
-                    <span className="text-zinc-200 break-words">{issue.text}</span>
-                  </button>
-                  <button type="button" tabIndex={-1} onClick={() => dismissIssue(issue.text)} title="Пропустить" aria-label="Пропустить" className="w-5 h-5 shrink-0 flex items-center justify-center rounded text-zinc-600 opacity-0 group-hover/issue:opacity-100 hover:text-white hover:bg-white/10 cursor-pointer">
-                    <X className="w-3 h-3" />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        {/* Исправления текста: только изменения «было → стало» по полям. */}
-        {pendingCorrections.length > 0 && (
-          <ul className={`px-1.5 pb-1.5 ${reviewIssues.length > 0 ? 'border-t border-white/5 pt-1.5' : ''}`}>
-            {pendingCorrections.map((c) => {
-              const isActive = c.fieldId === activeFieldId;
-              return (
-                <li key={c.fieldId} className={`group/fix flex items-start gap-1 rounded-lg px-1.5 py-1 ${isActive ? 'bg-white/[0.06]' : 'hover:bg-white/[0.04]'}`}>
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={() => goToField(c.fieldId)}
-                    title={`Перейти: ${c.label}`}
-                    className="flex-1 min-w-0 text-left cursor-pointer"
-                  >
-                    <span className="block truncate text-[10px] text-zinc-500">{c.label}</span>
-                    {changePairs(c.original, c.corrected).map((pair, i) => (
-                      <span key={i} className="mr-2 inline-block break-words">
-                        {pair.from && <span className="text-zinc-500 line-through decoration-red-400/70">{pair.from}</span>}
-                        {pair.from && pair.to && <span className="mx-1 text-zinc-600">→</span>}
-                        {pair.to && <span className="text-amber-400">{pair.to}</span>}
-                      </span>
-                    ))}
-                  </button>
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={() => dismissCorrection(c.fieldId)}
-                    title={isActive ? 'Не исправлять (Esc)' : 'Не исправлять'}
-                    aria-label="Не исправлять"
-                    className={`w-5 h-5 shrink-0 flex items-center justify-center rounded text-zinc-600 hover:text-white hover:bg-white/10 cursor-pointer ${isActive ? '' : 'opacity-0 group-hover/fix:opacity-100'}`}
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    tabIndex={-1}
-                    onClick={() => applyCorrection(c.fieldId)}
-                    title={isActive ? 'Исправить (Alt+Enter)' : 'Исправить'}
-                    aria-label="Исправить"
-                    className="w-5 h-5 shrink-0 flex items-center justify-center rounded text-amber-400 hover:text-zinc-950 hover:bg-amber-400 cursor-pointer"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-
-        {reviewLoading && pendingCorrections.length === 0 && reviewIssues.length === 0 && (
-          <div className="px-3 pb-2 text-[11px] text-zinc-500">Проверяю протокол…</div>
-        )}
-      </div>
-    )}
+            {reviewVisible && renderReviewPanel('mb-2 max-h-[55vh] overflow-y-auto rounded-xl bg-zinc-900 border border-white/10 shadow-2xl')}
           <div className="rounded-2xl bg-zinc-900/75 border border-white/10 shadow-2xl p-2">
             <div className="px-2 pt-1 pb-2 text-xs text-zinc-500 truncate">
               Быстрые кнопки{activeField?.label ? <> · <span className="text-zinc-300">{activeField.label}</span></> : null}
@@ -3918,6 +3945,143 @@ for (const f of visibleFields) {
           </div>
         </aside>
       </div>
+
+      {/* ====== МОБИЛЬНАЯ НИЖНЯЯ ЗОНА (< lg) ======
+          Одна прижатая к низу стопка (снизу вверх):
+          1) панель действий с подписями — скрыта, пока открыта экранная
+             клавиатура (html.kb-open, см. styles/globals.css);
+          2) лента чипов: группы быстрых кнопок активного поля и «Проверка»;
+             при открытой клавиатуре лента прилегает прямо к ней;
+          3) раскрытый список — фразы группы / проверка / меню «Ещё».
+          onMouseDown preventDefault — нажатия не уводят фокус из поля, и
+          клавиатура не закрывается при вставке фразы. */}
+      {(() => {
+        const groups: QuickButtonGroup[] = activeFieldId ? (activeField?.quickButtons || []) : [];
+        const showStrip = groups.length > 0 || reviewVisible;
+        const openGroup = mobilePanel?.kind === 'group' ? groups[mobilePanel.idx] : undefined;
+        const panelOpen = mobilePanel !== null && (mobilePanel.kind !== 'group' || !!openGroup);
+        const closePanel = () => setMobilePanel(null);
+        const menuAction = (fn: () => void) => () => { closePanel(); fn(); };
+        // Вкладка группы в ленте: текст со стрелкой, без «таблеток» — лента
+        // выглядит частью клавиатуры, а не набором кнопок на карточке.
+        const TAB_CLASS = 'shrink-0 h-11 px-3 inline-flex items-center gap-1 text-[14px] whitespace-nowrap transition-colors cursor-pointer active:bg-white/5';
+        const ACTION_CLASS = 'flex-1 min-w-0 h-14 flex flex-col items-center justify-center gap-0.5 text-[11px] transition-colors cursor-pointer active:bg-white/5';
+        const ROW_CLASS = 'w-full flex items-center gap-3 px-4 py-3 text-left text-[15px] leading-snug active:bg-white/10 cursor-pointer';
+        return (
+          // Один сплошной блок во всю ширину: список, лента, действия —
+          // общий фон и тонкие разделители, без скруглений и зазоров.
+          <div
+            data-mobile-bottom
+            // Над клавиатурой без кнопок поля — ничего (действия скрыты, см.
+            // globals.css), иначе осталась бы пустая полоска с тенью.
+            className={`lg:hidden fixed inset-x-0 bottom-0 z-40 bg-zinc-900 border-t border-white/10 shadow-[0_-12px_32px_rgba(0,0,0,0.45)] ${showStrip || panelOpen ? '' : '[.kb-open_&]:hidden'}`}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            {panelOpen && (
+              <div className="max-h-[min(18rem,calc(var(--vv-height,100dvh)-12rem))] overflow-y-auto overscroll-contain divide-y divide-white/[0.06] border-b border-white/10">
+                {mobilePanel?.kind === 'group' && openGroup && (openGroup.phrases || []).filter(Boolean).map((phrase, pIdx) => (
+                  <button
+                    key={pIdx}
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => { insertPhrase(phrase); closePanel(); }}
+                    className={`${ROW_CLASS} text-zinc-100`}
+                  >
+                    {phrase}
+                  </button>
+                ))}
+                {mobilePanel?.kind === 'review' && (reviewVisible
+                  ? renderReviewPanel('py-1')
+                  : <div className="px-4 py-3 text-sm text-zinc-500">Замечаний нет</div>)}
+                {mobilePanel?.kind === 'more' && (
+                  <>
+                    <button type="button" tabIndex={-1} onClick={menuAction(openPhraseMemory)} className={`${ROW_CLASS} text-zinc-200`}><Sparkles className="w-[18px] h-[18px] text-zinc-500" strokeWidth={1.75} />Выученные фразы поля</button>
+                    <button type="button" tabIndex={-1} onClick={menuAction(() => setShowAbbrModal(true))} className={`${ROW_CLASS} text-zinc-200`}><Settings className="w-[18px] h-[18px] text-zinc-500" strokeWidth={1.75} />Автокоррекции</button>
+                    <button type="button" tabIndex={-1} onClick={menuAction(goToTemplateEditor)} className={`${ROW_CLASS} text-zinc-200`}><Pencil className="w-[18px] h-[18px] text-zinc-500" strokeWidth={1.75} />Редактировать шаблон</button>
+                    <button type="button" tabIndex={-1} onClick={menuAction(goToTemplateList)} className={`${ROW_CLASS} text-zinc-200`}><Home className="w-[18px] h-[18px] text-zinc-500" strokeWidth={1.75} />К списку шаблонов</button>
+                    <button type="button" tabIndex={-1} onClick={menuAction(resetToDefault)} className={`${ROW_CLASS} text-red-400`}><RotateCcw className="w-[18px] h-[18px]" strokeWidth={1.75} />Сбросить протокол</button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {showStrip && (
+              <div className="flex items-stretch px-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {reviewVisible && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => setMobilePanel(p => (p?.kind === 'review' ? null : { kind: 'review' }))}
+                    className={`${TAB_CLASS} gap-1.5 text-amber-400 ${mobilePanel?.kind === 'review' ? 'bg-white/5' : ''}`}
+                  >
+                    {reviewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <SpellCheck className="w-4 h-4" strokeWidth={1.75} />}
+                    Проверка
+                    {pendingCorrections.length + reviewIssues.length > 0 && (
+                      <span className="min-w-5 h-5 px-1 inline-flex items-center justify-center rounded-full bg-amber-400 text-zinc-950 text-[11px] font-semibold tabular-nums">
+                        {pendingCorrections.length + reviewIssues.length}
+                      </span>
+                    )}
+                  </button>
+                )}
+                {reviewVisible && groups.length > 0 && <span className="shrink-0 w-px my-3 bg-white/10" aria-hidden="true" />}
+                {groups.map((group, gIdx) => {
+                  const phrases = (group.phrases || []).filter(Boolean);
+                  const isSingle = phrases.length === 1;
+                  const isOpen = mobilePanel?.kind === 'group' && mobilePanel.idx === gIdx;
+                  return (
+                    <button
+                      key={group.id}
+                      type="button"
+                      tabIndex={-1}
+                      onClick={() => {
+                        if (isSingle) { insertPhrase(phrases[0]); return; }
+                        setMobilePanel(p => (p?.kind === 'group' && p.idx === gIdx ? null : { kind: 'group', idx: gIdx }));
+                      }}
+                      className={`${TAB_CLASS} ${isOpen ? 'text-amber-400' : 'text-zinc-200'}`}
+                    >
+                      {isSingle && <Plus className="w-3.5 h-3.5 text-zinc-500" />}
+                      {group.label || 'Группа'}
+                      {!isSingle && <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? 'rotate-180' : 'text-zinc-500'}`} />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            <nav
+              data-mobile-dock
+              className={`flex items-stretch pb-[env(safe-area-inset-bottom)] ${showStrip || panelOpen ? 'border-t border-white/10' : ''}`}
+            >
+              <button type="button" tabIndex={-1} onClick={copyToClipboard} className={`${ACTION_CLASS} text-amber-400`}>
+                <Copy className="w-5 h-5" strokeWidth={1.75} />
+                Копировать
+              </button>
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => { runReview(true); setMobilePanel({ kind: 'review' }); }}
+                className={`${ACTION_CLASS} text-zinc-300`}
+              >
+                <SpellCheck className="w-5 h-5" strokeWidth={1.75} />
+                Проверить
+              </button>
+              <button type="button" tabIndex={-1} onClick={downloadTxt} className={`${ACTION_CLASS} text-zinc-300`}>
+                <Download className="w-5 h-5" strokeWidth={1.75} />
+                Сохранить
+              </button>
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setMobilePanel(p => (p?.kind === 'more' ? null : { kind: 'more' }))}
+                className={`${ACTION_CLASS} ${mobilePanel?.kind === 'more' ? 'text-white' : 'text-zinc-300'}`}
+              >
+                <MoreHorizontal className="w-5 h-5" strokeWidth={1.75} />
+                Ещё
+              </button>
+            </nav>
+          </div>
+        );
+      })()}
 
       {/* МОДАЛКИ (полностью без изменений) */}
 
@@ -4115,7 +4279,7 @@ for (const f of visibleFields) {
                   <button
                     onClick={() => {
                       setComparisonDates([...comparisonDates, '']);
-                      setComparisonDateIds([...comparisonDateIds, crypto.randomUUID()]);
+                      setComparisonDateIds([...comparisonDateIds, randomId()]);
                     }}
                     className="h-8 px-2.5 -ml-2.5 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
                   >
@@ -4247,7 +4411,7 @@ for (const f of visibleFields) {
         open={showAbbrModal}
         onClose={() => setShowAbbrModal(false)}
         size="xl"
-        className="h-[min(560px,calc(100vh-2rem))]"
+        className="h-[min(560px,calc(100dvh-1rem))] sm:h-[min(560px,calc(100dvh-2rem))]"
         onKeyDown={(e) => {
           if (e.key === 'Escape') setShowAbbrModal(false);
         }}
@@ -4260,23 +4424,26 @@ for (const f of visibleFields) {
             <>
               <label className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 bg-white/5 hover:bg-white/10 hover:text-white transition-colors cursor-pointer">
                 <Upload className="w-4 h-4" />
-                Импорт
+                <span className="hidden sm:inline">Импорт</span>
                 <input type="file" accept=".json" onChange={importAbbreviations} className="hidden" />
               </label>
               <button
                 onClick={exportAbbreviations}
+                aria-label="Экспорт"
                 className="h-8 px-2.5 inline-flex items-center gap-1.5 rounded-lg text-sm text-zinc-300 bg-white/5 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                Экспорт
+                <span className="hidden sm:inline">Экспорт</span>
               </button>
             </>
           }
         />
 
-        <div className="flex flex-1 min-h-0">
+        {/* На телефоне группы — короткой прокручиваемой полосой над списком,
+            а не колонкой сбоку (та забирала больше половины ширины). */}
+        <div className="flex flex-col sm:flex-row flex-1 min-h-0">
           {/* Группы */}
-          <div className="w-56 shrink-0 border-r border-white/10 p-3 flex flex-col">
+          <div className="sm:w-56 shrink-0 max-sm:max-h-40 border-b sm:border-b-0 sm:border-r border-white/10 p-3 flex flex-col">
             {/* Отступ между строками — pb внутри строки, а не space-y (см.
                 CollapseRow). */}
             <div className="flex-1 overflow-y-auto">
@@ -4332,17 +4499,17 @@ for (const f of visibleFields) {
                     )}
                     {editingCategory !== cat && (
                       <>
-                        <span className="text-xs text-zinc-500 tabular-nums group-hover/row:hidden">{count}</span>
+                        <span className="text-xs text-zinc-500 tabular-nums group-hover/row:hidden pointer-coarse:hidden">{count}</span>
                         <button
                           onClick={() => { cancelInlineEditRef.current = false; setEditingCategory(cat); }}
-                          className="hidden group-hover/row:flex w-6 h-6 items-center justify-center rounded-md text-zinc-500 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                          className="hidden group-hover/row:flex pointer-coarse:flex w-6 h-6 items-center justify-center rounded-md text-zinc-500 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
                           aria-label="Переименовать группу"
                         >
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => confirmDeleteCategory(cat)}
-                          className="hidden group-hover/row:flex w-6 h-6 items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-colors cursor-pointer"
+                          className="hidden group-hover/row:flex pointer-coarse:flex w-6 h-6 items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-colors cursor-pointer"
                           aria-label="Удалить группу"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -4385,7 +4552,7 @@ for (const f of visibleFields) {
               <div className="flex items-center gap-3 px-7 pb-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
                 <span className="w-24 shrink-0">Сокращение</span>
                 <span className="flex-1">Фраза</span>
-                <span className="shrink-0">Использований</span>
+                <span className="max-sm:hidden shrink-0">Использований</span>
                 <span className="w-6 shrink-0" aria-hidden="true" />
               </div>
             )}
@@ -4486,11 +4653,11 @@ for (const f of visibleFields) {
                         <span className="shrink-0 px-2 py-0.5 rounded-md bg-white/5 text-xs text-zinc-400">{info.category}</span>
                       )}
 
-                      <span className="shrink-0 w-[88px] text-right text-xs text-zinc-500 tabular-nums">{info.usage || 0}</span>
+                      <span className="max-sm:hidden shrink-0 w-[88px] text-right text-xs text-zinc-500 tabular-nums">{info.usage || 0}</span>
 
                       <button
                         onClick={() => confirmDeleteAbbreviation(abbr)}
-                        className="w-6 h-6 shrink-0 flex items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 transition-[color,opacity] cursor-pointer"
+                        className="w-6 h-6 shrink-0 flex items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 opacity-0 group-hover/row:opacity-100 pointer-coarse:opacity-100 focus-visible:opacity-100 transition-[color,opacity] cursor-pointer"
                         aria-label="Удалить сокращение"
                       >
                         <Trash2 className="w-3.5 h-3.5" />

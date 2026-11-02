@@ -1,4 +1,5 @@
 import type { BuilderField } from '../types/builder';
+import { randomId } from './randomId';
 
 // Типы полей «Число», «Чекбокс» и «Шкала» больше не создаются в
 // конструкторе: всё, что они давали, умеет текстовое поле с быстрыми
@@ -48,7 +49,7 @@ export function migrateLegacyField(f: BuilderField): BuilderField {
       type: 'text',
       placeholder: unchecked,
       defaultValue: f.defaultValue === true ? checked : '',
-      quickButtons: [...quickButtons, { id: crypto.randomUUID(), label: checked, isExpanded: false, phrases: [checked] }],
+      quickButtons: [...quickButtons, { id: randomId(), label: checked, isExpanded: false, phrases: [checked] }],
     };
   }
 
@@ -60,7 +61,7 @@ export function migrateLegacyField(f: BuilderField): BuilderField {
       type: 'text',
       placeholder: '',
       defaultValue: def,
-      quickButtons: [...quickButtons, { id: crypto.randomUUID(), label: f.label || 'Шкала', isExpanded: false, phrases }],
+      quickButtons: [...quickButtons, { id: randomId(), label: f.label || 'Шкала', isExpanded: false, phrases }],
     };
   }
 

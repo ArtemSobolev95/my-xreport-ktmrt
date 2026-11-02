@@ -24,6 +24,14 @@ function HomePage() {
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Сразу в поиск — только с мышью/клавиатурой: на телефоне фокус при
+  // открытии страницы выдвигал бы экранную клавиатуру поверх списка.
+  useEffect(() => {
+    if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      searchRef.current?.focus();
+    }
+  }, []);
+
   // Порядок, в котором шаблоны пришли с сервера, — запасной ключ сортировки.
   // Поля created у коллекции может не быть (в PocketBase ≥0.23 автодаты
   // больше не добавляются сами — так и в локальной базе): тогда сравнение
@@ -230,7 +238,6 @@ function HomePage() {
             <Search className="w-4 h-4 shrink-0 text-zinc-500" strokeWidth={1.75} />
             <input
               ref={searchRef}
-              autoFocus
               type="text"
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
@@ -259,12 +266,14 @@ function HomePage() {
             className="h-9 px-3.5 shrink-0 inline-flex items-center gap-1.5 rounded-lg text-sm font-medium bg-amber-400 text-zinc-950 hover:bg-amber-300 transition-colors cursor-pointer"
           >
             <Plus className="w-4 h-4" strokeWidth={2} />
-            Новый шаблон
+            <span className="sm:hidden">Новый</span>
+            <span className="hidden sm:inline">Новый шаблон</span>
           </Link>
         </div>
 
-        {/* Подсказка по клавишам — чтобы о них можно было узнать. */}
-        <div className="mt-2 mb-5 px-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-zinc-600">
+        {/* Подсказка по клавишам — чтобы о них можно было узнать. На
+            сенсорных экранах клавиатуры нет — там только отступ. */}
+        <div className="mt-2 mb-5 px-1 flex pointer-coarse:*:hidden flex-wrap gap-x-4 gap-y-1 text-[11px] text-zinc-600">
           <span><Kbd>↑</Kbd><Kbd>↓</Kbd> выбор</span>
           <span><Kbd>Enter</Kbd> заполнить</span>
           <span><Kbd>Shift</Kbd>+<Kbd>Enter</Kbd> редактировать</span>
@@ -323,7 +332,8 @@ function HomePage() {
 
                       {/* Второстепенные действия — у выбранной/наведённой строки. */}
                       <div
-                        className={`flex items-center gap-0.5 shrink-0 transition-opacity ${isSelected || menuFor === t.id ? 'opacity-100' : 'opacity-0'}`}
+                        // На сенсорных экранах наведения нет — действия видны всегда.
+                        className={`flex items-center gap-0.5 shrink-0 transition-opacity ${isSelected || menuFor === t.id ? 'opacity-100' : 'opacity-0 pointer-coarse:opacity-100'}`}
                         onClick={e => e.stopPropagation()}
                       >
                         <Link

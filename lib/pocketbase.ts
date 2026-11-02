@@ -13,7 +13,26 @@ if (!POCKETBASE_URL && typeof window !== 'undefined') {
   );
 }
 
-const pb = new PocketBase(POCKETBASE_URL || 'http://127.0.0.1:8090');
+// Проверка с телефона в локальной сети (npm run dev:lan + npm run pb:lan):
+// страница открыта по IP компьютера (http://192.168.x.x:3000), а
+// 127.0.0.1 на телефоне — это сам телефон. Если адрес PocketBase локальный,
+// а страница — нет, подставляем хост страницы. Прод не затрагивается: там
+// NEXT_PUBLIC_POCKETBASE_URL указывает на настоящий домен.
+const LOOPBACK_HOSTS = ['127.0.0.1', 'localhost'];
+function resolvePocketBaseUrl(url: string): string {
+  if (typeof window === 'undefined') return url;
+  try {
+    const parsed = new URL(url);
+    const pageHost = window.location.hostname;
+    if (LOOPBACK_HOSTS.includes(parsed.hostname) && !LOOPBACK_HOSTS.includes(pageHost)) {
+      parsed.hostname = pageHost;
+      return parsed.toString().replace(/\/$/, '');
+    }
+  } catch {}
+  return url;
+}
+
+const pb = new PocketBase(resolvePocketBaseUrl(POCKETBASE_URL || 'http://127.0.0.1:8090'));
 
 pb.autoCancellation(false);
 

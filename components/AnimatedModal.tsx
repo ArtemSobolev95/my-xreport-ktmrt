@@ -90,7 +90,7 @@ function ModalLayer({
       role="dialog"
       aria-modal="true"
       onKeyDown={onKeyDown}
-      className="fixed inset-0 z-[999] grid place-items-center p-4"
+      className="fixed inset-0 z-[999] grid place-items-center p-2 sm:p-4"
       style={{ pointerEvents: isPresent ? 'auto' : 'none' }}
     >
       <motion.div
@@ -103,7 +103,7 @@ function ModalLayer({
         transition={{ duration: 0.18, ease: 'easeOut' }}
       />
       <motion.div
-        className={`relative w-full ${SIZE_CLASS[size]} max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden bg-zinc-900 border border-white/10 shadow-2xl rounded-3xl text-white ${className}`}
+        className={`relative w-full ${SIZE_CLASS[size]} max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden bg-zinc-900 border border-white/10 shadow-2xl rounded-2xl sm:rounded-3xl text-white ${className}`}
         initial={{ opacity: 0, scale: 0.96, y: 8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.97, y: 4 }}
@@ -129,7 +129,7 @@ export function ModalHeader({
   onClose?: () => void;
 }) {
   return (
-    <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10 shrink-0">
+    <div className="flex items-center gap-3 px-4 sm:px-6 py-4 border-b border-white/10 shrink-0">
       <div className="flex-1 min-w-0">
         <h2 className="text-base font-semibold text-white truncate">{title}</h2>
         {subtitle && <p className="mt-0.5 text-sm text-zinc-400">{subtitle}</p>}
@@ -150,13 +150,13 @@ export function ModalHeader({
 }
 
 export function ModalBody({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`px-6 py-5 overflow-y-auto ${className}`}>{children}</div>;
+  return <div className={`px-4 sm:px-6 py-5 overflow-y-auto ${className}`}>{children}</div>;
 }
 
 // Нижний ряд кнопок — справа, главная кнопка последней.
 export function ModalFooter({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`flex items-center justify-end gap-2 px-6 py-4 border-t border-white/10 shrink-0 ${className}`}>
+    <div className={`flex flex-wrap items-center justify-end gap-2 px-4 sm:px-6 py-4 border-t border-white/10 shrink-0 ${className}`}>
       {children}
     </div>
   );

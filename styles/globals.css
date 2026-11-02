@@ -19,6 +19,72 @@ html {
      сама по себе никак не связана с высотой списка полей). stable — не
      показывает сам скроллбар без надобности, только резервирует его гутер. */
   scrollbar-gutter: stable;
+  /* Фон под страницей — как у самих страниц: при оттягивании/«резиновой»
+     прокрутке на телефоне не мелькает белое. */
+  background-color: #09090b;
+}
+
+/* Ничто не должно расширять страницу по горизонтали — на телефоне это
+   превращается в боковую прокрутку всей страницы. clip, а не hidden:
+   hidden создаёт контейнер прокрутки и ломает position: sticky у шапки. */
+body {
+  overflow-x: clip;
+  /* Не увеличивать шрифт в альбомной ориентации iOS. */
+  -webkit-text-size-adjust: 100%;
+  /* Убрать серую вспышку при касании ссылок/кнопок (iOS/Android). */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* На сенсорных экранах подсказки daisyUI (data-tip) не нужны: наведения
+   нет, а после касания подсказка «залипает» и закрывает соседние кнопки
+   нижнего дока. */
+/* Мобильная раскладка (lib/pageLayout.ts, нижняя зона в pages/filler.tsx).
+   html.kb-open — открыта экранная клавиатура; --vv-bottom — нижняя граница
+   видимой над ней области в координатах fixed-элементов, --vv-height — её
+   высота. Всё выставляет pages/_app.tsx (там же — почему так).
+
+   Пока клавиатура открыта:
+   - нижняя зона страницы заполнения (data-mobile-bottom) и панель
+     конструктора (data-mobile-sheet) ставятся НИЖНИМ краем на --vv-bottom
+     (top + translateY(-100%)), т.е. ровно над клавиатурой — а не bottom: 0,
+     который на iOS оказывается под клавиатурой;
+   - панель действий (data-mobile-dock) скрыта — во время набора нужны
+     быстрые кнопки поля, а не «Копировать»;
+   - шапка страницы заполнения не липнет к верху: иначе вместе с
+     клавиатурой и лентой кнопок под текст оставалась бы узкая щель;
+   - scroll-padding — браузер, докручивая к полю с курсором, оставляет
+     место под ленту кнопок, а не прячет строку под ней. */
+@media (width < 64rem) {
+  [data-mobile-sheet] {
+    bottom: calc(3.75rem + env(safe-area-inset-bottom));
+  }
+  html.kb-open [data-mobile-dock] {
+    display: none;
+  }
+  html.kb-open [data-mobile-bottom] {
+    top: var(--vv-bottom, 100%);
+    bottom: auto;
+    transform: translateY(-100%);
+  }
+  html.kb-open [data-mobile-sheet] {
+    top: calc(var(--vv-bottom, 100%) - 0.5rem);
+    bottom: auto;
+    transform: translateY(-100%);
+  }
+  html.kb-open [data-filler-topbar] {
+    position: relative;
+  }
+  html.kb-open {
+    scroll-padding-bottom: 7rem;
+  }
+}
+
+@media (hover: none) {
+  .tooltip::before,
+  .tooltip::after,
+  .tooltip > .tooltip-content {
+    display: none !important;
+  }
 }
 
 /* Единый видимый индикатор фокуса для клавиатурной навигации.

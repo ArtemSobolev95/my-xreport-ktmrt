@@ -97,6 +97,8 @@ const RatingField = ({
 // «Примечание» для ИИ-подсказок и памяти фраз — как отдельное текстовое
 // поле шаблона с этим id (в phrase_memory у него своя память фраз).
 const STATE_AFTER_FIELD_ID = '__state_after__';
+// Ключ localStorage: попап «Находки» над «Заключением» свёрнут.
+const FINDINGS_COLLAPSED_KEY = 'filler_findings_collapsed';
 const STATE_AFTER_FIELD: BuilderField = { id: STATE_AFTER_FIELD_ID, type: 'text', label: 'Примечание' };
 // Отступы и шрифт поля «Примечания» — общие у textarea и слоя ИИ-подсказки.
 const STATE_AFTER_TEXT_CLASS = 'px-3.5 py-2.5 text-sm';
@@ -240,6 +242,25 @@ function FillerPage() {
       return !prev;
     });
   };
+  // Попап «Находки» над «Заключением» свёрнут до одной строки — чтобы
+  // большой попап не мешал переходить к разделам. Запоминается в этом
+  // браузере; запрос автозаключения (Alt+Z) разворачивает его, иначе
+  // результат был бы не виден.
+  const [findingsCollapsed, setFindingsCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      setFindingsCollapsed(localStorage.getItem(FINDINGS_COLLAPSED_KEY) === '1');
+    } catch {}
+  }, []);
+  const toggleFindingsCollapsed = () => {
+    setFindingsCollapsed(prev => {
+      try { localStorage.setItem(FINDINGS_COLLAPSED_KEY, prev ? '0' : '1'); } catch {}
+      return !prev;
+    });
+  };
+  useEffect(() => {
+    if (conclusionLoading) setFindingsCollapsed(false);
+  }, [conclusionLoading]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('Все');
   const [newAbbrText, setNewAbbrText] = useState('');
@@ -3803,13 +3824,42 @@ for (const f of visibleFields) {
           exit={{ opacity: 0, y: 4, scale: 0.98 }}
           transition={{ duration: 0.16, ease: 'easeOut' }}
           onMouseDown={(e) => e.preventDefault()}
-          className="absolute bottom-full left-0 right-0 mb-2 z-40 max-h-[calc(50vh-7rem)] flex flex-col rounded-2xl bg-zinc-900 border border-white/10 shadow-2xl"
+          className="absolute bottom-full left-0 right-0 mb-2 z-40 max-h-[calc(50vh-7rem)] flex flex-col rounded-2xl bg-zinc-900 border border-white/10 shadow-2xl overflow-hidden"
         >
-          <div className="min-h-0 overflow-y-auto px-3.5 pt-2.5 pb-2">
-          <div className="mb-1.5 flex items-baseline gap-2 text-[11px] text-zinc-500">
+          {/* Шапка — закреплена (не прокручивается со списком); вся строка
+              сворачивает/разворачивает попап. */}
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={toggleFindingsCollapsed}
+            aria-expanded={!findingsCollapsed}
+            className="shrink-0 w-full flex items-center gap-2 px-3.5 py-2 text-left text-[11px] text-zinc-500 hover:bg-white/[0.03] transition-colors cursor-pointer"
+          >
             Находки
             <span className="tabular-nums">{findings.length}</span>
-          </div>
+            {findingsCollapsed && conclusionDraft?.fieldId === f.id && (
+              <span className="inline-flex items-center gap-1 text-amber-400">
+                <Sparkles className="w-3 h-3" aria-hidden="true" />
+                есть вариант заключения
+              </span>
+            )}
+            <span className="ml-auto inline-flex items-center gap-1 text-zinc-400">
+              {findingsCollapsed ? 'Развернуть' : 'Свернуть'}
+              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${findingsCollapsed ? 'rotate-180' : ''}`} aria-hidden="true" />
+            </span>
+          </button>
+
+          <AnimatePresence initial={false}>
+          {!findingsCollapsed && (
+          <motion.div
+            key="findings-body"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="min-h-0 flex flex-col overflow-hidden"
+          >
+          <div className="min-h-0 overflow-y-auto px-3.5 pb-2">
           <div className="space-y-0.5">
             {findings.map((item, i) => (
               <div key={item.id}>
@@ -3882,6 +3932,9 @@ for (const f of visibleFields) {
               </button>
             )}
           </div>
+          </motion.div>
+          )}
+          </AnimatePresence>
         </motion.div>
       )}
     </AnimatePresence>

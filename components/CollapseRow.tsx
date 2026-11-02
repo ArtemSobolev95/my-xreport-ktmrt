@@ -1,6 +1,7 @@
 'use client';
 import { useContext, useState, type ReactNode } from 'react';
 import { motion, PresenceContext, useIsPresent } from 'framer-motion';
+import { COLLAPSE } from '../lib/motion';
 
 // Строка, плавно раскрывающаяся по высоте при появлении и схлопывающаяся
 // при удалении (варианты "Список", пояснения "Шкала", фразы быстрых
@@ -24,10 +25,7 @@ export default function CollapseRow({ children }: { children: ReactNode }) {
   const [entered, setEntered] = useState(presence?.initial === false);
   return (
     <motion.div
-      initial={{ height: 0, opacity: 0 }}
-      animate={{ height: 'auto', opacity: 1 }}
-      exit={{ height: 0, opacity: 0 }}
-      transition={{ duration: 0.18, ease: 'easeOut' }}
+      {...COLLAPSE}
       onAnimationComplete={() => { if (isPresent) setEntered(true); }}
       style={entered && isPresent ? undefined : { clipPath: 'inset(0px)' }}
     >

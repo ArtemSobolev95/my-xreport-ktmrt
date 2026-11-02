@@ -91,6 +91,21 @@ body {
   }
 }
 
+/* Системная настройка «Уменьшить движение»: CSS-переходы размеров и
+   положения (сворачивание разделов, рост поля, уведомление в шапке) —
+   мгновенно; смена цвета и прозрачности остаётся. Анимации framer-motion
+   — см. MotionConfig в pages/_app.tsx. Плавная прокрутка тоже выключается. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-property: color, background-color, border-color, opacity, box-shadow !important;
+  }
+}
+
 @media (hover: none) {
   .tooltip::before,
   .tooltip::after,

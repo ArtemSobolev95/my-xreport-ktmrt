@@ -3,6 +3,7 @@ import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Check, ChevronDown } from 'lucide-react';
 import { measureTextPx } from '../lib/fieldLabels';
+import { DURATION, EASE } from '../lib/motion';
 
 // Поле «Список» на странице заполнения — «таблетка» и свой выпадающий
 // список в стиле приложения вместо системного (у нативного select список
@@ -163,10 +164,10 @@ const SelectPill = forwardRef<HTMLButtonElement, SelectPillProps>(function Selec
           <motion.ul
             ref={listRef}
             role="listbox"
-            initial={{ opacity: 0, y: -4, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.98 }}
-            transition={{ duration: 0.12, ease: 'easeOut' }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: DURATION.fast, ease: EASE }}
             onMouseDown={e => e.preventDefault()}
             className="absolute left-0 top-full mt-1 z-40 min-w-full w-max max-w-[min(28rem,80vw)] max-h-64 overflow-y-auto rounded-xl bg-zinc-900 border border-white/10 shadow-2xl p-1 origin-top"
           >

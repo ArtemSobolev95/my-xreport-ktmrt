@@ -2,6 +2,7 @@ import "@/styles/globals.css";
 import { useEffect } from "react";
 import type { AppProps } from "next/app";
 import Head from "next/head";
+import { MotionConfig } from "framer-motion";
 import DialogProvider from "../components/DialogProvider";
 
 export default function App({ Component, pageProps }: AppProps) {
@@ -131,7 +132,12 @@ export default function App({ Component, pageProps }: AppProps) {
         />
         <meta name="theme-color" content="#09090b" />
       </Head>
-      <Component {...pageProps} />
+      {/* reducedMotion="user" — при включённой в системе настройке
+          «Уменьшить движение» framer-motion не анимирует сдвиги и масштаб
+          (модальные окна); прозрачность и высота остаются. */}
+      <MotionConfig reducedMotion="user">
+        <Component {...pageProps} />
+      </MotionConfig>
     </DialogProvider>
   );
 }

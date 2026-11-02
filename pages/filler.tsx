@@ -25,6 +25,7 @@ import CollapseRow from '../components/CollapseRow';
 import SmoothHeight from '../components/SmoothHeight';
 import { recordTemplateUse } from '../lib/templateUsage';
 import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_INPUT_CLASS } from '../components/AnimatedModal';
+import { DURATION, EASE, FADE, COLLAPSE } from '../lib/motion';
 import { randomId } from '../lib/randomId';
 import { copyText } from '../lib/clipboard';
 
@@ -170,6 +171,12 @@ const isSafeUrl = (url: string): boolean => {
 // где рендерятся строки) — используется, чтобы не скроллить/фокусировать
 // элемент, пока его ещё двигает CSS-анимация сворачивания/разворачивания.
 const SECTION_TRANSITION_MS = 200;
+// Подводка заголовка раскрываемого раздела к верху экрана
+// (glideHeaderIntoPlace): длительность растёт с расстоянием — короткий путь
+// за время самой CSS-анимации, длинный (раздел далеко внизу) — до
+// SECTION_GLIDE_MAX_MS, иначе первый кадр сдвигал страницу рывком на
+// ~170px.
+const SECTION_GLIDE_MAX_MS = 340;
 
 function FillerPage() {
   const router = useRouter();
@@ -385,8 +392,98 @@ const handleComparisonDateChange = (e: React.ChangeEvent<HTMLInputElement>, inde
 
   // === Состояние сворачивания разделов (по заголовкам) ===
 const [collapsedHeaders, setCollapsedHeaders] = useState<Set<string>>(new Set());
+
+// Запас прокрутки внизу страницы (пустой блок в конце разметки).
+// Сворачивание раздела укорачивает страницу; если она была прокручена к
+// низу, браузер тут же сдвигал прокрутку, и всё содержимое за пару кадров
+// прыгало вниз на высоту свёрнутого. А последний раздел при раскрытии не
+// мог доехать до верха — внизу не хватало места. Поэтому на время
+// сворачивания/раскрытия внизу резервируется пустое место (с запасом: экран
+// плюс текущая прокрутка — укоротиться сильнее страница не может), а после
+// анимации оно ужимается до нужного, чтобы видимая часть осталась на месте.
+// Лишнее пустое место ниже экрана убирается по мере прокрутки вверх —
+// незаметно, оно уже за краем.
+const scrollRoomRef = useRef<HTMLDivElement | null>(null);
+const scrollRoomHoldUntilRef = useRef(0);
+const trimScrollRoom = () => {
+  const room = scrollRoomRef.current;
+  if (!room || performance.now() < scrollRoomHoldUntilRef.current) return;
+  const scroller = getPageScroller();
+  const top = scroller ? scroller.scrollTop : window.scrollY;
+  const viewH = scroller ? scroller.clientHeight : window.innerHeight;
+  const totalH = scroller ? scroller.scrollHeight : document.documentElement.scrollHeight;
+  const roomH = room.offsetHeight;
+  if (!roomH) return;
+  const need = Math.max(0, Math.ceil(top + viewH - (totalH - roomH)));
+  if (need < roomH) room.style.height = `${need}px`;
+};
+useLayoutEffect(() => {
+  const room = scrollRoomRef.current;
+  if (!room) return;
+  const scroller = getPageScroller();
+  const top = scroller ? scroller.scrollTop : window.scrollY;
+  const viewH = scroller ? scroller.clientHeight : window.innerHeight;
+  room.style.height = `${Math.ceil(top + viewH * 2)}px`;
+  const holdMs = SECTION_GLIDE_MAX_MS + 200;
+  scrollRoomHoldUntilRef.current = performance.now() + holdMs;
+  const t = window.setTimeout(trimScrollRoom, holdMs + 20);
+  return () => clearTimeout(t);
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, [collapsedHeaders]);
+// capture — ловит прокрутку и окна (десктоп), и внутреннего контейнера
+// (мобильный), который появляется только после загрузки шаблона.
+useEffect(() => {
+  const onScroll = () => trimScrollRoom();
+  window.addEventListener('scroll', onScroll, { capture: true, passive: true });
+  window.addEventListener('resize', onScroll);
+  return () => {
+    window.removeEventListener('scroll', onScroll, { capture: true });
+    window.removeEventListener('resize', onScroll);
+  };
+// eslint-disable-next-line react-hooks/exhaustive-deps
+}, []);
 // Сенсорный экран (телефон/планшет) — см. touchBridgeIds ниже.
 const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+// Мобильный: экранная клавиатура открылась (или изменила высоту) — поле в
+// фокусе должно остаться видно. Видимая область резко уменьшается (~844 →
+// ~500px), и поле из нижней половины экрана оказывалось под клавиатурой;
+// iOS вдобавок сам прокручивал окно, хотя на мобильном прокручивается
+// внутренний контейнер ([data-filler-scroller]) — окно возвращаем на место.
+// Если над полем открыт попап «Находки» (у «Заключения»), поле ставится к
+// низу видимой области — попапу остаётся всё место сверху.
+useEffect(() => {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  let timer = 0;
+  const keepFocusedVisible = () => {
+    clearTimeout(timer);
+    // После того как клавиатура доехала и _app.tsx пересчитал
+    // --vv-height (высота контейнера) — иначе меряем по старой раскладке.
+    timer = window.setTimeout(() => {
+      if (!document.documentElement.classList.contains('kb-open')) return;
+      const scroller = getPageScroller();
+      if (!scroller) return;
+      if (window.scrollY !== 0) window.scrollTo({ top: 0, behavior: 'instant' });
+      const el = document.activeElement as HTMLElement | null;
+      if (!el || !scroller.contains(el)) return;
+      const row = (el.closest('[data-field-id]') as HTMLElement | null) || el;
+      const zoneTop = document.querySelector('[data-mobile-bottom]')?.getBoundingClientRect().top ?? Infinity;
+      const visibleTop = vv.offsetTop + 8;
+      const visibleBottom = Math.min(vv.offsetTop + vv.height, zoneTop) - 8;
+      const r = row.getBoundingClientRect();
+      const hasPopup = !!row.querySelector('[data-findings-popup]');
+      let delta = 0;
+      if (hasPopup || r.bottom > visibleBottom) delta = r.bottom - visibleBottom;
+      else if (r.top < visibleTop) delta = r.top - visibleTop;
+      if (Math.abs(delta) > 2) scroller.scrollBy({ top: delta, behavior: 'smooth' });
+    }, 120);
+  };
+  vv.addEventListener('resize', keepFocusedVisible);
+  return () => {
+    clearTimeout(timer);
+    vv.removeEventListener('resize', keepFocusedVisible);
+  };
+}, []);
 useEffect(() => {
   const mq = window.matchMedia('(pointer: coarse)');
   setIsCoarsePointer(mq.matches);
@@ -725,7 +822,7 @@ const glideHeaderIntoPlace = (headerId: string, onDone: () => void) => {
   if (headerGlideRafRef.current !== null) cancelAnimationFrame(headerGlideRafRef.current);
   // С запасом: onDone (фокус первого поля) вызывается в конце цикла, а
   // эффект реагирует на него ещё через кадр.
-  manualScrollUntilRef.current = performance.now() + SECTION_TRANSITION_MS + 500;
+  manualScrollUntilRef.current = performance.now() + SECTION_GLIDE_MAX_MS + 500;
 
   const headerEl = document.querySelector(`[data-header-id="${headerId}"]`) as HTMLElement | null;
   if (!headerEl) {
@@ -739,16 +836,26 @@ const glideHeaderIntoPlace = (headerId: string, onDone: () => void) => {
   const targetTop = (topBar?.getBoundingClientRect().bottom ?? 0) + 16;
   const startTop = headerEl.getBoundingClientRect().top;
 
-  // Ведём заголовок чуть дольше самой CSS-транзиции: она стартует на кадр
-  // позже (после коммита React), и последние кадры нужно тоже удержать.
-  const glideMs = SECTION_TRANSITION_MS;
-  const holdMs = SECTION_TRANSITION_MS + 80;
+  // Длительность — по расстоянию (см. SECTION_GLIDE_MAX_MS). Ведём
+  // заголовок чуть дольше и самой подводки, и CSS-транзиции: та стартует
+  // на кадр позже (после коммита React), последние кадры тоже удерживаем.
+  const distance = Math.abs(targetTop - startTop);
+  // «Уменьшить движение» в системе: заголовок встаёт на место сразу
+  // (сворачивание разделов в этом режиме тоже мгновенное — globals.css).
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const glideMs = reduced ? 1 : Math.min(SECTION_GLIDE_MAX_MS, SECTION_TRANSITION_MS + distance * 0.3);
+  const holdMs = Math.max(glideMs, SECTION_TRANSITION_MS) + 80;
   const start = performance.now();
+
+  // Смесь ease-in-out (35%) и ease-out (65%): начальная скорость в полтора раза ниже, чем у чистого
+  // ease-out cubic (тот начинал сразу с максимальной скорости), торможение
+  // по-прежнему долгое.
+  const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2) * 0.35 + (1 - Math.pow(1 - t, 3)) * 0.65;
 
   const step = (now: number) => {
     const elapsed = now - start;
     const t = Math.min(1, elapsed / glideMs);
-    const eased = 1 - Math.pow(1 - t, 3);
+    const eased = ease(t);
     const desired = startTop + (targetTop - startTop) * eased;
     const delta = headerEl.getBoundingClientRect().top - desired;
     // behavior: 'instant' обязателен — в globals.css у html стоит
@@ -1985,6 +2092,16 @@ useEffect(() => {
   return () => window.removeEventListener('mousedown', handleGlobalMouseDown);
 }, []);
 
+// Время последнего нажатия кнопки мыши (не касания) — см. эффект ниже.
+const lastMouseDownAtRef = useRef(0);
+useEffect(() => {
+  const onPointerDown = (e: PointerEvent) => {
+    if (e.pointerType === 'mouse') lastMouseDownAtRef.current = performance.now();
+  };
+  window.addEventListener('pointerdown', onPointerDown, true);
+  return () => window.removeEventListener('pointerdown', onPointerDown, true);
+}, []);
+
       useEffect(() => {
     if (!activeFieldId) return;
 
@@ -1998,7 +2115,19 @@ useEffect(() => {
       // при смене collapsedHeaders (ехал к старому, схлопывающемуся полю) и
       // в конце, при фокусе первого поля нового раздела (центрировал его и
       // стягивал только что доведённый наверх заголовок обратно вниз).
-      if (el && performance.now() >= manualScrollUntilRef.current) {
+      // Поле выбрано кликом мыши и целиком видно — страницу не двигаем:
+      // иначе оно уезжало к центру прямо из-под курсора (следующий клик
+      // промахивался, протяжка выделяла текст). Центрирование — для
+      // перехода с клавиатуры (Tab, стрелки, Ctrl+цифры), где взгляд
+      // следует за фокусом.
+      const byMouse = performance.now() - lastMouseDownAtRef.current < 800;
+      let fullyVisible = false;
+      if (el && byMouse) {
+        const r = el.getBoundingClientRect();
+        const top = document.querySelector('[data-filler-topbar]')?.getBoundingClientRect().bottom ?? 0;
+        fullyVisible = r.top >= top && r.bottom <= window.innerHeight;
+      }
+      if (el && !fullyVisible && performance.now() >= manualScrollUntilRef.current) {
         el.scrollIntoView({
           behavior: 'smooth',
           block: 'center',
@@ -3272,10 +3401,10 @@ for (const f of visibleFields) {
           {/* Плавно исчезающее уведомление (черновик, копирование и т.п.) */}
           <div
             className={`flex items-center gap-2 px-3 py-1.5 bg-none border border-none
-                        text-zinc-400 text-sm whitespace-nowrap overflow-hidden transition-all duration-300
+                        text-zinc-400 text-sm whitespace-nowrap overflow-hidden transition-[opacity,max-width,margin] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]
                         ${toastMessage
-                          ? 'opacity-100 max-w-[200px] scale-100 mr-2'
-                          : 'opacity-0 max-w-0 scale-95 pointer-events-none'
+                          ? 'opacity-100 max-w-[200px] mr-2'
+                          : 'opacity-0 max-w-0 pointer-events-none'
                         }`}
           >
             {toastMessage}
@@ -3358,8 +3487,11 @@ for (const f of visibleFields) {
         </aside>
 
         <main className="flex-1 min-w-0 pb-64">
+          <AnimatePresence>
           {variantSelector && (
-            <div
+            <motion.div
+              key="variants"
+              {...FADE}
               // Выше модальных окон (z-[999]): сокращения работают и в окне «Примечание».
               className="fixed z-[1000] bg-zinc-900/90 backdrop-blur-md rounded-xl shadow-xl py-1 w-fit min-w-[160px] max-w-[420px]"
               style={{
@@ -3391,8 +3523,9 @@ for (const f of visibleFields) {
                   {variant}
                 </button>
               ))}
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
           <h1 className="mb-6 px-2 text-2xl font-bold tracking-tight select-none">{template.title}</h1>
 
           {/* Вводные строки протокола — «Сравнение» и «Примечание»: в
@@ -3470,7 +3603,7 @@ for (const f of visibleFields) {
       <div
         key={f.id}
         data-field-id={f.id}
-        className={`grid group/card transition-all ${skipSectionTransition ? 'duration-0' : 'duration-200'} ease-out
+        className={`grid group/card transition-[grid-template-rows,opacity] ${skipSectionTransition ? 'duration-0' : 'duration-200'} ease-in-out
           ${isSectionCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}
           ${newlyAddedId === f.id || isRemoving ? 'opacity-0 grid-rows-[0fr]' : ''}
         `}
@@ -3819,12 +3952,13 @@ for (const f of visibleFields) {
       {f.type === 'conclusion' && activeFieldId === f.id && findings.length > 0 && (
         <motion.div
           key="findings"
-          initial={{ opacity: 0, y: 6, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: 4, scale: 0.98 }}
-          transition={{ duration: 0.16, ease: 'easeOut' }}
+          {...FADE}
           onMouseDown={(e) => e.preventDefault()}
-          className="absolute bottom-full left-0 right-0 mb-2 z-40 max-h-[calc(50vh-7rem)] flex flex-col rounded-2xl bg-zinc-900 border border-white/10 shadow-2xl overflow-hidden"
+          data-findings-popup
+          // На мобильном высота — от видимой над клавиатурой области
+          // (--vv-height), а не от полной высоты экрана (vh): иначе при
+          // открытой клавиатуре попап не помещался над полем и обрезался.
+          className="absolute bottom-full left-0 right-0 mb-2 z-40 max-h-[calc(50vh-7rem)] max-lg:max-h-[min(calc(50vh-7rem),calc(var(--vv-height,100dvh)-14rem))] flex flex-col rounded-2xl bg-zinc-900 border border-white/10 shadow-2xl overflow-hidden"
         >
           {/* Шапка — закреплена (не прокручивается со списком); вся строка
               сворачивает/разворачивает попап. */}
@@ -3853,10 +3987,7 @@ for (const f of visibleFields) {
           {!findingsCollapsed && (
           <motion.div
             key="findings-body"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            {...COLLAPSE}
             className="min-h-0 flex flex-col overflow-hidden"
           >
           <div className="min-h-0 overflow-y-auto px-3.5 pb-2">
@@ -3957,7 +4088,15 @@ for (const f of visibleFields) {
             {/* ИИ-проверка протокола: исправления по полям и замечания по
                 смыслу. В правой панели, а не поверх строк — не закрывает
                 протокол; клики не уводят фокус из поля. */}
-            {reviewVisible && renderReviewPanel('mb-2 max-h-[55vh] overflow-y-auto rounded-xl bg-zinc-900 border border-white/10 shadow-2xl')}
+            {/* Появляется и исчезает плавно по высоте — карточка быстрых
+                кнопок под ней сдвигается без рывка. */}
+            <AnimatePresence initial={false}>
+              {reviewVisible && (
+                <motion.div key="review" {...COLLAPSE} className="overflow-hidden">
+                  {renderReviewPanel('mb-2 max-h-[55vh] overflow-y-auto rounded-xl bg-zinc-900 border border-white/10 shadow-2xl')}
+                </motion.div>
+              )}
+            </AnimatePresence>
           <div className="rounded-2xl bg-zinc-900/75 border border-white/10 shadow-2xl p-2">
             <div className="px-2 pt-1 pb-2 text-xs text-zinc-500 truncate">
               Быстрые кнопки{activeField?.label ? <> · <span className="text-zinc-300">{activeField.label}</span></> : null}
@@ -4043,7 +4182,10 @@ for (const f of visibleFields) {
             {!isSinglePhrase && (
               <ul
                 tabIndex={-1}
-                className="dropdown-content menu bg-zinc-900 border border-white/10 shadow-2xl rounded-box z-[10000] w-full min-w-[320px] p-1 mt-1"
+                // !scale-100 — только прозрачность, без «вырастания» из 95%
+                // (своя анимация daisyUI), как у остальных всплывающих
+                // списков (lib/motion.ts).
+                className="dropdown-content menu !scale-100 ease-[cubic-bezier(0.22,1,0.36,1)] bg-zinc-900 border border-white/10 shadow-2xl rounded-box z-[10000] w-full min-w-[320px] p-1 mt-1"
               >
                 <div className="max-h-[280px] overflow-y-auto overflow-x-hidden py-1 overscroll-contain scrollbar-thin scrollbar-thumb-zinc-500 scrollbar-track-zinc-900/30">
                   {phrases.map((phrase: string, pIdx: number) => {
@@ -4139,10 +4281,7 @@ for (const f of visibleFields) {
                   key="quick-card"
                   // Только прозрачность — карточка проявляется и тает на
                   // своём месте, ниоткуда не выезжая.
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ duration: 0.22, ease: 'easeOut' }}
+                  {...FADE}
                   className="pointer-events-auto mx-2 mb-2 rounded-[22px] overflow-hidden border border-white/[0.12] bg-zinc-900/60 backdrop-blur-2xl backdrop-saturate-150 backdrop-brightness-[0.45] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.06)]"
                 >
                   {/* Раскрытый список — плавно по высоте; содержимое при
@@ -4151,17 +4290,14 @@ for (const f of visibleFields) {
                     {panelOpen && (
                       <motion.div
                         key="panel"
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                        {...COLLAPSE}
                         className="overflow-hidden"
                       >
                         <motion.div
                           key={mobilePanel?.kind === 'group' ? `g${mobilePanel.idx}` : mobilePanel?.kind}
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
-                          transition={{ duration: 0.18 }}
+                          transition={{ duration: DURATION.base, ease: EASE }}
                           className="max-h-[min(20rem,calc(var(--vv-height,100dvh)-14rem))] overflow-y-auto overscroll-contain divide-y divide-white/[0.07] border-b border-white/10"
                         >
                           {mobilePanel?.kind === 'group' && openGroup && (openGroup.phrases || []).filter(Boolean).map((phrase, pIdx) => (
@@ -4194,12 +4330,14 @@ for (const f of visibleFields) {
 
                   {/* Подпись и вкладки. key — активное поле: при переходе к
                       другому полю содержимое мягко сменяется, а сама карточка
-                      остаётся на месте (не исчезает и не прыгает). */}
+                      остаётся на месте (не исчезает и не прыгает). Наплыв —
+                      не с нуля: с полной прозрачности на кадр мелькала
+                      пустая карточка. */}
                   <motion.div
                     key={activeFieldId || 'none'}
-                    initial={{ opacity: 0 }}
+                    initial={{ opacity: 0.35 }}
                     animate={{ opacity: 1 }}
-                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                    transition={{ duration: DURATION.base, ease: EASE }}
                   >
                     <div className="flex items-center gap-2 px-4 pt-3 pb-1">
                       <span className="flex-1 min-w-0 truncate text-[12px] font-medium tracking-wide text-zinc-400">
@@ -4988,6 +5126,9 @@ for (const f of visibleFields) {
           </ModalButton>
         </ModalFooter>
       </AnimatedModal>
+      {/* Запас прокрутки внизу страницы — см. useLayoutEffect у
+          collapsedHeaders. Высоту ставит код напрямую, без перерисовки. */}
+      <div ref={scrollRoomRef} aria-hidden="true" style={{ height: 0 }} />
     </div>
   );
 }

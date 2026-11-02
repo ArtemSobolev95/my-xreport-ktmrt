@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { AnimatePresence, motion, useIsPresent } from 'framer-motion';
 import type { ButtonHTMLAttributes, KeyboardEvent, ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { DURATION, EASE } from '../lib/motion';
 
 // Единый каркас всех модалок приложения (framer-motion).
 //
@@ -27,7 +28,6 @@ const SIZE_CLASS: Record<ModalSize, string> = {
   xl: 'max-w-4xl',
 };
 
-const EASE_OUT = [0.22, 1, 0.36, 1] as const;
 
 // Страница под открытой модалкой не прокручивается (раньше это делал
 // daisyUI через .modal-open). Счётчик — модалки бывают вложенными
@@ -100,14 +100,14 @@ function ModalLayer({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        transition={{ duration: 0.18, ease: 'easeOut' }}
+        transition={{ duration: DURATION.base, ease: EASE }}
       />
       <motion.div
         className={`relative w-full ${SIZE_CLASS[size]} max-h-[calc(100dvh-1rem)] sm:max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden bg-zinc-900 border border-white/10 shadow-2xl rounded-2xl sm:rounded-3xl text-white ${className}`}
         initial={{ opacity: 0, scale: 0.96, y: 8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.97, y: 4 }}
-        transition={{ duration: 0.2, ease: EASE_OUT }}
+        transition={{ duration: DURATION.base, ease: EASE }}
       >
         {children}
       </motion.div>

@@ -562,8 +562,46 @@ const focusFieldElement = (fieldId: string, scroll = true) => {
   }
 };
 
+// Чем прокручивается страница. На мобильном — внутренний контейнер
+// [data-filler-scroller] высотой с видимую область (см. корень разметки
+// ниже), на десктопе — окно.
+const getPageScroller = (): HTMLElement | null => {
+  const el = document.querySelector('[data-filler-scroller]') as HTMLElement | null;
+  return el && getComputedStyle(el).overflowY === 'auto' ? el : null;
+};
+const scrollPageBy = (delta: number, behavior: ScrollBehavior) => {
+  const scroller = getPageScroller();
+  if (scroller) scroller.scrollBy({ top: delta, behavior });
+  else window.scrollTo({ top: window.scrollY + delta, behavior });
+};
+
+// Прокрутка поля в видимую область при открытой экранной клавиатуре:
+// между верхом видимой части окна (visualViewport — над клавиатурой) и
+// нижней мобильной зоной с быстрыми кнопками. scrollIntoView и расчёт от
+// верхней панели здесь не годятся: на iOS окно при открытой клавиатуре не
+// уменьшается, и «центр» оказывался под клавиатурой, а верхняя панель при
+// наборе не липнет и может быть уже за экраном.
+const revealAboveKeyboard = (el: HTMLElement) => {
+  const vv = window.visualViewport;
+  const visibleTop = vv?.offsetTop ?? 0;
+  const bottomZone = document.querySelector('[data-mobile-bottom]')?.getBoundingClientRect().height ?? 0;
+  const visibleBottom = visibleTop + (vv?.height ?? window.innerHeight) - bottomZone;
+  // Поле — чуть ниже верха видимой области, с местом под заголовок раздела.
+  const target = visibleTop + 64;
+  const rect = el.getBoundingClientRect();
+  if (rect.top >= visibleTop + 48 && rect.bottom <= visibleBottom - 8) return;
+  scrollPageBy(rect.top - target, 'smooth');
+};
+
 const openOnlySection = (headerId: string, instant = false) => {
   if (!template) return;
+  // Экранная клавиатура открыта (телефон, фокус в поле): раздел — сразу,
+  // без анимации, и фокус сразу в его первое поле. С анимацией фокус на
+  // время сворачивания оставался в схлопывающемся поле — iOS сам
+  // докручивал к нему страницу, а «доводка» заголовка под верхнюю панель
+  // (не липнущую при наборе) уводила поле за экран.
+  const keyboardOpen = document.documentElement.classList.contains('kb-open');
+  if (keyboardOpen) instant = true;
 
   const allHeaderIds = (template.fields || [])
     .filter((f: BuilderField) => f.type === 'header' && !deletedFieldIds.includes(f.id))
@@ -630,7 +668,13 @@ const openOnlySection = (headerId: string, instant = false) => {
 
   if (!firstFieldId) return;
 
-  if (instant) {
+  if (keyboardOpen) {
+    requestAnimationFrame(() => {
+      focusFieldElement(firstFieldId!, false);
+      const el = document.querySelector(`[data-field-id="${firstFieldId}"]`) as HTMLElement | null;
+      if (el) revealAboveKeyboard(el);
+    });
+  } else if (instant) {
     // Транзиция пропущена (duration-0) — DOM уже в конечном состоянии на
     // следующем кадре, ждать SECTION_TRANSITION_MS не нужно (см. Shift+Tab
     // назад чуть ниже, где используется тот же приём).
@@ -690,7 +734,7 @@ const glideHeaderIntoPlace = (headerId: string, onDone: () => void) => {
     // scroll-behavior: smooth, и без этого каждая покадровая поправка
     // сама превращалась бы в отдельную плавную прокрутку.
     if (Math.abs(delta) > 0.5) {
-      window.scrollTo({ top: window.scrollY + delta, behavior: 'instant' });
+      scrollPageBy(delta, 'instant');
     }
     if (elapsed < holdMs) {
       headerGlideRafRef.current = requestAnimationFrame(step);
@@ -1369,11 +1413,13 @@ const handleClearDraft = async () => {
 
     updatePosition(); // сразу при открытии
 
-    window.addEventListener('scroll', updatePosition, { passive: true });
+    // capture — прокрутка не всплывает: так ловится и прокрутка внутреннего
+    // контейнера страницы на мобильном ([data-filler-scroller]).
+    window.addEventListener('scroll', updatePosition, { passive: true, capture: true });
     window.addEventListener('resize', updatePosition);
 
     return () => {
-      window.removeEventListener('scroll', updatePosition);
+      window.removeEventListener('scroll', updatePosition, { capture: true });
       window.removeEventListener('resize', updatePosition);
     };
   }, [variantSelector?.fieldId]);
@@ -3187,7 +3233,18 @@ for (const f of visibleFields) {
     // контент на месте, сам докручивал страницу вниз, пока раздел
     // раскрывается, а затем scrollIntoView к первому полю вёл её обратно
     // вверх — "скролл вниз, потом вверх".
-    <div className="min-h-screen bg-zinc-950 text-white [overflow-anchor:none]">
+    //
+    // Мобильный (< lg): прокручивается не окно, а этот контейнер высотой с
+    // видимую область (--vv-height — над экранной клавиатурой). На iPhone
+    // прокрутка окна при открытой клавиатуре сдвигает слой fixed-элементов,
+    // и панель быстрых кнопок приходилось догонять по событиям прокрутки —
+    // с запаздыванием и рывками. Окно теперь стоит на месте, и панель просто
+    // неподвижно стоит над клавиатурой. overscroll-contain — прокрутка у
+    // края контейнера не передаётся окну.
+    <div
+      data-filler-scroller
+      className="min-h-screen bg-zinc-950 text-white [overflow-anchor:none] max-lg:min-h-0 max-lg:h-[var(--vv-height,100dvh)] max-lg:overflow-y-auto max-lg:overscroll-contain max-lg:[scroll-padding-bottom:7rem]"
+    >
             
         <div data-filler-topbar className="sticky top-0 z-50 bg-zinc-950 border-b border-white/10">
         <UserHeader>
@@ -3907,8 +3964,11 @@ for (const f of visibleFields) {
             <div
               tabIndex={-1}
               role="button"
-              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-sm text-white hover:bg-white/5 hover:text-amber-400 focus:outline-none cursor-pointer transition-colors ${
-                isOpen ? 'bg-white/5 text-amber-400' : ''
+              // Раскрытая группа — серый фон и янтарный текст. text-white —
+              // только у закрытой: вместе с text-amber-400 в одном классе
+              // побеждал белый, и янтарный у раскрытой не показывался.
+              className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-sm hover:bg-white/5 hover:text-amber-400 focus:outline-none cursor-pointer transition-colors ${
+                isOpen ? 'bg-white/5 text-amber-400' : 'text-white'
               }`}
               onClick={() => {
                 if (isSinglePhrase && singlePhrase) {
@@ -4014,7 +4074,6 @@ for (const f of visibleFields) {
         const PILL_CLASS = 'shrink-0 h-10 px-4 inline-flex items-center gap-1.5 rounded-full text-[14px] whitespace-nowrap transition-colors cursor-pointer';
         const ROW_CLASS = 'w-full flex items-center gap-3 px-4 py-3 text-left text-[15px] leading-snug active:bg-white/10 cursor-pointer';
         const ACTION_CLASS = 'flex-1 min-w-0 h-14 flex flex-col items-center justify-center gap-0.5 text-[11px] transition-colors cursor-pointer active:bg-white/5';
-        const SPRING = { type: 'spring' as const, stiffness: 520, damping: 40, mass: 0.8 };
         return (
           <div
             data-mobile-bottom
@@ -4025,11 +4084,12 @@ for (const f of visibleFields) {
               {cardVisible && (
                 <motion.div
                   key="quick-card"
-                  initial={{ opacity: 0, y: 24, scale: 0.96 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 24, scale: 0.96 }}
-                  transition={SPRING}
-                  style={{ transformOrigin: '50% 100%' }}
+                  // Только прозрачность — карточка проявляется и тает на
+                  // своём месте, ниоткуда не выезжая.
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.22, ease: 'easeOut' }}
                   className="pointer-events-auto mx-2 mb-2 rounded-[22px] overflow-hidden border border-white/[0.12] bg-zinc-900/60 backdrop-blur-2xl backdrop-saturate-150 backdrop-brightness-[0.45] shadow-[0_16px_48px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.06)]"
                 >
                   {/* Раскрытый список — плавно по высоте; содержимое при
@@ -4046,8 +4106,8 @@ for (const f of visibleFields) {
                       >
                         <motion.div
                           key={mobilePanel?.kind === 'group' ? `g${mobilePanel.idx}` : mobilePanel?.kind}
-                          initial={{ opacity: 0, y: 6 }}
-                          animate={{ opacity: 1, y: 0 }}
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
                           transition={{ duration: 0.18 }}
                           className="max-h-[min(20rem,calc(var(--vv-height,100dvh)-14rem))] overflow-y-auto overscroll-contain divide-y divide-white/[0.07] border-b border-white/10"
                         >
@@ -4084,9 +4144,9 @@ for (const f of visibleFields) {
                       остаётся на месте (не исчезает и не прыгает). */}
                   <motion.div
                     key={activeFieldId || 'none'}
-                    initial={{ opacity: 0, x: 10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.18, ease: 'easeOut' }}
                   >
                     <div className="flex items-center gap-2 px-4 pt-3 pb-1">
                       <span className="flex-1 min-w-0 truncate text-[12px] font-medium tracking-wide text-zinc-400">
@@ -4125,7 +4185,11 @@ for (const f of visibleFields) {
                                 if (isSingle) { insertPhrase(phrases[0]); return; }
                                 setMobilePanel(p => (p?.kind === 'group' && p.idx === gIdx ? null : { kind: 'group', idx: gIdx }));
                               }}
-                              className={`${PILL_CLASS} ${isOpen ? 'bg-white text-zinc-950' : 'bg-white/[0.09] text-zinc-100 active:bg-white/20'}`}
+                              // Цвета — как у кнопок групп на десктопе: обычная ≈ фон
+                              // панели (rgb 24–25), раскрытая — серая (rgb 32) с
+                              // янтарным текстом. Прозрачность подобрана под стекло
+                              // карточки, у которого своя подложка.
+                              className={`${PILL_CLASS} ${isOpen ? 'bg-white/[0.07] text-amber-400' : 'bg-white/[0.04] text-zinc-100 active:bg-white/[0.07]'}`}
                             >
                               {isSingle && <Plus className="w-4 h-4 opacity-60" />}
                               {group.label || 'Группа'}

@@ -45,9 +45,9 @@ body {
 
    Пока клавиатура открыта:
    - нижняя зона страницы заполнения (data-mobile-bottom) и панель
-     конструктора (data-mobile-sheet) ставятся НИЖНИМ краем на --vv-bottom
-     (top + translateY(-100%)), т.е. ровно над клавиатурой — а не bottom: 0,
-     который на iOS оказывается под клавиатурой;
+     конструктора (data-mobile-sheet) сдвигаются НИЖНИМ краем на --vv-bottom,
+     т.е. ровно над клавиатурой — а не bottom: 0, который на iOS
+     оказывается под клавиатурой;
    - панель действий (data-mobile-dock) скрыта — во время набора нужны
      быстрые кнопки поля, а не «Копировать»;
    - шапка страницы заполнения не липнет к верху: иначе вместе с
@@ -61,15 +61,27 @@ body {
   html.kb-open [data-mobile-dock] {
     display: none;
   }
+  /* Сдвиг — transform (композитор, без пересчёта раскладки). На странице
+     заполнения прокручивается внутренний контейнер, а не окно (см.
+     [data-filler-scroller] в pages/filler.tsx), поэтому при прокрутке
+     видимая область не сдвигается и панель стоит на месте. */
   html.kb-open [data-mobile-bottom] {
-    top: var(--vv-bottom, 100%);
+    top: 0;
     bottom: auto;
-    transform: translateY(-100%);
+    transform: translate3d(0, calc(var(--vv-bottom, 100vh) - 100%), 0);
+    will-change: transform;
   }
   html.kb-open [data-mobile-sheet] {
-    top: calc(var(--vv-bottom, 100%) - 0.5rem);
+    top: 0;
     bottom: auto;
-    transform: translateY(-100%);
+    transform: translate3d(0, calc(var(--vv-bottom, 100vh) - 100% - 0.5rem), 0);
+    will-change: transform;
+  }
+  /* Страница заполнения прокручивает свой контейнер — окно не должно
+     прокручиваться и «оттягиваться» вовсе. */
+  html:has([data-filler-scroller]) {
+    overflow: hidden;
+    overscroll-behavior: none;
   }
   html.kb-open [data-filler-topbar] {
     position: relative;

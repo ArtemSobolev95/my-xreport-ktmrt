@@ -33,10 +33,14 @@ export default function App({ Component, pageProps }: AppProps) {
   // части страницы, что видна над клавиатурой (visual viewport). На iOS
   // layout viewport при открытой клавиатуре не уменьшается — прижатая к
   // низу (bottom: 0) лента оказывалась под клавиатурой, у низа страницы.
-  // Поэтому при открытой клавиатуре лента ставится не от низа, а от верха:
-  // по нижней границе видимой области, --vv-bottom = offsetTop + height
-  // visualViewport (в координатах layout viewport). Ни высота клавиатуры,
-  // ни высота окна при этом не нужны — они по-разному врут в iOS/Android.
+  // Поэтому при открытой клавиатуре лента сдвигается (transform) к нижней
+  // границе видимой области: --vv-bottom = offsetTop + height visualViewport
+  // (в координатах layout viewport).
+  //
+  // Позиция обновляется прямо в обработчике события, не кадром позже.
+  // Прокрутку страницы заполнения на мобильном ведёт внутренний контейнер
+  // (pages/filler.tsx), так что видимая область при прокрутке не сдвигается
+  // и ленту не приходится «догонять».
   //
   // Открыта ли клавиатура: фокус в поле ввода и видимая высота заметно
   // меньше обычной (baseline — наибольшая высота без фокуса в поле). Без
@@ -49,6 +53,7 @@ export default function App({ Component, pageProps }: AppProps) {
     const root = document.documentElement;
     let baseline = vv.height;
     let frame = 0;
+    let wasOpen = false;
     let debugEl: HTMLDivElement | null = null;
     if (new URLSearchParams(window.location.search).has('kbdebug')) {
       debugEl = document.createElement('div');
@@ -65,21 +70,27 @@ export default function App({ Component, pageProps }: AppProps) {
       return !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color'].includes(type);
     };
     const update = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const editing = isEditableFocused();
-        if (!editing) baseline = Math.max(baseline, vv.height);
-        const open = editing && baseline - vv.height > 120;
-        root.style.setProperty('--vv-bottom', `${Math.round(vv.offsetTop + vv.height)}px`);
-        root.style.setProperty('--vv-height', `${Math.round(vv.height)}px`);
+      const editing = isEditableFocused();
+      if (!editing) baseline = Math.max(baseline, vv.height);
+      const open = editing && baseline - vv.height > 120;
+      root.style.setProperty('--vv-bottom', `${vv.offsetTop + vv.height}px`);
+      root.style.setProperty('--vv-height', `${Math.round(vv.height)}px`);
+      if (open !== wasOpen) {
         root.classList.toggle('kb-open', open);
-        if (debugEl) {
-          debugEl.textContent =
-            `innerH ${window.innerHeight}  clientH ${root.clientHeight}\n` +
-            `vv.h ${Math.round(vv.height)}  vv.top ${Math.round(vv.offsetTop)}  base ${Math.round(baseline)}\n` +
-            `scrollY ${Math.round(window.scrollY)}  edit ${editing}  kb-open ${open}`;
-        }
-      });
+        wasOpen = open;
+      }
+      if (debugEl) {
+        debugEl.textContent =
+          `innerH ${window.innerHeight}  clientH ${root.clientHeight}\n` +
+          `vv.h ${Math.round(vv.height)}  vv.top ${Math.round(vv.offsetTop)}  base ${Math.round(baseline)}\n` +
+          `scrollY ${Math.round(window.scrollY)}  edit ${editing}  kb-open ${open}`;
+      }
+    };
+    // При смене фокуса activeElement на время focusout — body: меряем после
+    // того, как фокус встанет на новое место.
+    const updateSoon = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(update);
     };
     // Поворот экрана меняет «обычную» высоту — меряем заново.
     const onOrientation = () => { baseline = 0; setTimeout(update, 300); };
@@ -87,8 +98,8 @@ export default function App({ Component, pageProps }: AppProps) {
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
     window.addEventListener('scroll', update, { passive: true });
-    window.addEventListener('focusin', update);
-    window.addEventListener('focusout', update);
+    window.addEventListener('focusin', updateSoon);
+    window.addEventListener('focusout', updateSoon);
     window.addEventListener('orientationchange', onOrientation);
     return () => {
       cancelAnimationFrame(frame);
@@ -96,8 +107,8 @@ export default function App({ Component, pageProps }: AppProps) {
       vv.removeEventListener('resize', update);
       vv.removeEventListener('scroll', update);
       window.removeEventListener('scroll', update);
-      window.removeEventListener('focusin', update);
-      window.removeEventListener('focusout', update);
+      window.removeEventListener('focusin', updateSoon);
+      window.removeEventListener('focusout', updateSoon);
       window.removeEventListener('orientationchange', onOrientation);
     };
   }, []);

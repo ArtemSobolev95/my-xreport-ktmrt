@@ -171,12 +171,14 @@ const isSafeUrl = (url: string): boolean => {
 // где рендерятся строки) — используется, чтобы не скроллить/фокусировать
 // элемент, пока его ещё двигает CSS-анимация сворачивания/разворачивания.
 const SECTION_TRANSITION_MS = 200;
-// Подводка заголовка раскрываемого раздела к верху экрана
-// (glideHeaderIntoPlace): длительность растёт с расстоянием — короткий путь
-// за время самой CSS-анимации, длинный (раздел далеко внизу) — до
-// SECTION_GLIDE_MAX_MS, иначе первый кадр сдвигал страницу рывком на
-// ~170px.
+// Переход заголовка раскрываемого раздела на новое место (FLIP, см.
+// pinHeaderRef в FillerPage): длительность растёт с расстоянием — короткий
+// путь за время самой CSS-анимации, длинный — до SECTION_GLIDE_MAX_MS.
 const SECTION_GLIDE_MAX_MS = 340;
+// Высота плашки текущего раздела под верхней панелью (десктоп, см.
+// stickySectionId): зона видимости отсчитывается от её низа, даже когда
+// плашка скрыта, — поле с фокусом не должно оказаться под ней.
+const SECTION_BAR_PX = 40;
 
 function FillerPage() {
   const router = useRouter();
@@ -424,6 +426,41 @@ useLayoutEffect(() => {
   const top = scroller ? scroller.scrollTop : window.scrollY;
   const viewH = scroller ? scroller.clientHeight : window.innerHeight;
   room.style.height = `${Math.ceil(top + viewH * 2)}px`;
+  // Раскрытие раздела (см. pinHeaderRef и openOnlySection) — FLIP:
+  // разделы выше уже схлопнуты мгновенно; страница тут же, до отрисовки,
+  // прокручивается в конечное положение, а видимый переход от прежнего
+  // места заголовка к новому (если он есть) проигрывает transform списка. transform iOS
+  // анимирует на видеокарте, отдельно от JS и перестройки страницы, —
+  // без рывков, в отличие от покадровой прокрутки.
+  const pin = pinHeaderRef.current;
+  pinHeaderRef.current = null;
+  const pinEl = pin && (document.querySelector(`[data-header-id="${pin.id}"]`) as HTMLElement | null);
+  const list = document.querySelector('[data-sections-list]') as HTMLElement | null;
+  if (pin && pinEl && list) {
+    let target: number;
+    if (pin.mode === 'top') {
+      const topBar = document.querySelector('[data-filler-topbar]') as HTMLElement | null;
+      target = (topBar?.getBoundingClientRect().bottom ?? 0) + 8;
+    } else {
+      // На прежнем месте, но не выше верха видимой части и не так низко,
+      // чтобы под заголовком не осталось места хотя бы на первую строку.
+      const zone = getComfortZone();
+      target = Math.max(zone.top + 8, Math.min(pin.top, zone.bottom - zone.margin - 96));
+    }
+    scrollPageBy(pinEl.getBoundingClientRect().top - target, 'instant');
+    const offset = pin.top - pinEl.getBoundingClientRect().top;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (Math.abs(offset) > 1 && !reduced) {
+      const ms = Math.round(Math.min(SECTION_GLIDE_MAX_MS, SECTION_TRANSITION_MS + Math.abs(offset) * 0.3));
+      list.style.transition = 'none';
+      list.style.transform = `translate3d(0, ${offset}px, 0)`;
+      void list.offsetHeight; // зафиксировать начальное положение
+      // Кривая выезжающих панелей iOS: старт вдвое мягче, чем у EASE.
+      list.style.transition = `transform ${ms}ms cubic-bezier(0.32, 0.72, 0, 1)`;
+      list.style.transform = '';
+      window.setTimeout(() => { list.style.transition = ''; }, ms + 50);
+    }
+  }
   const holdMs = SECTION_GLIDE_MAX_MS + 200;
   scrollRoomHoldUntilRef.current = performance.now() + holdMs;
   const t = window.setTimeout(trimScrollRoom, holdMs + 20);
@@ -492,6 +529,16 @@ useEffect(() => {
   return () => mq.removeEventListener('change', onChange);
 }, []);
 const [skipSectionTransition, setSkipSectionTransition] = useState(false);
+// Мобильный (прокручивается внутренний контейнер): разделы, которые
+// закрываются при раскрытии другого, схлопываются мгновенно, а не
+// анимацией — см. openOnlySection. null — обычный режим.
+const [instantSections, setInstantSections] = useState<Set<string> | null>(null);
+// Заголовок, который должен остаться на том же месте экрана после
+// мгновенного схлопывания разделов выше него (top — до изменения).
+// Обрабатывается в useLayoutEffect у collapsedHeaders — до отрисовки.
+// mode: 'keep' — по возможности на том же месте (десктоп), 'top' — под
+// верхней панелью (мобильный).
+const pinHeaderRef = useRef<{ id: string; top: number; mode: 'keep' | 'top' } | null>(null);
 
   // === Работа с черновиком в localStorage ===
 const DRAFT_KEY_PREFIX = 'filler_draft_';
@@ -646,7 +693,7 @@ const toggleAllSections = () => {
 };
 
 
-// scroll=false — прокрутку уже сделал вызывающий код (glideHeaderIntoPlace),
+// scroll=false — прокрутку сделает вызывающий код (openOnlySection),
 // здесь только фокус.
 const focusFieldElement = (fieldId: string, scroll = true) => {
   // обычные поля
@@ -665,15 +712,11 @@ const focusFieldElement = (fieldId: string, scroll = true) => {
   }
 
   if (el) {
-    // preventScroll — свой scrollIntoView ниже плавный (behavior: 'smooth'),
-    // а нативная прокрутка браузера при фокусе происходит мгновенно и
-    // сбивала бы эту анимацию своим скачком в середине. Без явного
-    // scrollIntoView прокрутки не было вообще — раздел, схлопываясь и
-    // разворачиваясь, двигал контент под фиксированной точкой обзора сам
-    // (через layout/scroll anchoring), что и выглядело как рывок вверх при
-    // сворачивании прошлых разделов, а затем вниз при раскрытии текущего.
+    // preventScroll — прокрутку делаем сами (revealField: плавно и только
+    // если поле вышло из комфортной зоны), нативная докрутка браузера при
+    // фокусе мгновенная и всегда.
     el.focus({ preventScroll: true });
-    if (scroll) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (scroll) revealField(el);
   } else {
     setActiveFieldId(fieldId);
     activeFieldRef.current = fieldId;
@@ -711,6 +754,51 @@ const revealAboveKeyboard = (el: HTMLElement) => {
   scrollPageBy(rect.top - target, 'smooth');
 };
 
+const isDesktopLayout = () => window.matchMedia('(min-width: 1024px)').matches;
+
+// Видимая часть страницы под верхней панелью (и плашкой раздела) и над
+// нижней мобильной зоной, плюс отступ «комфортной зоны» — 15% высоты.
+const getComfortZone = () => {
+  const scroller = getPageScroller();
+  const viewTop = scroller ? scroller.getBoundingClientRect().top : 0;
+  const viewH = scroller ? scroller.clientHeight : window.innerHeight;
+  const topBar = (document.querySelector('[data-filler-topbar]') as HTMLElement | null)?.getBoundingClientRect().bottom ?? viewTop;
+  const top = Math.max(viewTop, topBar) + (isDesktopLayout() ? SECTION_BAR_PX : 0);
+  const zoneTop = (document.querySelector('[data-mobile-bottom]') as HTMLElement | null)?.getBoundingClientRect().top ?? 0;
+  const bottom = Math.min(viewTop + viewH, zoneTop > 0 ? zoneTop : Infinity);
+  return { top, bottom, margin: Math.round(viewH * 0.15) };
+};
+
+// Показать поле с фокусом. Как в VS Code / Google Docs: пока строка поля
+// внутри комфортной зоны — страница стоит; вышла — сдвигается ровно
+// настолько, чтобы строка вернулась к краю зоны (а не в центр экрана при
+// каждом переходе, как раньше). Высокая строка — к верху зоны.
+// withMargin=false — достаточно, чтобы строка была на экране (после
+// раскрытия раздела: заголовок уже поставлен куда нужно, и отступ зоны
+// лишь сдвинул бы его обратно).
+const revealField = (el: HTMLElement, behavior: ScrollBehavior = 'smooth', withMargin = true) => {
+  if (document.documentElement.classList.contains('kb-open')) {
+    revealAboveKeyboard(el);
+    return;
+  }
+  const row = (el.closest('[data-field-id]') as HTMLElement | null) ?? el;
+  const r = row.getBoundingClientRect();
+  const zone = getComfortZone();
+  const { top, bottom } = zone;
+  const margin = withMargin ? zone.margin : 8;
+  const zoneTop = top + margin;
+  const zoneBottom = bottom - margin;
+  let delta = 0;
+  if (r.top < zoneTop) delta = r.top - zoneTop;
+  else if (r.bottom > zoneBottom) delta = Math.min(r.bottom - zoneBottom, r.top - zoneTop);
+  if (Math.abs(delta) > 1) scrollPageBy(delta, behavior);
+};
+
+// До этого момента (performance.now()) авто-прокрутка к активному полю
+// (эффект на activeFieldId/collapsedHeaders) отключена: прокруткой при
+// раскрытии раздела управляет openOnlySection.
+const manualScrollUntilRef = useRef(0);
+
 const openOnlySection = (headerId: string, instant = false) => {
   if (!template) return;
   // Экранная клавиатура открыта (телефон, фокус в поле): раздел — сразу,
@@ -727,7 +815,9 @@ const openOnlySection = (headerId: string, instant = false) => {
 
   const isCurrentlyOpen = !collapsedHeaders.has(headerId);
 
-  // Если раздел уже открыт — закрываем и оставляем фокус на заголовке
+  // Если раздел уже открыт — закрываем и оставляем фокус на заголовке.
+  // Схлопывается он вниз, под заголовком, — сам заголовок не двигается
+  // (запас прокрутки внизу — см. scrollRoomRef).
     if (isCurrentlyOpen) {
     setCollapsedHeaders(prev => new Set([...prev, headerId]));
     setActiveFieldId(null);
@@ -739,42 +829,20 @@ const openOnlySection = (headerId: string, instant = false) => {
       const el = document.querySelector(
         `[data-header-id="${headerId}"]`
       ) as HTMLElement | null;
-      el?.focus();
+      el?.focus({ preventScroll: true });
     }, 10);
     return;
   }
 
-  // Открываем этот раздел, остальные закрываем — по умолчанию анимированно,
-  // так же, как и закрытие (раньше здесь стоял setSkipSectionTransition(true),
-  // из-за чего открытие происходило мгновенно, без анимации, а закрытие —
-  // с анимацией; теперь оба случая по умолчанию ведут себя одинаково).
-  //
-  // instant=true — исключение для перехода Tab с последнего поля раздела
-  // на следующий (см. handleFieldTabNavigation): там одновременно
-  // схлопывается текущий (уже прочитанный пользователем, часто длинный)
-  // раздел и разворачивается следующий. Пока это анимировано, схлопывание
-  // раздела ВЫШЕ текущей позиции скролла убирает опору под ней раньше, чем
-  // успевает вырасти новый раздел — браузер зажимает scrollY вниз, и это
-  // выглядит как рывок вверх, а последующий scrollIntoView в
-  // focusFieldElement лишь чуть довинчивает уже сбившееся положение (рывок
-  // вниз). Мгновенное схлопывание/разворот (как и при обратном Shift+Tab)
-  // убирает это окно рассинхронизации: DOM встаёт на место одним кадром,
-  // и единственное движение экрана — один плавный scrollIntoView к цели.
-  if (instant) setSkipSectionTransition(true);
-  setCollapsedHeaders(new Set(allHeaderIds.filter((id: string) => id !== headerId)));
-
   // Ищем первое поле после этого заголовка
   let foundHeader = false;
   let firstFieldId: string | null = null;
-
   for (const f of template.fields) {
     if (deletedFieldIds.includes(f.id)) continue;
-
     if (f.id === headerId) {
       foundHeader = true;
       continue;
     }
-
     if (foundHeader) {
       if (f.type === 'header') break;
       if (f.type !== 'notes') {
@@ -784,94 +852,52 @@ const openOnlySection = (headerId: string, instant = false) => {
     }
   }
 
-  if (!firstFieldId) return;
-
-  if (keyboardOpen) {
+  if (instant) {
+    setSkipSectionTransition(true);
+    setCollapsedHeaders(new Set(allHeaderIds.filter((id: string) => id !== headerId)));
+    if (!firstFieldId) return;
     requestAnimationFrame(() => {
       focusFieldElement(firstFieldId!, false);
       const el = document.querySelector(`[data-field-id="${firstFieldId}"]`) as HTMLElement | null;
-      if (el) revealAboveKeyboard(el);
+      if (el) revealField(el);
     });
-  } else if (instant) {
-    // Транзиция пропущена (duration-0) — DOM уже в конечном состоянии на
-    // следующем кадре, ждать SECTION_TRANSITION_MS не нужно (см. Shift+Tab
-    // назад чуть ниже, где используется тот же приём).
-    requestAnimationFrame(() => focusFieldElement(firstFieldId!));
-  } else {
-    // Раньше здесь ждали конца CSS-анимации и затем делали scrollIntoView к
-    // первому полю. Это давало два движения подряд: пока схлопывался
-    // раздел ВЫШЕ кликнутого заголовка, заголовок вместе со всем контентом
-    // уезжал вверх (выглядит как скролл вниз), а потом scrollIntoView
-    // возвращал страницу обратно (скролл вверх) — "мини-скролл вниз, потом
-    // вверх", особенно заметно на длинных разделах. Теперь на каждом кадре
-    // анимации сами держим кликнутый заголовок в нужной точке экрана и
-    // плавно ведём его от исходного положения к верху области просмотра —
-    // одно непрерывное движение одновременно со схлопыванием/раскрытием.
-    glideHeaderIntoPlace(headerId, () => focusFieldElement(firstFieldId!, false));
-  }
-};
-
-// rAF-цикл текущего "ведения" заголовка — повторный клик по другому
-// заголовку до окончания анимации отменяет предыдущий цикл.
-const headerGlideRafRef = useRef<number | null>(null);
-// До этого момента (performance.now()) авто-прокрутка к активному полю
-// (эффект на activeFieldId/collapsedHeaders) отключена — см. там.
-const manualScrollUntilRef = useRef(0);
-
-const glideHeaderIntoPlace = (headerId: string, onDone: () => void) => {
-  if (headerGlideRafRef.current !== null) cancelAnimationFrame(headerGlideRafRef.current);
-  // С запасом: onDone (фокус первого поля) вызывается в конце цикла, а
-  // эффект реагирует на него ещё через кадр.
-  manualScrollUntilRef.current = performance.now() + SECTION_GLIDE_MAX_MS + 500;
-
-  const headerEl = document.querySelector(`[data-header-id="${headerId}"]`) as HTMLElement | null;
-  if (!headerEl) {
-    setTimeout(onDone, SECTION_TRANSITION_MS + 10);
     return;
   }
 
-  // Целевое положение — сразу под липкой верхней панелью, с небольшим
-  // отступом: так раскрытый раздел виден максимально.
-  const topBar = document.querySelector('[data-filler-topbar]') as HTMLElement | null;
-  const targetTop = (topBar?.getBoundingClientRect().bottom ?? 0) + 16;
-  const startTop = headerEl.getBoundingClientRect().top;
+  // Раскрытие без прыжков (клик/Enter по заголовку, Ctrl+E, Tab с
+  // последнего поля раздела в следующий). Раньше разделы выше схлопывались
+  // анимацией, а код на каждом кадре докручивал страницу, ведя заголовок к
+  // верху, и затем ставил первое поле в центр — экран ходил туда-обратно,
+  // а на iPhone покадровая прокрутка ещё и дёргалась. Теперь (FLIP):
+  // - разделы ВЫШЕ заголовка схлопываются мгновенно, ниже — анимацией;
+  // - до отрисовки (useLayoutEffect у collapsedHeaders, pinHeaderRef)
+  //   страница встаёт так, чтобы заголовок остался на прежнем месте экрана
+  //   (десктоп; если иначе раздел не виден — ближайшее место в комфортной
+  //   зоне) или встал под верхнюю панель (мобильный); если заголовку всё же
+  //   пришлось сдвинуться, путь проигрывается transform'ом списка;
+  // - раздел раскрывается вниз, под заголовком.
+  const headerEl = document.querySelector(`[data-header-id="${headerId}"]`) as HTMLElement | null;
+  if (headerEl) {
+    pinHeaderRef.current = {
+      id: headerId,
+      top: headerEl.getBoundingClientRect().top,
+      mode: getPageScroller() ? 'top' : 'keep',
+    };
+  }
+  const idx = allHeaderIds.indexOf(headerId);
+  setInstantSections(new Set(allHeaderIds.slice(0, idx).filter((id: string) => !collapsedHeaders.has(id))));
+  window.setTimeout(() => setInstantSections(null), SECTION_TRANSITION_MS + 50);
+  setCollapsedHeaders(new Set(allHeaderIds.filter((id: string) => id !== headerId)));
 
-  // Длительность — по расстоянию (см. SECTION_GLIDE_MAX_MS). Ведём
-  // заголовок чуть дольше и самой подводки, и CSS-транзиции: та стартует
-  // на кадр позже (после коммита React), последние кадры тоже удерживаем.
-  const distance = Math.abs(targetTop - startTop);
-  // «Уменьшить движение» в системе: заголовок встаёт на место сразу
-  // (сворачивание разделов в этом режиме тоже мгновенное — globals.css).
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const glideMs = reduced ? 1 : Math.min(SECTION_GLIDE_MAX_MS, SECTION_TRANSITION_MS + distance * 0.3);
-  const holdMs = Math.max(glideMs, SECTION_TRANSITION_MS) + 80;
-  const start = performance.now();
-
-  // Смесь ease-in-out (35%) и ease-out (65%): начальная скорость в полтора раза ниже, чем у чистого
-  // ease-out cubic (тот начинал сразу с максимальной скорости), торможение
-  // по-прежнему долгое.
-  const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2) * 0.35 + (1 - Math.pow(1 - t, 3)) * 0.65;
-
-  const step = (now: number) => {
-    const elapsed = now - start;
-    const t = Math.min(1, elapsed / glideMs);
-    const eased = ease(t);
-    const desired = startTop + (targetTop - startTop) * eased;
-    const delta = headerEl.getBoundingClientRect().top - desired;
-    // behavior: 'instant' обязателен — в globals.css у html стоит
-    // scroll-behavior: smooth, и без этого каждая покадровая поправка
-    // сама превращалась бы в отдельную плавную прокрутку.
-    if (Math.abs(delta) > 0.5) {
-      scrollPageBy(delta, 'instant');
-    }
-    if (elapsed < holdMs) {
-      headerGlideRafRef.current = requestAnimationFrame(step);
-    } else {
-      headerGlideRafRef.current = null;
-      onDone();
-    }
-  };
-  headerGlideRafRef.current = requestAnimationFrame(step);
+  if (!firstFieldId) return;
+  manualScrollUntilRef.current = performance.now() + SECTION_GLIDE_MAX_MS + 300;
+  // Фокус — сразу (после Tab можно печатать без паузы), без прокрутки;
+  // проверить, видно ли поле, — когда раздел раскрылся.
+  requestAnimationFrame(() => focusFieldElement(firstFieldId!, false));
+  window.setTimeout(() => {
+    const el = document.querySelector(`[data-field-id="${firstFieldId}"]`) as HTMLElement | null;
+    if (el) revealField(el, 'smooth', false);
+  }, SECTION_GLIDE_MAX_MS + 30);
 };
 
 // Переход фокуса между заголовками при Tab-навигации (см. onKeyDown у
@@ -886,7 +912,7 @@ const glideHeaderIntoPlace = (headerId: string, onDone: () => void) => {
 const focusHeaderForNav = (headerId: string) => {
   const el = document.querySelector(`[data-header-id="${headerId}"]`) as HTMLElement | null;
   el?.focus({ preventScroll: true });
-  el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (el) revealField(el);
 };
 
 const handleFieldTabNavigation = (
@@ -927,7 +953,7 @@ const handleFieldTabNavigation = (
     e.preventDefault();
     const next = sections[sectionIndex + 1];
     if (!next) return;
-    openOnlySection(next.headerId, true);
+    openOnlySection(next.headerId);
     return;
   }
 
@@ -944,6 +970,14 @@ const handleFieldTabNavigation = (
     }
 
     const allHeaderIds = sections.map(s => s.headerId);
+    // Предыдущий раздел раскрывается мгновенно, а заголовок текущего
+    // остаётся на месте экрана (pinHeaderRef) — последнее поле предыдущего
+    // раздела оказывается прямо над ним, там, куда пользователь и смотрел.
+    const anchor = document.querySelector(`[data-header-id="${section.headerId}"]`) as HTMLElement | null;
+    if (anchor && !document.documentElement.classList.contains('kb-open')) {
+      pinHeaderRef.current = { id: section.headerId, top: anchor.getBoundingClientRect().top, mode: 'keep' };
+    }
+    manualScrollUntilRef.current = performance.now() + 200;
     setSkipSectionTransition(true);
     setCollapsedHeaders(new Set(allHeaderIds.filter(id => id !== prev.headerId)));
 
@@ -956,6 +990,7 @@ const handleFieldTabNavigation = (
         .pop();
       if (lastVarKey && inputRefs.current[lastVarKey]) {
         inputRefs.current[lastVarKey].focus({ preventScroll: true });
+        revealField(inputRefs.current[lastVarKey]);
       } else {
         focusFieldElement(lastId);
       }
@@ -2110,16 +2145,11 @@ useEffect(() => {
         inputRefs.current[activeFieldId] ||
         (document.querySelector(`[data-field-id="${activeFieldId}"]`) as HTMLElement | null);
 
-      // Пока прокруткой управляет glideHeaderIntoPlace (клик по заголовку
-      // раздела), не вмешиваемся: иначе эффект срабатывал дважды — сразу
-      // при смене collapsedHeaders (ехал к старому, схлопывающемуся полю) и
-      // в конце, при фокусе первого поля нового раздела (центрировал его и
-      // стягивал только что доведённый наверх заголовок обратно вниз).
-      // Поле выбрано кликом мыши и целиком видно — страницу не двигаем:
-      // иначе оно уезжало к центру прямо из-под курсора (следующий клик
-      // промахивался, протяжка выделяла текст). Центрирование — для
-      // перехода с клавиатуры (Tab, стрелки, Ctrl+цифры), где взгляд
-      // следует за фокусом.
+      // Пока прокруткой управляет openOnlySection (раскрытие раздела), не
+      // вмешиваемся (manualScrollUntilRef). Поле выбрано кликом мыши и
+      // целиком видно — страницу не двигаем вовсе, даже у самого края:
+      // иначе строка уезжала бы из-под курсора. С клавиатуры — revealField
+      // (комфортная зона).
       const byMouse = performance.now() - lastMouseDownAtRef.current < 800;
       let fullyVisible = false;
       if (el && byMouse) {
@@ -2128,10 +2158,7 @@ useEffect(() => {
         fullyVisible = r.top >= top && r.bottom <= window.innerHeight;
       }
       if (el && !fullyVisible && performance.now() >= manualScrollUntilRef.current) {
-        el.scrollIntoView({
-          behavior: 'smooth',
-          block: 'center',
-        });
+        revealField(el);
       }
 
       // возвращаем анимацию разделов после скролла
@@ -2139,6 +2166,8 @@ useEffect(() => {
     });
 
     return () => cancelAnimationFrame(raf);
+  // revealField читает только DOM — от состояния не зависит.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFieldId, collapsedHeaders]);
 
 useEffect(() => {
@@ -3193,6 +3222,96 @@ useEffect(() => {
   showSaveModal,
 ]);
 
+// Плашка текущего раздела под верхней панелью (десктоп) — «липкий»
+// заголовок: когда заголовок открытого раздела ушёл под верхнюю панель, а
+// его поля ещё на экране, его название показывается плашкой, — всегда
+// видно, в каком разделе находишься. Настоящий position: sticky здесь
+// невозможен: строки страницы — плоский список, у заголовка нет общего
+// родителя с полями его раздела. Считается по DOM: data-collapsed у
+// заголовков, положения — getBoundingClientRect.
+const [stickySectionId, setStickySectionId] = useState<string | null>(null);
+useEffect(() => {
+  if (!template) return;
+  let raf = 0;
+  const compute = () => {
+    raf = 0;
+    if (!window.matchMedia('(min-width: 1024px)').matches) {
+      setStickySectionId(null);
+      return;
+    }
+    const line = (document.querySelector('[data-filler-topbar]') as HTMLElement | null)?.getBoundingClientRect().bottom ?? 0;
+    const headers = [...document.querySelectorAll<HTMLElement>('[data-header-id]')];
+    let found: string | null = null;
+    headers.forEach((h, i) => {
+      if (h.getBoundingClientRect().top >= line) return;
+      // Раздел ещё на экране: следующий заголовок (или конец списка) ниже
+      // плашки.
+      const next = headers[i + 1];
+      const end = next ? next.getBoundingClientRect().top : (document.querySelector('[data-sections-list]') as HTMLElement | null)?.getBoundingClientRect().bottom ?? 0;
+      found = !h.hasAttribute('data-collapsed') && end > line + SECTION_BAR_PX ? h.dataset.headerId ?? null : null;
+    });
+    setStickySectionId(found);
+  };
+  const schedule = () => { if (!raf) raf = requestAnimationFrame(compute); };
+  schedule();
+  // После анимации сворачивания/раскрытия и FLIP — ещё раз.
+  const t = window.setTimeout(schedule, SECTION_GLIDE_MAX_MS + 60);
+  window.addEventListener('scroll', schedule, { passive: true });
+  window.addEventListener('resize', schedule);
+  return () => {
+    cancelAnimationFrame(raf);
+    clearTimeout(t);
+    window.removeEventListener('scroll', schedule);
+    window.removeEventListener('resize', schedule);
+  };
+}, [template, collapsedHeaders]);
+
+// Мобильная карточка быстрых кнопок появляется, только когда видимая
+// область экрана остановилась. При переходе в другое поле iOS Safari сам
+// плавно сдвигает видимую область к полю (и бывает, что на миг меняет
+// высоту клавиатуры — строка подсказок), а карточка, привязанная к низу
+// видимой области (--vv-bottom), едет вместе с ней: проявляясь в этот
+// момент, она выглядела «подъезжающей снизу». Теперь — ждём 120 мс без
+// событий visualViewport (но не дольше 500 мс) и проявляем на месте.
+// Уже показанная карточка не прячется: при смене поля с кнопками на поле
+// с кнопками она просто остаётся.
+const mobileCardWanted = !!template && (
+  (!!activeFieldId && (template.fields?.find((f: BuilderField) => f.id === activeFieldId)?.quickButtons?.length ?? 0) > 0)
+  || reviewLoading || pendingCorrections.length > 0 || reviewIssues.length > 0
+  || mobilePanel !== null
+);
+const [mobileCardShown, setMobileCardShown] = useState(false);
+useEffect(() => {
+  if (!mobileCardWanted) {
+    setMobileCardShown(false);
+    return;
+  }
+  if (mobileCardShown) return;
+  const vv = window.visualViewport;
+  let timer = 0;
+  const show = () => {
+    clearTimeout(timer);
+    clearTimeout(cap);
+    setMobileCardShown(true);
+  };
+  const restart = () => {
+    clearTimeout(timer);
+    timer = window.setTimeout(show, 120);
+  };
+  const cap = window.setTimeout(show, 500);
+  restart();
+  vv?.addEventListener('resize', restart);
+  vv?.addEventListener('scroll', restart);
+  window.addEventListener('scroll', restart);
+  return () => {
+    clearTimeout(timer);
+    clearTimeout(cap);
+    vv?.removeEventListener('resize', restart);
+    vv?.removeEventListener('scroll', restart);
+    window.removeEventListener('scroll', restart);
+  };
+}, [mobileCardWanted, mobileCardShown]);
+
         if (loading) return (
   <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
     <div className="w-10 h-10 rounded-full border-4 border-white/15 border-t-amber-400 animate-spin" />
@@ -3466,6 +3585,40 @@ for (const f of visibleFields) {
           </div>
           <div className="hidden lg:block w-72 shrink-0" aria-hidden="true" />
         </div>
+        {/* Плашка текущего раздела (десктоп) — см. stickySectionId. Висит
+            под панелью поверх колонки полей, высотой SECTION_BAR_PX, и не
+            меняет высоту самой панели (иначе прыгала бы страница). */}
+        <div className="hidden lg:block absolute inset-x-0 top-full pointer-events-none">
+          <div className={PAGE_COLUMNS_CLASS}>
+            <div className={DOCK_COLUMN_CLASS} aria-hidden="true" />
+            <div className="flex-1 min-w-0 relative">
+              <AnimatePresence initial={false}>
+                {stickySectionId && (
+                  <motion.button
+                    key={stickySectionId}
+                    {...FADE}
+                    type="button"
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const el = document.querySelector(`[data-header-id="${stickySectionId}"]`) as HTMLElement | null;
+                      if (el) revealField(el);
+                    }}
+                    title="К началу раздела"
+                    style={{ height: SECTION_BAR_PX }}
+                    className="pointer-events-auto absolute inset-x-0 top-0 px-2 flex items-center gap-2 bg-zinc-950/90 backdrop-blur-md border-b border-white/10 text-left cursor-pointer group"
+                  >
+                    <ChevronDown size={18} className="shrink-0 text-zinc-500 group-hover:text-amber-400 transition-colors" />
+                    <span className="min-w-0 truncate text-base font-semibold tracking-wide text-white group-hover:text-amber-400 transition-colors">
+                      {template.fields.find((x: BuilderField) => x.id === stickySectionId)?.label}
+                    </span>
+                  </motion.button>
+                )}
+              </AnimatePresence>
+            </div>
+            <div className="w-72 shrink-0" aria-hidden="true" />
+          </div>
+        </div>
       </div>
 
       <div className={`${PAGE_COLUMNS_CLASS} pt-6 pb-8`}>
@@ -3583,7 +3736,9 @@ for (const f of visibleFields) {
 
           {/* Строки «Название поля: [содержимое]». Колонка названий общая в
               разделе — содержимое его строк начинается с одной вертикали. */}
-          <div>
+          {/* data-sections-list — сдвигается transform'ом при раскрытии
+              раздела на мобильном (FLIP, см. pinHeaderRef). */}
+          <div data-sections-list>
   {visibleFields.map((f: BuilderField) => {
     const parentHeaderId = f.type !== 'header' ? sectionHeaderMap.get(f.id) : null;
     const isSectionCollapsed = parentHeaderId ? collapsedHeaders.has(parentHeaderId) : false;
@@ -3603,7 +3758,7 @@ for (const f of visibleFields) {
       <div
         key={f.id}
         data-field-id={f.id}
-        className={`grid group/card transition-[grid-template-rows,opacity] ${skipSectionTransition ? 'duration-0' : 'duration-200'} ease-in-out
+        className={`grid group/card transition-[grid-template-rows,opacity] ${skipSectionTransition || (parentHeaderId && instantSections?.has(parentHeaderId)) ? 'duration-0' : 'duration-200'} ease-in-out
           ${isSectionCollapsed ? 'grid-rows-[0fr]' : 'grid-rows-[1fr]'}
           ${newlyAddedId === f.id || isRemoving ? 'opacity-0 grid-rows-[0fr]' : ''}
         `}
@@ -3623,6 +3778,7 @@ for (const f of visibleFields) {
     // tabIndex=-1 не мешает.
     tabIndex={collapsedHeaders.has(f.id) ? 0 : -1}
     data-header-id={f.id}
+    data-collapsed={collapsedHeaders.has(f.id) ? '' : undefined}
     className="mt-5 mb-1 py-1.5 px-2 flex items-center gap-2 cursor-pointer group select-none outline-none rounded-lg
       focus:bg-white/10 focus:ring-2 focus:ring-amber-400/40 focus:ring-inset"
     onClick={() => openOnlySection(f.id)}
@@ -4259,7 +4415,7 @@ for (const f of visibleFields) {
         const showStrip = groups.length > 0 || reviewVisible;
         const openGroup = mobilePanel?.kind === 'group' ? groups[mobilePanel.idx] : undefined;
         const panelOpen = mobilePanel !== null && (mobilePanel.kind !== 'group' || !!openGroup);
-        const cardVisible = showStrip || panelOpen;
+        const cardVisible = (showStrip || panelOpen) && mobileCardShown;
         const closePanel = () => setMobilePanel(null);
         const menuAction = (fn: () => void) => () => { closePanel(); fn(); };
         const reviewCount = pendingCorrections.length + reviewIssues.length;

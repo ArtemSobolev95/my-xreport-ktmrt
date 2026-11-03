@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useRouter } from 'next/router';
 import pb from '../lib/pocketbase';
 pb.autoCancellation(false);
-import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X, Loader2, Check, MoreHorizontal } from 'lucide-react';
+import { Copy, Download, Upload, ChevronDown, ChevronRight, Settings, Search, Trash2, Home, BookmarkIcon, RotateCcw, XCircle, Paperclip, Plus, Minus, Pencil, Link as LinkIcon, ExternalLink, Sparkles, SpellCheck, X, Loader2, Check, MoreHorizontal, ChevronsDownUp } from 'lucide-react';
 import type { BuilderField, QuickButtonGroup, Template } from '../types/builder';
 import withAuth from '../components/withAuth';
 import UserHeader from '../components/UserHeader';
@@ -426,27 +426,20 @@ useLayoutEffect(() => {
   const top = scroller ? scroller.scrollTop : window.scrollY;
   const viewH = scroller ? scroller.clientHeight : window.innerHeight;
   room.style.height = `${Math.ceil(top + viewH * 2)}px`;
-  // Раскрытие раздела (см. pinHeaderRef и openOnlySection) — FLIP:
-  // разделы выше уже схлопнуты мгновенно; страница тут же, до отрисовки,
-  // прокручивается в конечное положение, а видимый переход от прежнего
-  // места заголовка к новому (если он есть) проигрывает transform списка. transform iOS
-  // анимирует на видеокарте, отдельно от JS и перестройки страницы, —
-  // без рывков, в отличие от покадровой прокрутки.
+  // Раскрытие раздела на десктопе (см. pinHeaderRef и openOnlySection) —
+  // FLIP: разделы выше уже схлопнуты мгновенно; страница тут же, до
+  // отрисовки, прокручивается в конечное положение, а видимый переход от
+  // прежнего места заголовка к новому (если он есть) проигрывает transform
+  // списка.
   const pin = pinHeaderRef.current;
   pinHeaderRef.current = null;
   const pinEl = pin && (document.querySelector(`[data-header-id="${pin.id}"]`) as HTMLElement | null);
   const list = document.querySelector('[data-sections-list]') as HTMLElement | null;
   if (pin && pinEl && list) {
-    let target: number;
-    if (pin.mode === 'top') {
-      const topBar = document.querySelector('[data-filler-topbar]') as HTMLElement | null;
-      target = (topBar?.getBoundingClientRect().bottom ?? 0) + 8;
-    } else {
-      // На прежнем месте, но не выше верха видимой части и не так низко,
-      // чтобы под заголовком не осталось места хотя бы на первую строку.
-      const zone = getComfortZone();
-      target = Math.max(zone.top + 8, Math.min(pin.top, zone.bottom - zone.margin - 96));
-    }
+    // На прежнем месте, но не выше верха видимой части и не так низко,
+    // чтобы под заголовком не осталось места хотя бы на первую строку.
+    const zone = getComfortZone();
+    const target = Math.max(zone.top + 8, Math.min(pin.top, zone.bottom - zone.margin - 96));
     scrollPageBy(pinEl.getBoundingClientRect().top - target, 'instant');
     const offset = pin.top - pinEl.getBoundingClientRect().top;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -529,16 +522,14 @@ useEffect(() => {
   return () => mq.removeEventListener('change', onChange);
 }, []);
 const [skipSectionTransition, setSkipSectionTransition] = useState(false);
-// Мобильный (прокручивается внутренний контейнер): разделы, которые
-// закрываются при раскрытии другого, схлопываются мгновенно, а не
+// Десктоп: разделы выше раскрываемого схлопываются мгновенно, а не
 // анимацией — см. openOnlySection. null — обычный режим.
 const [instantSections, setInstantSections] = useState<Set<string> | null>(null);
 // Заголовок, который должен остаться на том же месте экрана после
 // мгновенного схлопывания разделов выше него (top — до изменения).
 // Обрабатывается в useLayoutEffect у collapsedHeaders — до отрисовки.
-// mode: 'keep' — по возможности на том же месте (десктоп), 'top' — под
-// верхней панелью (мобильный).
-const pinHeaderRef = useRef<{ id: string; top: number; mode: 'keep' | 'top' } | null>(null);
+// Только десктоп (см. openOnlySection).
+const pinHeaderRef = useRef<{ id: string; top: number } | null>(null);
 
   // === Работа с черновиком в localStorage ===
 const DRAFT_KEY_PREFIX = 'filler_draft_';
@@ -649,6 +640,24 @@ const toggleSection = (headerId: string) => {
       newSet.add(headerId);
     }
     return newSet;
+  });
+};
+
+// Мобильный, меню «Ещё»: свернуть все разделы. Раздел при раскрытии на
+// телефоне не сворачивает те, что выше (см. openOnlySection), — здесь их
+// можно убрать разом. Страница после этого короткая — сразу к началу.
+const collapseAllSections = () => {
+  if (!template) return;
+  (document.activeElement as HTMLElement | null)?.blur();
+  setCollapsedHeaders(new Set(
+    (template.fields || [])
+      .filter((f: BuilderField) => f.type === 'header' && !deletedFieldIds.includes(f.id))
+      .map((f: BuilderField) => f.id)
+  ));
+  requestAnimationFrame(() => {
+    const scroller = getPageScroller();
+    if (scroller) scroller.scrollTo({ top: 0, behavior: 'smooth' });
+    else window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 };
 
@@ -872,22 +881,29 @@ const openOnlySection = (headerId: string, instant = false) => {
   // - разделы ВЫШЕ заголовка схлопываются мгновенно, ниже — анимацией;
   // - до отрисовки (useLayoutEffect у collapsedHeaders, pinHeaderRef)
   //   страница встаёт так, чтобы заголовок остался на прежнем месте экрана
-  //   (десктоп; если иначе раздел не виден — ближайшее место в комфортной
-  //   зоне) или встал под верхнюю панель (мобильный); если заголовку всё же
-  //   пришлось сдвинуться, путь проигрывается transform'ом списка;
+  //   (если иначе раздел не виден — ближайшее место в комфортной зоне);
+  //   если заголовку всё же пришлось сдвинуться, путь проигрывается
+  //   transform'ом списка;
   // - раздел раскрывается вниз, под заголовком.
-  const headerEl = document.querySelector(`[data-header-id="${headerId}"]`) as HTMLElement | null;
-  if (headerEl) {
-    pinHeaderRef.current = {
-      id: headerId,
-      top: headerEl.getBoundingClientRect().top,
-      mode: getPageScroller() ? 'top' : 'keep',
-    };
-  }
+  //
+  // Мобильный — иначе: прокрутка при раскрытии не трогается вовсе.
+  // Мгновенную поправку прокрутки iOS Safari применяет на кадр позже
+  // остальной отрисовки (прокрутку контейнера ведёт отдельный поток), и
+  // страница успевала прыгнуть вниз, а затем вверх. Поэтому разделы ВЫШЕ
+  // заголовка остаются как были (их сворачивание сдвинуло бы заголовок),
+  // сворачиваются только разделы ниже — анимацией, под заголовком. Свернуть
+  // всё — пункт «Свернуть все разделы» в меню «Ещё».
   const idx = allHeaderIds.indexOf(headerId);
-  setInstantSections(new Set(allHeaderIds.slice(0, idx).filter((id: string) => !collapsedHeaders.has(id))));
-  window.setTimeout(() => setInstantSections(null), SECTION_TRANSITION_MS + 50);
-  setCollapsedHeaders(new Set(allHeaderIds.filter((id: string) => id !== headerId)));
+  if (getPageScroller()) {
+    const below = new Set(allHeaderIds.slice(idx + 1));
+    setCollapsedHeaders(prev => new Set([...prev].filter(id => id !== headerId).concat([...below])));
+  } else {
+    const headerEl = document.querySelector(`[data-header-id="${headerId}"]`) as HTMLElement | null;
+    if (headerEl) pinHeaderRef.current = { id: headerId, top: headerEl.getBoundingClientRect().top };
+    setInstantSections(new Set(allHeaderIds.slice(0, idx).filter((id: string) => !collapsedHeaders.has(id))));
+    window.setTimeout(() => setInstantSections(null), SECTION_TRANSITION_MS + 50);
+    setCollapsedHeaders(new Set(allHeaderIds.filter((id: string) => id !== headerId)));
+  }
 
   if (!firstFieldId) return;
   manualScrollUntilRef.current = performance.now() + SECTION_GLIDE_MAX_MS + 300;
@@ -975,7 +991,7 @@ const handleFieldTabNavigation = (
     // раздела оказывается прямо над ним, там, куда пользователь и смотрел.
     const anchor = document.querySelector(`[data-header-id="${section.headerId}"]`) as HTMLElement | null;
     if (anchor && !document.documentElement.classList.contains('kb-open')) {
-      pinHeaderRef.current = { id: section.headerId, top: anchor.getBoundingClientRect().top, mode: 'keep' };
+      pinHeaderRef.current = { id: section.headerId, top: anchor.getBoundingClientRect().top };
     }
     manualScrollUntilRef.current = performance.now() + 200;
     setSkipSectionTransition(true);
@@ -2079,8 +2095,21 @@ initializeCollapsedState(record.fields);
       }
 
       if (currentHeader && found) {
-        setSkipSectionTransition(true);
-        setCollapsedHeaders(new Set(allHeaderIds.filter(id => id !== currentHeader)));
+        const header = currentHeader;
+        if (getPageScroller() && !document.documentElement.classList.contains('kb-open')) {
+          // Мобильный без клавиатуры — то же правило, что в
+          // openOnlySection: разделы выше не трогаем (их сворачивание
+          // сдвинуло бы страницу), ниже — сворачиваем.
+          const below = allHeaderIds.slice(allHeaderIds.indexOf(header) + 1);
+          setCollapsedHeaders(prev => {
+            const next = new Set([...prev].filter(id => id !== header).concat(below));
+            const same = next.size === prev.size && [...next].every(id => prev.has(id));
+            return same ? prev : next;
+          });
+        } else {
+          setSkipSectionTransition(true);
+          setCollapsedHeaders(new Set(allHeaderIds.filter(id => id !== header)));
+        }
       }
     }   // ← эта скобка должна быть
   };
@@ -4476,6 +4505,7 @@ for (const f of visibleFields) {
                               <button type="button" tabIndex={-1} onClick={menuAction(() => setShowAbbrModal(true))} className={`${ROW_CLASS} text-zinc-100`}><Settings className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />Автокоррекции</button>
                               <button type="button" tabIndex={-1} onClick={menuAction(goToTemplateEditor)} className={`${ROW_CLASS} text-zinc-100`}><Pencil className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />Редактировать шаблон</button>
                               <button type="button" tabIndex={-1} onClick={menuAction(goToTemplateList)} className={`${ROW_CLASS} text-zinc-100`}><Home className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />К списку шаблонов</button>
+                              <button type="button" tabIndex={-1} onClick={menuAction(collapseAllSections)} className={`${ROW_CLASS} text-zinc-100`}><ChevronsDownUp className="w-[18px] h-[18px] text-zinc-400" strokeWidth={1.75} />Свернуть все разделы</button>
                               <button type="button" tabIndex={-1} onClick={menuAction(resetToDefault)} className={`${ROW_CLASS} text-red-400`}><RotateCcw className="w-[18px] h-[18px]" strokeWidth={1.75} />Сбросить протокол</button>
                             </>
                           )}

@@ -27,7 +27,9 @@
 //   ANTHROPIC_BASE_URL — необязательно, адрес Messages API (для прокси/тестов)
 
 const DEFAULT_MODEL = "claude-opus-5-5";
-const DEFAULT_EFFORT = { SUGGEST: "low", CORRECT: "low", CONCLUDE: "medium" };
+// CORRECT — medium: на low модель находила не все ошибки согласования и
+// пунктуации с первого раза.
+const DEFAULT_EFFORT = { SUGGEST: "low", CORRECT: "medium", CONCLUDE: "medium" };
 const DEFAULT_THINKING = { SUGGEST: "off", CORRECT: "off", CONCLUDE: "on" };
 // Сверх длины самого ответа — место под «размышление» модели: оно
 // учитывается в max_tokens.

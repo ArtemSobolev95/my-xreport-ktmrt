@@ -48,15 +48,25 @@ routerAdd("POST", "/api/review", (e) => {
     // Проверка сдержанная: только то, что врач просил ловить, без замечаний
     // по стилю, размерам и подробности описания.
     const system = [
-        "You check a diagnostic imaging report (radiography, CT, MRI) before the radiologist signs it. Be restrained: report only real errors of the kinds listed below and ignore everything else (style, wording, level of detail, measurements, normal descriptions, patient management). When in doubt, say nothing.",
-        "1) Edits inside each field, only: wrong word endings - agreement in gender, number and case; obvious misspellings; punctuation errors inside the text (missing or extra commas). Accidentally duplicated words. Forbidden phrasings (below) - rewrite them with a minimal edit, keeping the grammar correct.",
-        "A period at the end of every field is added automatically - never add one. Capital and lowercase letters at the start of fields are handled automatically - do not change them.",
-        "Do not rephrase or add anything. Do not change the meaning, medical terms, word order, numbers or units. Keep abbreviations, Latin-script terms and vertebra / segment names (T2, STIR, PD, Stoller, CT, MRI, C2, Th12, L5-S1) exactly as they are, including their case. Do NOT replace the Russian letter \u0435 with \u0451, do NOT replace hyphens with dashes, do NOT touch spaces around hyphens.",
-        "Different wording with the same meaning is NOT an error: a finding counts as present in the conclusion if it is mentioned there in any wording, by a synonym or by a broader term (e.g. \"отек жировой клетчатки вокруг сустава\" in the description and \"отек мягких тканей вокруг сустава\" in the conclusion is fine). Only report what is really absent or really contradicts.",
-        "2) Remarks, only three kinds: \"missing\" - a clinically significant finding from the descriptive part that is missing from the conclusion (NOT if the doctor described it as of doubtful, uncertain or no clinical significance, as incidental or as a variant of normal); \"side\" - a side mismatch (right/left) between the description and the conclusion or between fields; \"detail\" - essential information about a pathological finding that is missing from the WHOLE report, e.g. the stage of an ischemic stroke, the size of a lesion, its localization or side, a classification grade (only for pathological findings, only what is really expected for this finding, one remark per finding). Measurements and other details belong in the descriptive part: if they are stated there, never ask to repeat them in the conclusion. No other remarks.",
+        "You check a diagnostic imaging report (radiography, CT, MRI) before the radiologist signs it. Report only real errors of the kinds listed below and ignore everything else (style, wording, level of detail, measurements, normal descriptions, patient management).",
+        "1) Edits inside each field. Language errors must be found completely in ONE pass: go through every field sentence by sentence, word by word, and fix ALL of them at once, not just the first few:",
+        "- agreement: every adjective, participle, pronoun and ordinal numeral agrees with its noun in gender, number and case (also in homogeneous and long attributive phrases: \"участок неоднородной структуры\", \"кисты, заполненные жидкостью\"); the verb / short adjective agrees with its subject (\"мениск не изменен\", \"связки прослеживаются\"); a preposition takes the right case (\"по передней поверхности\", \"в области заднего рога\"); a noun after a numeral takes the right form (\"2 кисты\", \"5 кист\", \"1,5 см\");",
+        "- obvious misspellings and accidentally duplicated or missing letters; accidentally duplicated words;",
+        "- punctuation inside the text: commas around participial and adverbial phrases, between homogeneous members and parts of compound sentences, around introductory words and comparative phrases (\"вероятно,\", \"по-видимому,\"); missing or extra commas; a missing space after a punctuation mark;",
+        "- letter case inside a field: a capital letter after a sentence-ending period in the middle of a field; a lowercase letter for a word in the middle of a sentence that was capitalized by mistake (proper names, eponyms and abbreviations keep their capitals);",
+        "- forbidden phrasings (below): rewrite them with a minimal edit, keeping the grammar correct.",
+        "A period at the end of every field is added automatically - never add one. Capital and lowercase letters at the very start of fields are handled automatically - do not change them.",
+        "Do not rephrase or add anything. Do not change the meaning, medical terms, word order, numbers or units. Keep abbreviations and sequence names (T2, STIR, PD, CT, MRI) exactly as they are, including their case. Do NOT replace the Russian letter \u0435 with \u0451, do NOT replace hyphens with dashes, do NOT touch spaces around hyphens.",
+        style.ENGLISH_TERMS,
+        style.SEGMENTS,
+        "2) Remarks, only three kinds. Be restrained here: when in doubt, say nothing.",
+        "\"missing\" - a clinically significant finding from the descriptive part that is not reflected in the conclusion at all. The conclusion is a generalized summary, so ALL of the following are NOT missing and must not be reported: a finding named in the conclusion in other words, by a synonym or by a broader / generalizing diagnosis (description \"гиперплазия синовиальной оболочки\" - conclusion \"синовит\"; \"отек жировой клетчатки вокруг сустава\" - \"отек мягких тканей\"; osteophytes, narrowed joint space and subchondral sclerosis - \"остеоартроз\"; disc protrusions, Modic changes and spondylosis - \"остеохондроз\" or \"дегенеративные изменения\"); sizes, measurements, signal or density characteristics, exact location or number of lesions that are absent from the conclusion; several findings combined into one statement; findings the doctor described as of doubtful, uncertain or no clinical significance, as incidental or as a variant of normal. Report \"missing\" only for a separate significant pathology that the conclusion does not mention or imply in any form.",
+        "\"side\" - ONLY a real contradiction: the side (right/left) of the same finding is stated explicitly in the description and stated differently in the conclusion (or in two fields). If the side is not stated in one of the places, or not stated anywhere (e.g. the report does not say whether it is the right or the left joint), that is NOT an error - say nothing.",
+        "\"detail\" - essential information about a pathological finding that is missing from the WHOLE report (description and conclusion), e.g. the stage of an ischemic stroke or a classification grade where one is clearly expected (only for pathological findings, only what is really expected for this finding, one remark per finding). Never ask for the side. Never ask for sizes or other details to appear in the conclusion: if they are in the descriptive part, everything is fine.",
+        "No other remarks.",
         "Answer ONLY with JSON, no code fences: {\"edits\": [[\"field id\", \"wrong fragment\", \"fixed fragment\"], ...], \"issues\": [[\"field id or empty\", \"missing|side|detail\", \"short description\"], ...]}. If there is nothing to report, return empty lists.",
-        "Copy each wrong fragment exactly as it appears in that field (a word or a few words); if it occurs more than once in the field, include a neighbouring word so it is unique. To remove a duplicate, include it in the fragment and leave it out of the fix.",
-        "Write issue descriptions ONLY in " + language + ", in one short sentence without repeating the kind (e.g. \"Киста Бейкера\", \"Описание справа, в заключении слева\", \"Не указана стадия инфаркта\"); point the issue to the field that should be changed (usually the conclusion), or leave the id empty.",
+        "One edit per error. Copy each wrong fragment exactly as it appears in that field (the wrong word with one or two neighbouring words, no more); if it occurs more than once in the field, include a neighbouring word so it is unique. To remove a duplicate, include it in the fragment and leave it out of the fix.",
+        "Write issue descriptions ONLY in " + language + ", in one short sentence without repeating the kind (e.g. \"Киста Baker\", \"Описание справа, в заключении слева\", \"Не указана стадия инфаркта\"); point the issue to the field that should be changed (usually the conclusion), or leave the id empty.",
         "Forbidden phrasings:",
     ].concat(style.FORBIDDEN).join("\n");
 
@@ -68,7 +78,7 @@ routerAdd("POST", "/api/review", (e) => {
     }
     if (report) parts.push("The whole report as it will be signed (normal values from the template included):\n" + report);
 
-    const res = ai.complete(system, parts.join("\n\n"), { route: "CORRECT", maxTokens: 1500, timeout: 30, userId: e.auth.id });
+    const res = ai.complete(system, parts.join("\n\n"), { route: "CORRECT", maxTokens: 3000, timeout: 45, userId: e.auth.id });
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
     }
@@ -84,7 +94,11 @@ routerAdd("POST", "/api/review", (e) => {
         const from = Array.isArray(edit) ? edit[1] : edit && edit.from;
         const to = Array.isArray(edit) ? edit[2] : edit && edit.to;
         if (typeof id !== "string") continue;
-        (editsByField[id] = editsByField[id] || []).push([from, to]);
+        // Регистр сегментов (Th12, L5-S1) — точным правилом: модель не
+        // должна его «исправлять», и правка, которая только портит его,
+        // становится пустой.
+        if (typeof from !== "string" || typeof to !== "string") continue;
+        (editsByField[id] = editsByField[id] || []).push([style.fixSegmentCase(from), style.fixSegmentCase(to)]);
     }
     // Регистр и точка в конце — точными правилами, не моделью: текстовое
     // поле начинается со строчной буквы (кроме аббревиатур: «МР-признаки»,
@@ -98,14 +112,14 @@ routerAdd("POST", "/api/review", (e) => {
         // цифрами или заглавной не в начале — позвонки и сегменты «Th12»,
         // «L5-S1», «C2», режимы «T2».
         const isAbbreviation = (firstWord.length >= 2 && firstWord === firstWord.toUpperCase() && /\p{L}/u.test(firstWord)) ||
-            /\d/.test(firstWord) || /^\p{L}+\p{Lu}/u.test(firstWord) || /^(C|Th|T|L|S)(?![a-z])/.test(text.slice(at));
+            /\d/.test(firstWord) || /^\p{L}+\p{Lu}/u.test(firstWord) || /^(C|Co|Th|T|L|S)(?![a-z])/.test(text.slice(at));
         const ch = text[at];
         const fixed = isConclusion ? ch.toUpperCase() : (isAbbreviation ? ch : ch.toLowerCase());
         return text.slice(0, at) + fixed + text.slice(at + 1);
     };
     const corrections = [];
     for (const f of fields) {
-        let corrected = proofread.finalize(f.text, editsByField[f.id] || [], "review");
+        let corrected = proofread.finalize(style.fixSegmentCase(f.text), editsByField[f.id] || [], "review");
         if (!/[.!?…]\s*$/.test(f.text)) corrected = corrected.replace(/(?<!\.)\.(\s*)$/, "$1");
         corrected = fixCase(corrected, f.isConclusion);
         if (corrected !== f.text) corrections.push({ field: f.id, original: f.text, corrected: corrected });

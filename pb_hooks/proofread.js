@@ -25,6 +25,59 @@ const parseJson = (raw, fallback) => {
     }
 };
 
+const numbers = (s) => (s.match(/\d+(?:[.,]\d+)?/g) || []).join("|");
+// Аббревиатуры и термины с цифрами (T2, STIR, PD, CT, C1-C7) — не трогать.
+// Не вся латиница: в англоязычном протоколе это были бы все слова.
+// Перед сравнением похожие кириллические буквы приводятся к латинским:
+// «Т2» и «STIR», набранные кириллицей, модель законно исправляет на
+// латиницу — это та же аббревиатура, а не изменённый термин.
+const HOMOGLYPHS = { "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X", "У": "Y",
+    "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x" };
+// Только внутри «слов», где есть латиница или цифры (Т2, СТIR), — обычные
+// русские слова не трогаем.
+const toLatin = (s) => s.replace(/[A-Za-zА-Яа-яЁё0-9-]+/g, (w) =>
+    /[A-Za-z0-9]/.test(w) || /^[АВЕКМНОРСТХУ]{2,}$/.test(w)
+        ? w.replace(/[АВЕКМНОРСТХУаеорсух]/g, (ch) => HOMOGLYPHS[ch] || ch)
+        : w);
+const latinTokens = (s) => toLatin(s).match(/\b(?:[A-Za-z]*\d[A-Za-z0-9-]*|[A-Z]{2,}[A-Z0-9-]*)\b/g) || [];
+const latin = (s) => latinTokens(s).join("|");
+const lines = (s) => s.split("\n").length;
+const words = (s) => s.split(/\s+/).filter(Boolean);
+
+// Сколько слов не совпало — через наибольшую общую подпоследовательность
+// (а не по позициям: удаление задвоенного слова сдвигало бы все остальные).
+const changedWords = (a, b) => {
+    const prev = new Array(b.length + 1).fill(0);
+    for (let i = 1; i <= a.length; i++) {
+        let diag = 0;
+        for (let j = 1; j <= b.length; j++) {
+            const up = prev[j];
+            prev[j] = a[i - 1] === b[j - 1] ? diag + 1 : Math.max(prev[j], prev[j - 1]);
+            diag = up;
+        }
+    }
+    return Math.max(a.length, b.length) - prev[b.length];
+};
+
+// Английские слова (из 2+ латинских букв): термины, эпонимы, классификации
+// (Stoller, Baker, Hill-Sachs, bone bruise) — правка не должна их менять,
+// переводить или убирать.
+const englishWords = (s) => (s.match(/[A-Za-z][A-Za-z'-]*[A-Za-z]/g) || []).join("|");
+
+// Почему правка негодна ("" — годна). Правка — небольшой фрагмент, поэтому
+// и проверка локальная: числа, аббревиатуры и английские термины те же,
+// строк столько же, слов заменено немного.
+const badEdit = (from, to) => {
+    if (numbers(from) !== numbers(to)) return "изменились числа";
+    if (latin(from) !== latin(to)) return "изменилась латиница";
+    if (englishWords(toLatin(from)) !== englishWords(toLatin(to))) return "изменился английский термин";
+    if (lines(from) !== lines(to)) return "изменились строки";
+    const a = words(from);
+    const b = words(to);
+    if (Math.abs(a.length - b.length) > 3 || changedWords(a, b) > Math.max(4, Math.ceil(a.length * 0.6))) return "слишком много изменений";
+    return "";
+};
+
 // text — исходный текст поля, edits — [["было","стало"]] или
 // [{from, to}], tag — для логов. Возвращает итоговый текст.
 const finalize = (text, edits, tag) => {
@@ -37,6 +90,14 @@ const finalize = (text, edits, tag) => {
         const from = Array.isArray(edit) ? edit[0] : edit && edit.from;
         const to = Array.isArray(edit) ? edit[1] : edit && edit.to;
         if (typeof from !== "string" || typeof to !== "string" || !from || from === to) continue;
+        // Каждая правка проверяется отдельно: негодная пропускается, а не
+        // отменяет все исправления поля (так за один проход применяются все
+        // найденные ошибки, а не ни одной).
+        const bad = badEdit(from, to);
+        if (bad) {
+            console.log("[" + tag + "] правка пропущена (" + bad + "):", JSON.stringify(from), "→", JSON.stringify(to));
+            continue;
+        }
         let at = corrected.indexOf(from, cursor);
         if (at === -1) at = corrected.indexOf(from);
         if (at === -1) continue;
@@ -65,25 +126,6 @@ const finalize = (text, edits, tag) => {
         corrected = corrected.slice(0, first) + text[first] + corrected.slice(first + 1);
     }
 
-    const numbers = (s) => (s.match(/\d+(?:[.,]\d+)?/g) || []).join("|");
-    // Аббревиатуры и термины с цифрами (T2, STIR, PD, CT, C1-C7) — не трогать.
-    // Не вся латиница: в англоязычном протоколе это были бы все слова.
-    // Перед сравнением похожие кириллические буквы приводятся к латинским:
-    // «Т2» и «STIR», набранные кириллицей, модель законно исправляет на
-    // латиницу — это та же аббревиатура, а не изменённый термин.
-    const HOMOGLYPHS = { "А": "A", "В": "B", "Е": "E", "К": "K", "М": "M", "Н": "H", "О": "O", "Р": "P", "С": "C", "Т": "T", "Х": "X", "У": "Y",
-        "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "у": "y", "х": "x" };
-    // Только внутри «слов», где есть латиница или цифры (Т2, СТIR), — обычные
-    // русские слова не трогаем.
-    const toLatin = (s) => s.replace(/[A-Za-zА-Яа-яЁё0-9-]+/g, (w) =>
-        /[A-Za-z0-9]/.test(w) || /^[АВЕКМНОРСТХУ]{2,}$/.test(w)
-            ? w.replace(/[АВЕКМНОРСТХУаеорсух]/g, (ch) => HOMOGLYPHS[ch] || ch)
-            : w);
-    const latinTokens = (s) => toLatin(s).match(/\b(?:[A-Za-z]*\d[A-Za-z0-9-]*|[A-Z]{2,}[A-Z0-9-]*)\b/g) || [];
-    const latin = (s) => latinTokens(s).join("|");
-    const lines = (s) => s.split("\n").length;
-    const words = (s) => s.split(/\s+/).filter(Boolean);
-
     let rejectReason = "";
     if (!corrected.trim()) rejectReason = "пустой ответ";
     else if (numbers(corrected) !== numbers(text)) rejectReason = "изменились числа";
@@ -92,22 +134,10 @@ const finalize = (text, edits, tag) => {
     }
     else if (lines(corrected) !== lines(text)) rejectReason = "изменились строки";
     else {
+        // Страховка поверх проверки каждой правки: всё поле не переписано.
         const a = words(text);
         const b = words(corrected);
-        // Сколько слов не совпало — через наибольшую общую подпоследовательность
-        // (а не по позициям: удаление задвоенного слова сдвигало бы все
-        // остальные). Коррекция почти не меняет число слов и меняет немногие.
-        const prev = new Array(b.length + 1).fill(0);
-        for (let i = 1; i <= a.length; i++) {
-            let diag = 0;
-            for (let j = 1; j <= b.length; j++) {
-                const up = prev[j];
-                prev[j] = a[i - 1] === b[j - 1] ? diag + 1 : Math.max(prev[j], prev[j - 1]);
-                diag = up;
-            }
-        }
-        const changed = Math.max(a.length, b.length) - prev[b.length];
-        if (Math.abs(a.length - b.length) > 2 || changed > Math.max(3, Math.ceil(a.length * 0.3))) {
+        if (Math.abs(a.length - b.length) > Math.max(3, Math.ceil(a.length * 0.2)) || changedWords(a, b) > Math.max(4, Math.ceil(a.length * 0.5))) {
             rejectReason = "слишком много изменений";
         }
     }

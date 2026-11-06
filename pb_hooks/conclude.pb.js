@@ -52,6 +52,10 @@ routerAdd("POST", "/api/conclude", (e) => {
         "The conclusion is a short, generalized summary: diagnoses and key conclusions only. Do NOT repeat measurements, sizes, volumes, signal or density characteristics, locations in detail or other descriptive details - they stay in the descriptive part. Combine related findings into one diagnostic statement; name each clinically significant finding briefly, most important first.",
         "Write in the language of the report. Follow the doctor's style: wording, abbreviations, how diagnoses are phrased and joined - but keep the conclusion generalized even if their previous conclusions are more detailed.",
         "Use the terminology of radiology literature and international structured reporting (RSNA RadReport templates, ACR lexicons) and established classifications and grades (e.g. Stoller, Outerbridge, Fleischner, TI-RADS, Bosniak) where the findings support them - phrased the way this doctor writes, in the report's language.",
+        "Names of classifications, eponymous radiological signs and diseases named after their authors: prefer the original English (Latin-script) spelling, even in a Russian conclusion (\"киста Baker\", \"повреждение Hill-Sachs\", \"болезнь Osgood-Schlatter\", \"Stoller II\", \"Outerbridge III\", \"Modic I\"). English terms used in the findings stay in English exactly as written - never translate or transliterate them.",
+        style.SEGMENTS,
+        "Generalize: name a finding by its diagnosis or a broader term instead of describing it (\"гиперплазия синовиальной оболочки\" -> \"синовит\"; osteophytes, narrowed joint space and subchondral sclerosis -> \"остеоартроз\"). Mention a side only if the findings state it.",
+        "Write grammatically flawless text: agreement in gender, number and case, correct prepositional cases and numeral forms, correct punctuation and letter case.",
         "Do not invent findings, measurements, sides or diagnoses that are not in the findings. Do not mention normal structures unless the doctor's previous conclusions usually do.",
         "Leave out findings the doctor described as of doubtful, uncertain or no clinical significance, as incidental or as a variant of normal.",
         "Add recommendations only if the doctor's previous conclusions contain them.",
@@ -102,6 +106,7 @@ routerAdd("POST", "/api/conclude", (e) => {
     }
     // Точку в конце поля протокол ставит сам; заглавная — в начале заключения.
     conclusion = conclusion.replace(/(?<!\.)\.$/, "");
+    conclusion = style.fixSegmentCase(conclusion);
     conclusion = conclusion.charAt(0).toUpperCase() + conclusion.slice(1);
     return e.json(200, { conclusion: conclusion.slice(0, 3000), model: model });
 }, $apis.requireAuth("users"))

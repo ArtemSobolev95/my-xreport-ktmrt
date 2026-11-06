@@ -156,6 +156,17 @@ const pluralRu = (n: number, forms: [string, string, string]) => {
 };
 
 // Ссылки в заметках тоже приходят из шаблона — не даём вставить javascript:/data: URL.
+// Строчная первая буква фразы — но не у сегментов позвоночника (C5, Th12,
+// L4-L5, Co1) и аббревиатур (МРТ, КТ, STIR): их регистр не меняется даже в
+// начале поля.
+const lowerFirst = (text: string): string => {
+  const firstWord = (text.match(/^[\p{L}\d]+/u) || [''])[0];
+  const keep = /^(C|Co|Th|L|S|С)\d/u.test(text) ||
+    (firstWord.length >= 2 && firstWord === firstWord.toUpperCase() && /\p{L}/u.test(firstWord)) ||
+    /^\p{L}+\p{Lu}/u.test(firstWord);
+  return keep ? text : text.charAt(0).toLowerCase() + text.slice(1);
+};
+
 const isSafeUrl = (url: string): boolean => {
   try {
     // Базовый URL нужен только для разбора относительных ссылок — на
@@ -2698,7 +2709,7 @@ const insertPhrase = (phrase: string) => {
     prefix = before.endsWith(' ') ? '' : ' ';
   } else if (lastChar === ',') {
     // После запятой — с маленькой буквы
-    finalPhrase = phrase.charAt(0).toLowerCase() + phrase.slice(1);
+    finalPhrase = lowerFirst(phrase);
     prefix = before.endsWith(' ') ? '' : ' ';
   } else if (before.length === 0 || trimmedBefore.length === 0) {
     // Начало поля — обычно с маленькой буквы, без пробела (после метки
@@ -2708,7 +2719,7 @@ const insertPhrase = (phrase: string) => {
     // остальных текстовых полях поведение не меняется.
     finalPhrase = fieldId === conclusionField?.id
       ? phrase.charAt(0).toUpperCase() + phrase.slice(1)
-      : phrase.charAt(0).toLowerCase() + phrase.slice(1);
+      : lowerFirst(phrase);
     prefix = '';
   } else {
     // Обычный случай — оставляем регистр как в шаблоне,
@@ -2795,7 +2806,7 @@ if (variantSelector?.originalWord) {
   if (isCapitalized) {
     finalChosen = chosen.charAt(0).toUpperCase() + chosen.slice(1);
   } else {
-    finalChosen = chosen.charAt(0).toLowerCase() + chosen.slice(1);
+    finalChosen = lowerFirst(chosen);
   }
 }
 

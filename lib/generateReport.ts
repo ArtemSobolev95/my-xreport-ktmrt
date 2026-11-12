@@ -35,6 +35,11 @@ export interface GenerateReportParams {
   deletedFieldIds: string[];
   isComparisonActive: boolean;
   comparisonDates: string[];
+  // Модальность каждой даты сравнения (МРТ, КТ, ПЭТ/КТ с ФДГ; '' — не
+  // выбрана) — по индексу comparisonDates.
+  comparisonModalities?: string[];
+  // «Второе мнение» — готовая строка (secondOpinionLine) или ''.
+  secondOpinionText?: string;
   isStateAfterActive: boolean;
   stateAfterText: string;
   // Названия полей ЗАГЛАВНЫМИ (переключатель на странице заполнения) —
@@ -48,9 +53,12 @@ export const formulaCommentKey = (fieldId: string): string => `${fieldId}_commen
 
 // Вводная строка «Сравнения» — общая для протокола и для её показа над
 // полями на странице заполнения.
-export const comparisonLine = (comparisonDates: string[]): string => {
+// Модальность — в скобках после даты: «от 12-05-2025 (КТ)»; без
+// модальности дата пишется как раньше.
+export const comparisonLine = (comparisonDates: string[], modalities: string[] = []): string => {
   const label = comparisonDates.length === 1 ? 'с предыдущим от' : 'с предыдущими от';
-  return `Описание исследования в сравнении ${label} ${comparisonDates.join(', ')}:`;
+  const dates = comparisonDates.map((d, i) => (modalities[i] ? `${d} (${modalities[i]})` : d));
+  return `Описание исследования в сравнении ${label} ${dates.join(', ')}:`;
 };
 
 export function generateReport({
@@ -59,6 +67,8 @@ export function generateReport({
   deletedFieldIds,
   isComparisonActive,
   comparisonDates,
+  comparisonModalities = [],
+  secondOpinionText = '',
   isStateAfterActive,
   stateAfterText,
   uppercaseLabels = false,
@@ -68,8 +78,13 @@ export function generateReport({
   let htmlText = '';
   let plainText = '';
 
+  // «Второе мнение» — самой первой строкой, до «Сравнения» и «Примечания».
+  if (secondOpinionText) {
+    htmlText += row(`<span class="text-amber-400">${escapeHtml(secondOpinionText)}</span>`);
+    plainText += `${secondOpinionText}\n\n`;
+  }
   if (isComparisonActive && comparisonDates.length > 0) {
-    const line = comparisonLine(comparisonDates);
+    const line = comparisonLine(comparisonDates, comparisonModalities);
     htmlText += row(`<span class="text-amber-400">${escapeHtml(line)}</span>`);
     plainText += `${line}\n\n`;
   }

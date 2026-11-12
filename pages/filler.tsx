@@ -28,6 +28,22 @@ import AnimatedModal, { ModalBody, ModalButton, ModalFooter, ModalHeader, MODAL_
 import { DURATION, EASE, FADE, COLLAPSE } from '../lib/motion';
 import { randomId } from '../lib/randomId';
 import { copyText } from '../lib/clipboard';
+import {
+  EMPTY_SECOND_OPINION, SECOND_OPINION_MODES, findZone, isSecondOpinionComplete, secondOpinionLine, zoneText, zonesFor,
+  type SecondOpinion, type SecondOpinionSide,
+} from '../lib/secondOpinion';
+
+// Модальности предыдущего исследования в «Сравнении» (необязательно).
+const COMPARISON_MODALITIES = ['МРТ', 'КТ', 'ПЭТ/КТ с ФДГ'];
+const SECOND_OPINION_SIDES: { value: SecondOpinionSide; label: string }[] = [
+  { value: 'right', label: 'Справа' },
+  { value: 'left', label: 'Слева' },
+  { value: 'both', label: 'С обеих сторон' },
+];
+// Кнопка-«чип» выбора в окнах «Сравнение» / «Второе мнение».
+const CHIP_CLASS = 'h-8 px-3 inline-flex items-center rounded-lg border text-xs font-medium transition-colors cursor-pointer';
+const CHIP_ACTIVE_CLASS = 'bg-amber-400/10 border-amber-400 text-amber-400';
+const CHIP_IDLE_CLASS = 'bg-white/5 border-white/10 text-zinc-300 hover:bg-white/10 hover:text-white';
 
 // ====================== МОДУЛЬ РЕЙТИНГА ======================
 
@@ -317,6 +333,16 @@ function FillerPage() {
     setComparisonDateIds(comparisonDates.map(() => randomId()));
   }
   const [isMultipleComparison, setIsMultipleComparison] = useState(false);
+  // Модальность каждой даты сравнения ('' — не выбрана), по индексу
+  // comparisonDates; короче массива дат — недостающие не выбраны.
+  const [comparisonModalities, setComparisonModalities] = useState<string[]>([]);
+  // «Второе мнение»: данные окна и включено ли в протокол (как у «Сравнения»).
+  const [secondOpinion, setSecondOpinion] = useState<SecondOpinion>(EMPTY_SECOND_OPINION);
+  const [isSecondOpinionActive, setIsSecondOpinionActive] = useState(false);
+  const [showSecondOpinionModal, setShowSecondOpinionModal] = useState(false);
+  const [zoneQuery, setZoneQuery] = useState('');
+  const [zoneHighlight, setZoneHighlight] = useState(0);
+  const zoneListRef = useRef<HTMLDivElement | null>(null);
   const [isStateAfterActive, setIsStateAfterActive] = useState(false);
   const stateAfterTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [pathNav, setPathNav] = useState<{
@@ -555,7 +581,8 @@ const saveDraft = (
   compDates: string[] = [],
   multipleComparison: boolean = false,
   stateActive: boolean = false,
-  stateText: string = ''
+  stateText: string = '',
+  extra: { comparisonModalities?: string[]; secondOpinion?: SecondOpinion; isSecondOpinionActive?: boolean } = {}
 ) => {
   if (!templateId) return;
   try {
@@ -567,6 +594,9 @@ const saveDraft = (
       isMultipleComparison: multipleComparison,
       isStateAfterActive: stateActive,
       stateAfterText: stateText,
+      comparisonModalities: extra.comparisonModalities || [],
+      secondOpinion: extra.secondOpinion || EMPTY_SECOND_OPINION,
+      isSecondOpinionActive: !!extra.isSecondOpinionActive,
       savedAt: new Date().toISOString(),
     };
     localStorage.setItem(getDraftKey(templateId), JSON.stringify(draft));
@@ -1039,12 +1069,14 @@ useEffect(() => {
       comparisonDates,
       isMultipleComparison,
       isStateAfterActive,
-      stateAfterText
+      stateAfterText,
+      { comparisonModalities, secondOpinion, isSecondOpinionActive }
     );
   }, 400);
 
   return () => clearTimeout(timeout);
-}, [fieldsData, deletedFieldIds, id, template, isComparisonActive, comparisonDates, isMultipleComparison, isStateAfterActive, stateAfterText]);
+}, [fieldsData, deletedFieldIds, id, template, isComparisonActive, comparisonDates, isMultipleComparison, isStateAfterActive, stateAfterText,
+    comparisonModalities, secondOpinion, isSecondOpinionActive]);
 
   const autoResize = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
@@ -1178,6 +1210,9 @@ useEffect(() => {
   setIsComparisonActive(false);
   setComparisonDates([]);
   setIsMultipleComparison(false);
+  setComparisonModalities([]);
+  setSecondOpinion(EMPTY_SECOND_OPINION);
+  setIsSecondOpinionActive(false);
   setIsStateAfterActive(false);
   setStateAfterText('');
   setToastMessage(null);
@@ -1218,6 +1253,9 @@ const handleClearDraft = async () => {
   setIsComparisonActive(false);
   setComparisonDates([]);
   setIsMultipleComparison(false);
+  setComparisonModalities([]);
+  setSecondOpinion(EMPTY_SECOND_OPINION);
+  setIsSecondOpinionActive(false);
   setIsStateAfterActive(false);
   setStateAfterText('');
   setToastMessage(null);
@@ -1226,6 +1264,7 @@ const handleClearDraft = async () => {
  
   const anyModalOpen =
     showComparisonModal ||
+    showSecondOpinionModal ||
     showStateAfterModal ||
     showAbbrModal ||
     showNotesModal ||
@@ -1244,7 +1283,7 @@ const handleClearDraft = async () => {
     if (!caret) return null;
     const isStateAfter = caret.fieldId === STATE_AFTER_FIELD_ID;
     if (isStateAfter) {
-      const otherModalOpen = anyModalOpen && !(showStateAfterModal && !showComparisonModal && !showAbbrModal && !showNotesModal && !showSaveModal && phraseMemoryFieldId === null);
+      const otherModalOpen = anyModalOpen && !(showStateAfterModal && !showComparisonModal && !showSecondOpinionModal && !showAbbrModal && !showNotesModal && !showSaveModal && phraseMemoryFieldId === null);
       if (!showStateAfterModal || otherModalOpen || variantSelector) return null;
     } else {
       if (caret.fieldId !== activeFieldId) return null;
@@ -1263,7 +1302,7 @@ const handleClearDraft = async () => {
     if (dismissedGhosts[field.id]?.has(textBefore)) return null;
     return { field, fieldId: field.id, pos: caret.pos, textBefore };
   }, [caret, activeFieldId, variantSelector, pathNav, openQuickButtonGroupIdx, anyModalOpen, template, fieldsData, dismissedGhosts,
-      stateAfterText, showStateAfterModal, showComparisonModal, showAbbrModal, showNotesModal, showSaveModal, phraseMemoryFieldId]);
+      stateAfterText, showStateAfterModal, showComparisonModal, showSecondOpinionModal, showAbbrModal, showNotesModal, showSaveModal, phraseMemoryFieldId]);
 
   // Показываем ответ модели, только если он получен ровно для текущего
   // текста до курсора. Если пользователь печатает то, что подсказано,
@@ -1481,6 +1520,7 @@ const handleClearDraft = async () => {
       e.preventDefault();
 
       if (showComparisonModal) setShowComparisonModal(false);
+      if (showSecondOpinionModal) setShowSecondOpinionModal(false);
       if (showStateAfterModal) setShowStateAfterModal(false);
       if (showAbbrModal) setShowAbbrModal(false);
       if (showNotesModal) setShowNotesModal(false);
@@ -1493,6 +1533,7 @@ const handleClearDraft = async () => {
   }, [
     anyModalOpen,
     showComparisonModal,
+    showSecondOpinionModal,
     showStateAfterModal,
     showAbbrModal,
     showNotesModal,
@@ -1629,9 +1670,11 @@ const handleClearDraft = async () => {
   const comparisonIsEmpty = comparisonDates.every(d => !String(d || '').trim());
 
   const applyComparison = () => {
-    const validDates = comparisonDates.filter(d => isValidDateDDMMYYYY(d));
+    const validIdx = comparisonDates.map((d, i) => (isValidDateDDMMYYYY(d) ? i : -1)).filter(i => i !== -1);
+    const validDates = validIdx.map(i => comparisonDates[i]);
     if (validDates.length > 0) {
       setComparisonDates(validDates);
+      setComparisonModalities(validIdx.map(i => comparisonModalities[i] || ''));
       setIsComparisonActive(true);
     } else if (comparisonIsEmpty) {
       // Даты стёрты — сравнение выключается.
@@ -1646,6 +1689,65 @@ const handleClearDraft = async () => {
     setIsComparisonActive(false);
     setShowComparisonModal(false);
   };
+
+  // Модальность даты сравнения: повторный клик по выбранной — снять выбор.
+  const toggleComparisonModality = (index: number, modality: string) => {
+    const next = comparisonDates.map((_, i) => comparisonModalities[i] || '');
+    next[index] = next[index] === modality ? '' : modality;
+    setComparisonModalities(next);
+  };
+
+  // «Второе мнение» — как «Сравнение»: кнопка и Alt+O открывают окно с уже
+  // введёнными данными; выключают «Отмена» или «Применить» с пустыми
+  // данными, крестик и Esc просто закрывают окно.
+  const secondOpinionReady = isSecondOpinionComplete(secondOpinion, isValidDateDDMMYYYY);
+  const secondOpinionIsEmpty = !secondOpinion.modality && !secondOpinion.zone && !secondOpinion.date.trim();
+  const secondOpinionText = isSecondOpinionActive && secondOpinionReady ? secondOpinionLine(secondOpinion) : '';
+
+  // Подсветка — на выбранной зоне (список при открытии прокручен к ней).
+  const zoneIndexIn = (zoneId: string, modality: SecondOpinion['modality']) =>
+    Math.max(0, zonesFor(modality).findIndex(z => z.id === zoneId));
+
+  const openSecondOpinion = () => {
+    setZoneQuery('');
+    setZoneHighlight(zoneIndexIn(secondOpinion.zone, secondOpinion.modality));
+    setShowSecondOpinionModal(true);
+  };
+
+  const applySecondOpinion = () => {
+    if (secondOpinionReady) setIsSecondOpinionActive(true);
+    else if (secondOpinionIsEmpty) setIsSecondOpinionActive(false);
+    else return; // заполнено не всё — ждём
+    setShowSecondOpinionModal(false);
+  };
+
+  const cancelSecondOpinion = () => {
+    setIsSecondOpinionActive(false);
+    setShowSecondOpinionModal(false);
+  };
+
+  // Зоны для выбранной модальности, отфильтрованные поиском.
+  const secondOpinionZones = useMemo(() => {
+    const q = zoneQuery.trim().toLowerCase();
+    return zonesFor(secondOpinion.modality).filter(z => !q || z.text.toLowerCase().includes(q) || z.group.toLowerCase().includes(q));
+  }, [secondOpinion.modality, zoneQuery]);
+  const selectedZone = findZone(secondOpinion.zone);
+
+  // После выбора поиск очищается, и список показывает все зоны —
+  // подсветка и прокрутка переходят на выбранную, а не на первую строку.
+  const chooseZone = (zoneId: string) => {
+    const z = findZone(zoneId);
+    setSecondOpinion(prev => ({ ...prev, zone: zoneId, side: z?.paired ? prev.side : '' }));
+    setZoneQuery('');
+    setZoneHighlight(zoneIndexIn(zoneId, secondOpinion.modality));
+  };
+
+  // Подсвеченная клавиатурой зона — в видимой части списка.
+  useEffect(() => {
+    if (!showSecondOpinionModal) return;
+    const el = zoneListRef.current?.querySelector<HTMLElement>(`[data-zone-index="${zoneHighlight}"]`);
+    el?.scrollIntoView({ block: 'nearest' });
+  }, [zoneHighlight, showSecondOpinionModal, zoneQuery]);
 
   // Применить «Примечание»: точка в конце, если её нет, — и в протокол.
   // Пустой текст — примечание выключается.
@@ -1813,6 +1915,15 @@ initializeCollapsedState(record.fields);
         if (typeof draft.isMultipleComparison === 'boolean') {
           setIsMultipleComparison(draft.isMultipleComparison);
         }
+        if (Array.isArray(draft.comparisonModalities)) {
+          setComparisonModalities(draft.comparisonModalities.map((m: unknown) => (typeof m === 'string' ? m : '')));
+        }
+        if (draft.secondOpinion && typeof draft.secondOpinion === 'object') {
+          setSecondOpinion({ ...EMPTY_SECOND_OPINION, ...draft.secondOpinion });
+        }
+        if (typeof draft.isSecondOpinionActive === 'boolean') {
+          setIsSecondOpinionActive(draft.isSecondOpinionActive);
+        }
         if (typeof draft.isStateAfterActive === 'boolean') {
           setIsStateAfterActive(draft.isStateAfterActive);
         }
@@ -1927,6 +2038,8 @@ initializeCollapsedState(record.fields);
       deletedFieldIds,
       isComparisonActive,
       comparisonDates,
+      comparisonModalities,
+      secondOpinionText,
       isStateAfterActive,
       stateAfterText,
       uppercaseLabels: labelsUppercase,
@@ -1937,6 +2050,8 @@ initializeCollapsedState(record.fields);
       deletedFieldIds,
       isComparisonActive,
       comparisonDates,
+      comparisonModalities,
+      secondOpinionText,
       isStateAfterActive,
       stateAfterText,
       labelsUppercase,
@@ -2552,6 +2667,13 @@ useEffect(() => {
     if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyP') {
       e.preventDefault();
       setShowStateAfterModal(true);
+      return;
+    }
+
+    // Alt+O — «Второе мнение» (second Opinion).
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'KeyO') {
+      e.preventDefault();
+      openSecondOpinion();
     }
   };
 
@@ -2954,7 +3076,8 @@ const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, fieldId: str
   // конструктор сохранит копией.
   const goToTemplateEditor = () => {
     if (typeof id !== 'string') return;
-    saveDraft(id, fieldsData, deletedFieldIds, isComparisonActive, comparisonDates, isMultipleComparison, isStateAfterActive, stateAfterText);
+    saveDraft(id, fieldsData, deletedFieldIds, isComparisonActive, comparisonDates, isMultipleComparison, isStateAfterActive, stateAfterText,
+      { comparisonModalities, secondOpinion, isSecondOpinionActive });
     router.push(`/builder?edit=${id}`);
   };
   // Для горячей клавиши: обработчик клавиатуры регистрируется один раз и
@@ -3150,6 +3273,7 @@ useEffect(() => {
     if (
       variantSelector ||
       showComparisonModal ||
+      showSecondOpinionModal ||
       showStateAfterModal ||
       showAbbrModal ||
       showSaveModal
@@ -3257,6 +3381,7 @@ useEffect(() => {
   openQuickButtonGroupIdx,
   variantSelector,
   showComparisonModal,
+  showSecondOpinionModal,
   showStateAfterModal,
   showAbbrModal,
   showSaveModal,
@@ -3580,6 +3705,15 @@ for (const f of visibleFields) {
           <div className="flex-1 min-w-0 flex items-center gap-2 py-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <button
               tabIndex={-1}
+              onClick={openSecondOpinion}
+              className={`${TOPBAR_BUTTON_CLASS} ${isSecondOpinionActive ? TOPBAR_BUTTON_ACTIVE_CLASS : TOPBAR_BUTTON_IDLE_CLASS}`}
+              aria-label="Второе мнение (Alt+O)"
+            >
+              Второе мнение
+              <span className="hidden lg:inline ml-1.5 text-[10px] font-normal text-zinc-500">Alt+O</span>
+            </button>
+            <button
+              tabIndex={-1}
               onClick={openComparison}
               className={`${TOPBAR_BUTTON_CLASS} ${isComparisonActive ? TOPBAR_BUTTON_ACTIVE_CLASS : TOPBAR_BUTTON_IDLE_CLASS}`}
               aria-label="Сравнение (Alt+C)"
@@ -3721,15 +3855,22 @@ for (const f of visibleFields) {
           </AnimatePresence>
           <h1 className="mb-6 px-2 text-2xl font-bold tracking-tight select-none">{template.title}</h1>
 
-          {/* Вводные строки протокола — «Сравнение» и «Примечание»: в
+          {/* Вводные строки протокола — «Второе мнение», «Сравнение» и «Примечание»: в
               протоколе они идут перед всеми полями, здесь — так же, тем же
               текстом (comparisonLine/stateAfterText, как в generateReport). */}
-          {((isComparisonActive && comparisonDates.length > 0) || (isStateAfterActive && stateAfterText)) && (
+          {(secondOpinionText || (isComparisonActive && comparisonDates.length > 0) || (isStateAfterActive && stateAfterText)) && (
             <div className="mb-3 px-2 space-y-1">
               {([
+                secondOpinionText && {
+                  key: 'secondOpinion',
+                  text: secondOpinionText,
+                  edit: openSecondOpinion,
+                  remove: () => setIsSecondOpinionActive(false),
+                  title: 'Второе мнение',
+                },
                 isComparisonActive && comparisonDates.length > 0 && {
                   key: 'comparison',
-                  text: comparisonLine(comparisonDates),
+                  text: comparisonLine(comparisonDates, comparisonModalities),
                   edit: () => {
                     if (comparisonDates.length > 1) setIsMultipleComparison(true);
                     setShowComparisonModal(true);
@@ -4733,6 +4874,169 @@ for (const f of visibleFields) {
       </AnimatedModal>
 
       <AnimatedModal
+        open={showSecondOpinionModal}
+        onClose={() => setShowSecondOpinionModal(false)}
+        size="lg"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            applySecondOpinion();
+          }
+          if (e.key === 'Escape') {
+            setShowSecondOpinionModal(false);
+          }
+        }}
+      >
+        <ModalHeader
+          title="Второе мнение"
+          subtitle="Строка попадёт в самое начало протокола"
+          onClose={() => setShowSecondOpinionModal(false)}
+        />
+        <ModalBody>
+          <div className="text-xs text-zinc-500 mb-2">Модальность</div>
+          <div className="flex flex-wrap gap-1.5">
+            {SECOND_OPINION_MODES.map(mode => {
+              const active = secondOpinion.modality === mode.modality && secondOpinion.contrast === mode.contrast;
+              return (
+                <button
+                  key={mode.label}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setSecondOpinion(prev => {
+                    // Зона, которой нет у новой модальности, сбрасывается.
+                    const z = findZone(prev.zone);
+                    const keepZone = z && (mode.modality === 'КТ' ? z.ct : z.mri);
+                    return { ...prev, modality: mode.modality, contrast: mode.contrast, zone: keepZone ? prev.zone : '', side: keepZone ? prev.side : '' };
+                  })}
+                  className={`${CHIP_CLASS} ${active ? CHIP_ACTIVE_CLASS : CHIP_IDLE_CLASS}`}
+                >
+                  {mode.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="text-xs text-zinc-500 mt-4 mb-2">Зона исследования</div>
+          <input
+            autoFocus
+            type="text"
+            value={zoneQuery}
+            onChange={(e) => { setZoneQuery(e.target.value); setZoneHighlight(0); }}
+            onKeyDown={(e) => {
+              // ↑↓ — по списку зон, Enter — выбрать подсвеченную (если
+              // ищем); иначе Enter применяет окно.
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                const n = secondOpinionZones.length;
+                if (!n) return;
+                setZoneHighlight(h => (e.key === 'ArrowDown' ? Math.min(n - 1, h + 1) : Math.max(0, h - 1)));
+              } else if (e.key === 'Enter' && zoneQuery.trim() && secondOpinionZones[zoneHighlight]) {
+                e.preventDefault();
+                e.stopPropagation();
+                chooseZone(secondOpinionZones[zoneHighlight].id);
+              }
+            }}
+            placeholder={selectedZone ? selectedZone.text : 'Поиск зоны: колен, грудной, мозга…'}
+            className={MODAL_INPUT_CLASS}
+          />
+          {/* Высота списка меняется при поиске — окно плавно следует за ней. */}
+          <SmoothHeight className="mt-2">
+          <div ref={zoneListRef} className="max-h-56 overflow-y-auto rounded-xl border border-white/10 bg-white/[0.02] py-1">
+            {secondOpinionZones.length === 0 && (
+              <div className="px-3 py-2 text-sm text-zinc-500">Ничего не найдено</div>
+            )}
+            {secondOpinionZones.map((z, i) => {
+              const showGroup = i === 0 || secondOpinionZones[i - 1].group !== z.group;
+              const selected = secondOpinion.zone === z.id;
+              return (
+                <div key={z.id}>
+                  {showGroup && (
+                    <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wide text-zinc-500">{z.group}</div>
+                  )}
+                  <button
+                    type="button"
+                    data-zone-index={i}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseMove={() => setZoneHighlight(i)}
+                    onClick={() => chooseZone(z.id)}
+                    className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 cursor-pointer transition-colors
+                      ${selected ? 'text-amber-400' : 'text-zinc-200'} ${i === zoneHighlight ? 'bg-white/10' : ''}`}
+                  >
+                    <span className="flex-1 min-w-0">{z.text}</span>
+                    {selected && <Check className="w-4 h-4 shrink-0" />}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          </SmoothHeight>
+
+          <AnimatePresence initial={false}>
+            {selectedZone?.paired && (
+              <CollapseRow key="side">
+                <div className="pt-4">
+                  <div className="text-xs text-zinc-500 mb-2">Сторона (необязательно)</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SECOND_OPINION_SIDES.map(side => (
+                      <button
+                        key={side.value}
+                        type="button"
+                        aria-pressed={secondOpinion.side === side.value}
+                        onClick={() => setSecondOpinion(prev => ({ ...prev, side: prev.side === side.value ? '' : side.value }))}
+                        className={`${CHIP_CLASS} ${secondOpinion.side === side.value ? CHIP_ACTIVE_CLASS : CHIP_IDLE_CLASS}`}
+                      >
+                        {side.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </CollapseRow>
+            )}
+          </AnimatePresence>
+
+          <div className="text-xs text-zinc-500 mt-4 mb-2">Дата исследования</div>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={secondOpinion.date}
+            onChange={(e) => {
+              const date = maskDateInput(e.target.value);
+              setSecondOpinion(prev => ({ ...prev, date }));
+            }}
+            placeholder="ДД-ММ-ГГГГ"
+            maxLength={10}
+            className={`${MODAL_INPUT_CLASS} text-center tabular-nums`}
+          />
+
+          {/* Как строка будет выглядеть в протоколе: появляется плавно
+              (CollapseRow), перенос на другую строку — тоже (SmoothHeight). */}
+          <AnimatePresence initial={false}>
+            {secondOpinion.modality && selectedZone && (
+              <CollapseRow key="preview">
+                <SmoothHeight>
+                  <div className="pt-4">
+                  <div className="pl-3 py-1 border-l-2 border-amber-400/50 text-sm leading-tight text-amber-400">
+                    {`На предъявленной ${secondOpinion.modality} ${zoneText(selectedZone, secondOpinion.side)} от ${isValidDateDDMMYYYY(secondOpinion.date) ? secondOpinion.date : 'ДД-ММ-ГГГГ'} ${secondOpinion.contrast ? 'с контрастным усилением' : 'без контрастного усиления'}:`}
+                  </div>
+                  </div>
+                </SmoothHeight>
+              </CollapseRow>
+            )}
+          </AnimatePresence>
+        </ModalBody>
+        <ModalFooter>
+          <ModalButton onClick={cancelSecondOpinion}>Отмена</ModalButton>
+          <ModalButton
+            variant="primary"
+            onClick={applySecondOpinion}
+            disabled={!secondOpinionReady && !(secondOpinionIsEmpty && isSecondOpinionActive)}
+          >
+            Применить
+          </ModalButton>
+        </ModalFooter>
+      </AnimatedModal>
+
+      <AnimatedModal
         open={showComparisonModal}
         onClose={() => setShowComparisonModal(false)}
         onKeyDown={(e) => {
@@ -4764,6 +5068,20 @@ for (const f of visibleFields) {
             maxLength={10}
             className={`${MODAL_INPUT_CLASS} text-center tabular-nums`}
           />
+          {/* Модальность — необязательно: без неё строка как раньше. */}
+          <div className="flex flex-wrap gap-1.5 pt-2">
+                            {COMPARISON_MODALITIES.map(m => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => toggleComparisonModality(0, m)}
+                                aria-pressed={(comparisonModalities[0] || '') === m}
+                                className={`${CHIP_CLASS} ${(comparisonModalities[0] || '') === m ? CHIP_ACTIVE_CLASS : CHIP_IDLE_CLASS}`}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
 
           <label className="mt-4 flex items-center justify-between gap-4 cursor-pointer">
             <span className="text-sm text-zinc-300">Сравнить с несколькими исследованиями</span>
@@ -4776,6 +5094,7 @@ for (const f of visibleFields) {
                   setIsMultipleComparison(checked);
                   if (!checked && comparisonDates.length > 1) {
                     setComparisonDates(comparisonDates.slice(0, 1));
+                    setComparisonModalities(comparisonModalities.slice(0, 1));
                   }
                 }}
                 className="sr-only peer"
@@ -4795,7 +5114,8 @@ for (const f of visibleFields) {
                       const realIndex = index + 1;
                       return (
                         <CollapseRow key={comparisonDateIds[realIndex] ?? realIndex}>
-                          <div className="group/row flex items-center gap-2 pb-2">
+                          <div className="pb-3">
+                          <div className="group/row flex items-center gap-2">
                             <input
                               type="text"
                               inputMode="numeric"
@@ -4808,6 +5128,7 @@ for (const f of visibleFields) {
                             <button
                               onClick={() => {
                                 setComparisonDates(comparisonDates.filter((_, i) => i !== realIndex));
+                                setComparisonModalities(comparisonDates.map((_, i) => comparisonModalities[i] || '').filter((_, i) => i !== realIndex));
                                 setComparisonDateIds(comparisonDateIds.filter((_, i) => i !== realIndex));
                               }}
                               className="w-8 h-8 shrink-0 flex items-center justify-center rounded-lg text-zinc-500 hover:text-red-400 hover:bg-white/5 transition-colors cursor-pointer"
@@ -4815,6 +5136,20 @@ for (const f of visibleFields) {
                             >
                               <Minus className="w-4 h-4" />
                             </button>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 pt-2">
+                            {COMPARISON_MODALITIES.map(m => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => toggleComparisonModality(realIndex, m)}
+                                aria-pressed={(comparisonModalities[realIndex] || '') === m}
+                                className={`${CHIP_CLASS} ${(comparisonModalities[realIndex] || '') === m ? CHIP_ACTIVE_CLASS : CHIP_IDLE_CLASS}`}
+                              >
+                                {m}
+                              </button>
+                            ))}
+                          </div>
                           </div>
                         </CollapseRow>
                       );

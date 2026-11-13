@@ -42,14 +42,3 @@ export function templateScores(now = Date.now()): Record<string, number> {
   }
   return scores;
 }
-
-// Когда каждый шаблон последний раз открывали на заполнение (мс) — для
-// группы «Недавние». Нет записи — не открывали.
-export function templateLastUsed(): Record<string, number> {
-  const usage = read();
-  const last: Record<string, number> = {};
-  for (const [id, u] of Object.entries(usage)) {
-    if (u && typeof u.last === 'number' && u.last > 0) last[id] = u.last;
-  }
-  return last;
-}

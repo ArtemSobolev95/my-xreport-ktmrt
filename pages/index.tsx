@@ -9,7 +9,7 @@ import { Copy, FileText, Globe, MoreHorizontal, Pencil, Plus, Search, Trash2 } f
 import { motion, AnimatePresence } from 'framer-motion';
 import type { TemplateListItem } from '../types/builder';
 import { useDialog } from '../components/DialogProvider';
-import { templateLastUsed, templateScores } from '../lib/templateUsage';
+import { templateScores } from '../lib/templateUsage';
 import { matchesLayoutSearch } from '../lib/layoutSearch';
 
 function HomePage() {
@@ -143,24 +143,8 @@ function HomePage() {
 
   const filteredTemplates = templates.filter(t => matchesLayoutSearch(t.title, searchTerm));
 
-  // Когда шаблоны открывали (этот браузер) — для группы «Недавние».
-  // Читается один раз: за время на странице не меняется.
-  const [lastUsed] = useState<Record<string, number>>(() =>
-    typeof window === 'undefined' ? {} : templateLastUsed()
-  );
-  const now = Date.now();
-
-  // Сетка: «Недавние» (без поиска — до одной строки карточек, открытые за
-  // последний месяц), затем «Мои шаблоны» и «Публичные». Недавний шаблон
-  // остаётся и в своей группе — у карточки свой ключ (`recent-…`).
-  const recent = !searchTerm.trim() && templates.length > RECENT_LIMIT + 2
-    ? templates
-        .filter(t => lastUsed[t.id] && now - lastUsed[t.id] < RECENT_DAYS * DAY_MS)
-        .sort((a, b) => lastUsed[b.id] - lastUsed[a.id])
-        .slice(0, RECENT_LIMIT)
-    : [];
+  // Сетка: «Мои шаблоны», затем «Публичные».
   const items: GridItem[] = [
-    ...recent.map(t => ({ key: `recent-${t.id}`, t, group: 'recent' as const })),
     ...filteredTemplates.map(t => ({ key: t.id, t, group: isMine(t) ? 'mine' as const : 'public' as const })),
   ];
 
@@ -273,8 +257,8 @@ function HomePage() {
     return () => document.removeEventListener('mousedown', close);
   }, [menuFor]);
 
-  // Подписи групп — когда групп больше одной: если все шаблоны свои и
-  // «Недавних» нет, подпись «Мои шаблоны» ничего не добавляет.
+  // Подписи групп — когда есть и свои, и публичные: если все шаблоны свои,
+  // подпись «Мои шаблоны» ничего не добавляет.
   const showGroupLabels = new Set(items.map(i => i.group)).size > 1;
 
   return (
@@ -462,15 +446,9 @@ function HomePage() {
 // Сетка карточек одной высоты: на телефоне — одна колонка, шире — до четырёх.
 const GRID_CLASS = 'grid grid-cols-1 min-[440px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2';
 
-const DAY_MS = 86400000;
-// «Недавние» — одна строка карточек на широком экране, за последний месяц.
-const RECENT_LIMIT = 4;
-const RECENT_DAYS = 30;
-
-type GridItem = { key: string; t: TemplateListItem; group: 'recent' | 'mine' | 'public' };
+type GridItem = { key: string; t: TemplateListItem; group: 'mine' | 'public' };
 
 const GROUP_TITLES: Record<GridItem['group'], string> = {
-  recent: 'Недавние',
   mine: 'Мои шаблоны',
   public: 'Публичные',
 };

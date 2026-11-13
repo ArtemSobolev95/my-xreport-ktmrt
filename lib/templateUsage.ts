@@ -44,7 +44,7 @@ export function templateScores(now = Date.now()): Record<string, number> {
 }
 
 // Когда каждый шаблон последний раз открывали на заполнение (мс) — для
-// группы «Недавние» и подписи на карточке. Нет записи — не открывали.
+// группы «Недавние». Нет записи — не открывали.
 export function templateLastUsed(): Record<string, number> {
   const usage = read();
   const last: Record<string, number> = {};

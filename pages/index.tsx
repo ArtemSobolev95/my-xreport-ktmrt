@@ -143,8 +143,8 @@ function HomePage() {
 
   const filteredTemplates = templates.filter(t => matchesLayoutSearch(t.title, searchTerm));
 
-  // Когда шаблоны открывали (этот браузер) — для «Недавних» и подписи на
-  // карточке. Читается один раз: за время на странице не меняется.
+  // Когда шаблоны открывали (этот браузер) — для группы «Недавние».
+  // Читается один раз: за время на странице не меняется.
   const [lastUsed] = useState<Record<string, number>>(() =>
     typeof window === 'undefined' ? {} : templateLastUsed()
   );
@@ -195,14 +195,14 @@ function HomePage() {
     if (best) setSelectedIndex(best.idx);
   };
 
-  // Клавиши в поле поиска: ←↑↓→ — выбор (← → — только при пустом поиске,
-  // иначе они двигают курсор в тексте), Enter — заполнить, Shift+Enter —
+  // Клавиши в поле поиска: ←↑↓→ — выбор карточки (и при введённом тексте:
+  // курсор в поле двигают мышь, Home/End и стрелки с ⌥/Ctrl), Enter — заполнить, Shift+Enter —
   // редактировать (чужой — создать копию), Esc — очистить поиск.
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       moveVertical(e.key === 'ArrowDown' ? 1 : -1);
-    } else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && !searchTerm) {
+    } else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
       e.preventDefault();
       setSelectedIndex(e.key === 'ArrowRight'
         ? Math.min(activeIndex + 1, Math.max(items.length - 1, 0))
@@ -346,7 +346,6 @@ function HomePage() {
                   if (showGroupLabels && item.group !== items[idx - 1]?.group) {
                     nodes.push(groupLabel(`label-${item.group}`, GROUP_TITLES[item.group], idx > 0 ? 'mt-4' : ''));
                   }
-                  const used = lastUsed[t.id];
 
                   nodes.push(
                     <motion.div
@@ -361,15 +360,20 @@ function HomePage() {
                       // Карточка целиком — «Заполнить» (одним кликом).
                       onClick={() => openFiller(t)}
                       title={t.title}
-                      className={`group relative flex flex-col min-[440px]:h-[88px] pl-3 pr-1.5 pt-2 pb-2.5 rounded-xl border cursor-pointer transition-colors duration-100 ${
+                      className={`group relative flex flex-col justify-center h-14 pl-3 pr-1.5 rounded-xl border cursor-pointer transition-colors duration-100 ${
                         isSelected ? 'bg-white/[0.07] border-amber-400/40' : 'bg-zinc-900/60 border-white/[0.07]'
                       } ${menuFor === item.key ? 'z-30' : ''}`}
                     >
-                      <div className="flex items-start gap-2 min-w-0">
-                        <FileText className={`w-4 h-4 mt-1.5 shrink-0 ${isSelected ? 'text-amber-400' : 'text-zinc-600'}`} strokeWidth={1.75} />
-                        <span className={`flex-1 min-w-0 pt-1 text-sm leading-snug line-clamp-2 break-words ${isSelected ? 'text-white' : 'text-zinc-200'}`}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <FileText className={`w-4 h-4 shrink-0 ${isSelected ? 'text-amber-400' : 'text-zinc-600'}`} strokeWidth={1.75} />
+                        <span className={`flex-1 min-w-0 text-sm leading-snug line-clamp-2 break-words ${isSelected ? 'text-white' : 'text-zinc-200'}`}>
                           {t.title}
                         </span>
+                        {mine && t.isPublic && (
+                          <span className="shrink-0 text-zinc-500" title="Публичный — виден всем пользователям">
+                            <Globe className="w-3.5 h-3.5" strokeWidth={1.75} />
+                          </span>
+                        )}
 
                         {/* Второстепенные действия — у выбранной/наведённой карточки. */}
                         <div
@@ -430,15 +434,6 @@ function HomePage() {
                         </div>
                       </div>
 
-                      <div className="mt-0.5 min-[440px]:mt-auto pl-6 flex items-center gap-2 min-w-0 text-[11px] text-zinc-500">
-                        <span className="truncate">{used ? `Открывали ${formatAgo(used, now)}` : 'Ещё не открывали'}</span>
-                        {t.isPublic && (mine || item.group === 'recent') && (
-                          <span className="shrink-0 inline-flex items-center gap-1" title="Виден всем пользователям">
-                            <Globe className="w-3 h-3" strokeWidth={1.75} />
-                            публичный
-                          </span>
-                        )}
-                      </div>
                     </motion.div>
                   );
                   return nodes;
@@ -464,8 +459,7 @@ function HomePage() {
   );
 }
 
-// Сетка карточек: на телефоне — одна колонка компактных карточек (высота
-// по содержимому), шире — до четырёх колонок карточек одной высоты.
+// Сетка карточек одной высоты: на телефоне — одна колонка, шире — до четырёх.
 const GRID_CLASS = 'grid grid-cols-1 min-[440px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2';
 
 const DAY_MS = 86400000;
@@ -479,24 +473,6 @@ const GROUP_TITLES: Record<GridItem['group'], string> = {
   recent: 'Недавние',
   mine: 'Мои шаблоны',
   public: 'Публичные',
-};
-
-const plural = (n: number, one: string, few: string, many: string) => {
-  const m10 = n % 10, m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return one;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
-  return many;
-};
-
-// «сегодня», «вчера», «3 дня назад», «2 недели назад», дальше — дата.
-const formatAgo = (ts: number, now: number): string => {
-  const startOfToday = new Date(now); startOfToday.setHours(0, 0, 0, 0);
-  const days = Math.max(0, Math.ceil((startOfToday.getTime() - ts) / DAY_MS));
-  if (days === 0) return 'сегодня';
-  if (days === 1) return 'вчера';
-  if (days < 7) return `${days} ${plural(days, 'день', 'дня', 'дней')} назад`;
-  if (days < 30) { const w = Math.floor(days / 7); return `${w} ${plural(w, 'неделю', 'недели', 'недель')} назад`; }
-  return new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: new Date(ts).getFullYear() === new Date(now).getFullYear() ? undefined : 'numeric' });
 };
 
 // Иконки 16px в квадратах 32px.
@@ -515,12 +491,11 @@ function ListSkeleton() {
   return (
     <div className={GRID_CLASS} aria-label="Загрузка" aria-busy="true">
       {[62, 48, 71, 40, 55, 66, 52, 44].map((w, i) => (
-        <div key={i} className="h-16 min-[440px]:h-[88px] p-3 flex flex-col rounded-xl border border-white/[0.05] bg-zinc-900/40">
+        <div key={i} className="h-14 px-3 flex flex-col justify-center rounded-xl border border-white/[0.05] bg-zinc-900/40">
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 rounded bg-white/5 animate-pulse" />
             <div className="h-3 rounded bg-white/5 animate-pulse" style={{ width: `${w}%` }} />
           </div>
-          <div className="mt-auto ml-6 h-2.5 w-24 rounded bg-white/5 animate-pulse" />
         </div>
       ))}
     </div>

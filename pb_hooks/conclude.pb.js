@@ -38,6 +38,14 @@ routerAdd("POST", "/api/conclude", (e) => {
     const recent = list(body.recent, 6, 1500);
     const examples = list(body.examples, 40, 200);
     const normal = clip(body.normal, 500);
+    // Обучение на правках (hooks/usePhraseMemory.ts): пары «черновик ИИ →
+    // что врач в итоге скопировал» и правила врача — сведённые ИИ из этих
+    // пар (pb_hooks/conclusion_rules.pb.js) и написанные им самим.
+    const edits = (Array.isArray(body.edits) ? body.edits : [])
+        .slice(0, 6)
+        .map((x) => ({ draft: clip(x && x.draft, 1500).trim(), final: clip(x && x.final, 1500).trim() }))
+        .filter((x) => x.draft && x.final);
+    const rules = list(body.rules, 30, 300);
     // «Состояние после …» из примечания (операция, вмешательство) — первой
     // строкой заключения. Предложение до точки перед следующим предложением
     // (точки в датах «12.05.2024» его не обрывают).
@@ -59,6 +67,7 @@ routerAdd("POST", "/api/conclude", (e) => {
         "Do not invent findings, measurements, sides or diagnoses that are not in the findings. Do not mention normal structures unless the doctor's previous conclusions usually do.",
         "Leave out findings the doctor described as of doubtful, uncertain or no clinical significance, as incidental or as a variant of normal.",
         "Add recommendations only if the doctor's previous conclusions contain them.",
+        "The doctor's rules and corrections of your previous drafts (if given) show their personal preferences: what they leave out of the conclusion, what they add, which wording they prefer. Follow them strictly - they take priority over the general style rules above - but still never invent findings.",
         "If the doctor has already started the conclusion, keep their text as is and complete it.",
         "Return only the conclusion text, without a heading, quotes or explanations.",
     ].concat(style.FORBIDDEN).join("\n");
@@ -72,6 +81,13 @@ routerAdd("POST", "/api/conclude", (e) => {
         parts.push("The doctor's typical conclusion phrases (N stands for a number):\n" + examples.map((x) => "- " + x).join("\n"));
     }
     if (normal) parts.push("The template's conclusion for a normal study: " + normal);
+    if (rules.length) {
+        parts.push("The doctor's rules for this conclusion - follow every one of them:\n" + rules.map((x) => "- " + x).join("\n"));
+    }
+    if (edits.length) {
+        parts.push("Your previous drafts for this template and what the doctor finally signed (N stands for a number). Notice what they deleted, added and rephrased, and make the same changes yourself now; an identical pair means the draft was accepted as is:\n" +
+            edits.map((x, i) => (i + 1) + ") Draft: " + x.draft + "\n   Signed: " + x.final).join("\n"));
+    }
     // В протоколе может стоять и старый текст заключения (или норма шаблона) —
     // это не находка.
     if (report) parts.push("Full report (normal values included; ignore any conclusion already in it - you are writing a new one):\n" + report);

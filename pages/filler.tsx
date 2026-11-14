@@ -16,7 +16,7 @@ import { evaluateFormula } from '../lib/evaluateFormula';
 import { comparisonLine, formulaCommentKey, generateReport } from '../lib/generateReport';
 import { useAbbreviations } from '../hooks/useAbbreviations';
 import { usePhraseMemory } from '../hooks/usePhraseMemory';
-import { confidentPhrase, firstWord, rankedPhrases, selectExamples, selectVocabulary, suggestedPhrase, sumStats, SLOT } from '../lib/phraseMemory';
+import { confidentPhrase, firstWord, isEdited, normalizeRule, rankedPhrases, removeRule, RULES_EVERY, selectExamples, selectVocabulary, suggestedPhrase, sumStats, SLOT } from '../lib/phraseMemory';
 import { toGhost } from '../lib/aiSuggest';
 import { changePairs } from '../lib/textDiff';
 import { useDialog } from '../components/DialogProvider';
@@ -259,6 +259,13 @@ function FillerPage() {
   // «Заключение» — в попапе находок, вставляется только по команде врача.
   const [conclusionDraft, setConclusionDraft] = useState<{ fieldId: string; text: string } | null>(null);
   const [conclusionLoading, setConclusionLoading] = useState(false);
+  // Черновик ИИ, вставленный в «Заключение» в этом протоколе (id поля →
+  // текст): при копировании протокола пара «черновик → итог» уходит в
+  // обучение автозаключения (hooks/usePhraseMemory.ts).
+  const insertedConclusionRef = useRef<Record<string, string>>({});
+  // Идёт сводка правил заключения (pb_hooks/conclusion_rules.pb.js) — id поля.
+  const [rulesRefreshing, setRulesRefreshing] = useState<string | null>(null);
+  const [newRuleText, setNewRuleText] = useState('');
   // Замечания по смыслу из проверки протокола (pb_hooks/review.pb.js):
   // противоречия, право/лево, находки без заключения. field — id поля или ''.
   const [reviewIssues, setReviewIssues] = useState<{ field: string; kind: string; text: string }[]>([]);
@@ -1423,13 +1430,18 @@ const handleClearDraft = async () => {
   const learnPhrasesFromReport = () => {
     if (!template || !originalTemplate) return;
     const templateFieldIds = new Set(originalTemplate.fields.map(f => f.id));
-    phraseMemory.learnFromReport([
+    const conclusionIds = new Set(template.fields.filter(f => f.type === 'conclusion').map(f => f.id));
+    const drafts = Object.fromEntries(Object.entries(insertedConclusionRef.current).filter(([id]) => conclusionIds.has(id)));
+    const rulesDue = phraseMemory.learnFromReport([
       ...template.fields
         .filter(f => (f.type === 'text' || f.type === 'conclusion') && templateFieldIds.has(f.id) && !deletedFieldIds.includes(f.id))
         .map(f => ({ id: f.id, text: typeof fieldsData[f.id] === 'string' ? fieldsData[f.id] : '' })),
       // «Примечание» — учится, только если оно включено в протокол.
       { id: STATE_AFTER_FIELD_ID, text: isStateAfterActive ? stateAfterText : '' },
-    ]);
+    ], drafts);
+    // Накопилось RULES_EVERY правок автозаключения — правила сводятся
+    // заново в фоне, без сообщений врачу.
+    rulesDue.forEach(id => refreshConclusionRules(id, false));
   };
 
   // Окно «Выученные фразы» — для текстового поля, где последним стоял
@@ -1448,6 +1460,7 @@ const handleClearDraft = async () => {
 
   const startNewReportPhrases = () => {
     phraseMemory.startNewReport();
+    insertedConclusionRef.current = {};
     setDismissedGhosts({});
     setAiGhost(null);
     setCorrections({});
@@ -2414,6 +2427,12 @@ const requestConclusion = async (fieldId: string) => {
         normal: field.placeholder || '',
         // «Состояние после …» из примечания — первым в заключении.
         note: isStateAfterActive ? stateAfterText : '',
+        // Как врач правил прошлые черновики и его правила для заключения.
+        edits: (phraseMemory.conclusionEdits[fieldId] || []).slice(0, 6).map(x => ({ draft: x.draft, final: x.final })),
+        rules: [
+          ...(phraseMemory.conclusionRules[fieldId]?.manual || []),
+          ...(phraseMemory.conclusionRules[fieldId]?.auto || []),
+        ],
       },
     });
     if (seq !== conclusionSeqRef.current) return;
@@ -2440,6 +2459,7 @@ const insertConclusion = (fieldId: string) => {
   if (conclusionDraft?.fieldId !== fieldId) return;
   const text = conclusionDraft.text;
   updateField(fieldId, text);
+  insertedConclusionRef.current = { ...insertedConclusionRef.current, [fieldId]: text };
   setConclusionDraft(null);
   requestAnimationFrame(() => {
     const el = inputRefs.current[fieldId] as HTMLTextAreaElement | null;
@@ -2447,6 +2467,46 @@ const insertConclusion = (fieldId: string) => {
     el?.focus();
     el?.setSelectionRange(text.length, text.length);
   });
+};
+
+// Правила заключения из правок врача (pb_hooks/conclusion_rules.pb.js):
+// сами — раз в RULES_EVERY правок (learnPhrasesFromReport), вручную —
+// кнопкой в окне «Выученные фразы» (manual: тогда и сообщения об ошибках).
+const refreshConclusionRules = async (fieldId: string, manual: boolean) => {
+  const { edits, rules } = phraseMemory.conclusionSnapshot(fieldId);
+  if (!edits.length) {
+    if (manual) dialog.alert('Пока нет правок: вставьте черновик ИИ в заключение, исправьте и скопируйте протокол');
+    return;
+  }
+  setRulesRefreshing(fieldId);
+  try {
+    const res = await pb.send<{ rules: string[] }>('/api/conclusion-rules', {
+      method: 'POST',
+      body: {
+        templateTitle: template?.title || '',
+        edits: edits.map(x => ({ draft: x.draft, final: x.final })),
+        current: rules.auto,
+        manual: rules.manual,
+        removed: rules.removed,
+      },
+      requestKey: `conclusion-rules-${fieldId}`,
+    });
+    const auto = (Array.isArray(res.rules) ? res.rules : []).map(normalizeRule).filter(Boolean);
+    phraseMemory.updateConclusionRules(fieldId, r => ({ ...r, auto, pending: 0, updated: Date.now() }));
+  } catch (err: unknown) {
+    if ((err as { isAbort?: boolean })?.isAbort) return;
+    if (manual) dialog.alert('Не удалось обновить правила. Попробуйте ещё раз.');
+    console.warn('[conclusion-rules] правила не обновлены:', err);
+  } finally {
+    setRulesRefreshing(cur => (cur === fieldId ? null : cur));
+  }
+};
+
+const addConclusionRule = (fieldId: string) => {
+  const rule = normalizeRule(newRuleText);
+  if (!rule) return;
+  phraseMemory.updateConclusionRules(fieldId, r => (r.manual.includes(rule) ? r : { ...r, manual: [...r.manual, rule] }));
+  setNewRuleText('');
 };
 
 // Клавиши автозаключения в поле «Заключение». true — событие обработано.
@@ -4808,6 +4868,73 @@ for (const f of visibleFields) {
                 );
               })()}
               <ModalBody className="max-h-[60vh] py-3">
+                {fieldId && field?.type === 'conclusion' && (() => {
+                  const rules = phraseMemory.conclusionRules[fieldId];
+                  const edits = phraseMemory.conclusionEdits[fieldId] || [];
+                  const editedCount = edits.filter(isEdited).length;
+                  const refreshing = rulesRefreshing === fieldId;
+                  const items = [
+                    ...(rules?.manual || []).map((text, i) => ({ text, kind: 'manual' as const, i })),
+                    ...(rules?.auto || []).map((text, i) => ({ text, kind: 'auto' as const, i })),
+                  ];
+                  return (
+                    <div className="mb-4 pb-4 border-b border-white/10">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">Правила автозаключения</span>
+                        <button
+                          type="button"
+                          onClick={() => refreshConclusionRules(fieldId, true)}
+                          disabled={refreshing || !edits.length}
+                          className="ml-auto flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-zinc-400 hover:text-amber-300 hover:bg-white/5 disabled:opacity-40 disabled:cursor-default transition-colors cursor-pointer"
+                        >
+                          {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 text-amber-400" />}
+                          Обновить по правкам
+                        </button>
+                      </div>
+                      <p className="mb-2 text-xs text-zinc-500 leading-relaxed">
+                        ИИ учится на том, как вы правите его черновики: вставьте заключение, исправьте и скопируйте протокол.
+                        {' '}Учтено правок: {editedCount} из {edits.length}
+                        {rules?.pending ? `, до обновления правил — ${Math.max(0, RULES_EVERY - rules.pending)}` : ''}.
+                      </p>
+                      {items.length === 0 ? (
+                        <p className="py-2 text-sm text-zinc-500">Правил пока нет</p>
+                      ) : items.map(item => (
+                        <div key={`${item.kind}-${item.i}`} className="group flex items-start gap-3 -mx-3 px-3 py-1.5 rounded-lg hover:bg-white/5">
+                          <span className="flex-1 min-w-0 text-sm text-zinc-100 break-words">{item.text}</span>
+                          <span className="shrink-0 mt-0.5 text-[10px] uppercase tracking-wide text-zinc-500">{item.kind === 'manual' ? 'ваше' : 'ИИ'}</span>
+                          <button
+                            type="button"
+                            onClick={() => phraseMemory.updateConclusionRules(fieldId, r => removeRule(r, item.kind, item.i))}
+                            aria-label="Удалить правило"
+                            className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md text-zinc-500 hover:text-red-400 hover:bg-white/10 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                      <form
+                        className="mt-2 flex items-center gap-2"
+                        onSubmit={(e) => { e.preventDefault(); addConclusionRule(fieldId); }}
+                      >
+                        <input
+                          value={newRuleText}
+                          onChange={(e) => setNewRuleText(e.target.value)}
+                          placeholder="Своё правило, например: не выносить в заключение кисты почек"
+                          className={`${MODAL_INPUT_CLASS} flex-1 min-w-0`}
+                        />
+                        <button
+                          type="submit"
+                          disabled={!newRuleText.trim()}
+                          aria-label="Добавить правило"
+                          className="w-9 h-9 shrink-0 flex items-center justify-center rounded-lg text-amber-400 hover:bg-white/10 disabled:opacity-40 disabled:cursor-default transition-colors cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </form>
+                      <div className="mt-4 text-[11px] font-medium uppercase tracking-wider text-zinc-500">Фразы</div>
+                    </div>
+                  );
+                })()}
                 {phrases.length === 0 ? (
                   <p className="py-6 text-center text-sm text-zinc-500">Пока ничего не выучено</p>
                 ) : phrases.map(({ key, entry }) => (

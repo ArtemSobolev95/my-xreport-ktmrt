@@ -9,7 +9,8 @@
 //
 // Провайдер — настройка развёртывания (Amvera → Переменные):
 //   AI_PROVIDER = yandex (по умолчанию) | anthropic
-// Маршруты: SUGGEST (подсказки), CORRECT (проверка), CONCLUDE (автозаключение).
+// Маршруты: SUGGEST (подсказки), CORRECT (проверка), CONCLUDE (автозаключение),
+// RULES (сводка правил автозаключения из правок врача).
 // Ключи и модели — в pb_hooks/yandexgpt.js и pb_hooks/anthropic.js.
 
 // Длина самого ответа модели (без «размышления») и температура для
@@ -18,6 +19,7 @@ const ROUTE_SETTINGS = {
     SUGGEST: { temperature: 0.2 },
     CORRECT: { temperature: 0 },
     CONCLUDE: { temperature: 0.2 },
+    RULES: { temperature: 0.2 },
 };
 
 // Цены моделей, $ за 1 млн токенов (по данным владельца проекта, октябрь
@@ -54,7 +56,7 @@ module.exports = {
         return this.backend().isConfigured();
     },
 
-    // route — "SUGGEST" | "CORRECT" | "CONCLUDE". Имя модели — и для статистики на клиенте.
+    // route — "SUGGEST" | "CORRECT" | "CONCLUDE" | "RULES". Имя модели — и для статистики на клиенте.
     modelFor(route) {
         return this.backend().modelFor(route);
     },

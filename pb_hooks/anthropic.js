@@ -13,7 +13,8 @@
 // Переменные окружения:
 //   ANTHROPIC_API_KEY  — ключ API
 //   ANTHROPIC_MODEL    — необязательно, модель для всех маршрутов (по умолчанию claude-opus-5-5)
-//   ANTHROPIC_MODEL_SUGGEST, ANTHROPIC_MODEL_CORRECT, ANTHROPIC_MODEL_CONCLUDE —
+//   ANTHROPIC_MODEL_SUGGEST, ANTHROPIC_MODEL_CORRECT, ANTHROPIC_MODEL_CONCLUDE,
+//   ANTHROPIC_MODEL_RULES (сводка правил автозаключения) —
 //                        необязательно, модель отдельно для подсказок /
 //                        проверки / автозаключения (важнее ANTHROPIC_MODEL)
 //   ANTHROPIC_EFFORT_<МАРШРУТ> — необязательно, low | medium | high (по
@@ -29,8 +30,8 @@
 const DEFAULT_MODEL = "claude-opus-5-5";
 // CORRECT — medium: на low модель находила не все ошибки согласования и
 // пунктуации с первого раза.
-const DEFAULT_EFFORT = { SUGGEST: "low", CORRECT: "medium", CONCLUDE: "medium" };
-const DEFAULT_THINKING = { SUGGEST: "off", CORRECT: "off", CONCLUDE: "on" };
+const DEFAULT_EFFORT = { SUGGEST: "low", CORRECT: "medium", CONCLUDE: "medium", RULES: "medium" };
+const DEFAULT_THINKING = { SUGGEST: "off", CORRECT: "off", CONCLUDE: "on", RULES: "on" };
 // Сверх длины самого ответа — место под «размышление» модели: оно
 // учитывается в max_tokens.
 const THINKING_HEADROOM_TOKENS = 4000;
@@ -49,7 +50,7 @@ module.exports = {
         return !!$os.getenv("ANTHROPIC_API_KEY");
     },
 
-    // route — "SUGGEST" | "CORRECT" | "CONCLUDE".
+    // route — "SUGGEST" | "CORRECT" | "CONCLUDE" | "RULES".
     modelFor(route) {
         return $os.getenv("ANTHROPIC_MODEL_" + route) || $os.getenv("ANTHROPIC_MODEL") || DEFAULT_MODEL;
     },

@@ -8,7 +8,8 @@
 //   YANDEX_FOLDER_ID  — id каталога Yandex Cloud
 //   YANDEX_GPT_MODEL  — необязательно, модель для всех маршрутов, по умолчанию
 //                       "yandexgpt-lite/latest" (Pro — "yandexgpt/latest")
-//   YANDEX_GPT_MODEL_SUGGEST, YANDEX_GPT_MODEL_CORRECT, YANDEX_GPT_MODEL_CONCLUDE —
+//   YANDEX_GPT_MODEL_SUGGEST, YANDEX_GPT_MODEL_CORRECT, YANDEX_GPT_MODEL_CONCLUDE,
+//   YANDEX_GPT_MODEL_RULES (сводка правил автозаключения) —
 //                       необязательно, модель отдельно для подсказок / проверки /
 //                       автозаключения (важнее YANDEX_GPT_MODEL):
 //                       проверке задержка не важна — ей можно Pro, подсказкам —
@@ -20,7 +21,7 @@ module.exports = {
         return !!($os.getenv("YANDEX_API_KEY") && $os.getenv("YANDEX_FOLDER_ID"));
     },
 
-    // route — "SUGGEST" | "CORRECT" | "CONCLUDE".
+    // route — "SUGGEST" | "CORRECT" | "CONCLUDE" | "RULES".
     modelFor(route) {
         return $os.getenv("YANDEX_GPT_MODEL_" + route) || $os.getenv("YANDEX_GPT_MODEL") || "yandexgpt-lite/latest";
     },

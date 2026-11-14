@@ -308,3 +308,52 @@ export function selectVocabulary(items: string[], textBefore: string, limit: num
     .slice(0, limit)
     .map(x => x.t);
 }
+
+// === Правки автозаключения ===
+// Черновик ИИ, который врач вставил в «Заключение», и итоговый текст поля
+// при копировании протокола: из таких пар модель учится, что врач удаляет,
+// добавляет и как переформулирует (pb_hooks/conclude.pb.js), а раз в
+// RULES_EVERY правок они сводятся в короткие правила
+// (pb_hooks/conclusion_rules.pb.js).
+
+export interface ConclusionEdit { draft: string; final: string; t: number }
+export type ConclusionEdits = Record<string, ConclusionEdit[]>;   // id поля → пары, новые первыми
+const MAX_CONCLUSION_EDITS = 15;
+
+export interface ConclusionRules {
+  auto: string[];      // выведенные ИИ из правок
+  manual: string[];    // написанные врачом — ИИ их не меняет
+  removed: string[];   // удалённые врачом из auto — ИИ не выводит их снова
+  pending: number;     // правок с изменениями после последней сводки
+  updated: number;     // когда правила сводились последний раз (ms)
+}
+export type ConclusionRulesMap = Record<string, ConclusionRules>;
+export const emptyRules = (): ConclusionRules => ({ auto: [], manual: [], removed: [], pending: 0, updated: 0 });
+// Правила сводятся заново после стольких правок с изменениями.
+export const RULES_EVERY = 3;
+const MAX_REMOVED_RULES = 30;
+
+// Без разницы в точке на конце и пробелах — это не правка.
+const sameConclusion = (a: string, b: string) =>
+  a.replace(/[.\s]+$/, '').replace(/\s+/g, ' ').trim() === b.replace(/[.\s]+$/, '').replace(/\s+/g, ' ').trim();
+
+export const isEdited = (e: ConclusionEdit) => !sameConclusion(e.draft, e.final);
+
+// replaceFirst — пара из этого же протокола уже записана первой (протокол
+// скопировали повторно после правки): заменяем её, а не добавляем дубль.
+export function rememberConclusionEdit(list: ConclusionEdit[] | undefined, draft: string, final: string, replaceFirst: boolean, now = Date.now()): ConclusionEdit[] {
+  const d = normalizeRecentText(draft);
+  const f = normalizeRecentText(final);
+  if (!d || !f) return list || [];
+  return [{ draft: d, final: f, t: now }, ...(list || []).slice(replaceFirst ? 1 : 0)].slice(0, MAX_CONCLUSION_EDITS);
+}
+
+export const normalizeRule = (rule: string) => rule.replace(/\s+/g, ' ').trim().slice(0, 300);
+
+export function removeRule(rules: ConclusionRules, kind: 'auto' | 'manual', index: number): ConclusionRules {
+  const list = rules[kind];
+  if (!list[index]) return rules;
+  const next = { ...rules, [kind]: list.filter((_, i) => i !== index) };
+  if (kind === 'auto') next.removed = [list[index], ...rules.removed.filter(r => r !== list[index])].slice(0, MAX_REMOVED_RULES);
+  return next;
+}

@@ -7,6 +7,13 @@ import {
   learnField,
   rememberRejected,
   rememberText,
+  rememberConclusionEdit,
+  isEdited,
+  emptyRules,
+  RULES_EVERY,
+  type ConclusionEdits,
+  type ConclusionRules,
+  type ConclusionRulesMap,
   type FieldMemory,
   type RecentTexts,
   type RejectedTexts,
@@ -20,7 +27,9 @@ import {
 //   data   — выученные фразы по полям (примеры формулировок для модели);
 //   recent — последние целые тексты полей;
 //   stats  — статистика ИИ-подсказок (показано/принято/время ответа);
-//   rejected — отклонённые/проигнорированные подсказки (миграция 0007).
+//   rejected — отклонённые/проигнорированные подсказки (миграция 0007);
+//   conclusion_edits / conclusion_rules — правки автозаключения врачом и
+//            сведённые из них правила (миграция 0009).
 // Логика — в lib/phraseMemory.ts, UI и запрос ИИ-подсказок — в pages/filler.tsx.
 //
 // Запись создаётся лениво, при первом сохранении: просто открыть шаблон —
@@ -34,8 +43,10 @@ interface MemoryState {
   recent: RecentTexts;
   stats: SuggestStats;
   rejected: RejectedTexts;
+  conclusionEdits: ConclusionEdits;
+  conclusionRules: ConclusionRulesMap;
 }
-const EMPTY: MemoryState = { data: {}, recent: {}, stats: {}, rejected: {} };
+const EMPTY: MemoryState = { data: {}, recent: {}, stats: {}, rejected: {}, conclusionEdits: {}, conclusionRules: {} };
 
 export function usePhraseMemory(templateId: string | undefined) {
   const [state, setState] = useState<MemoryState>(EMPTY);
@@ -48,14 +59,18 @@ export function usePhraseMemory(templateId: string | undefined) {
   // Сбрасывается startNewReport() (сброс/очистка протокола).
   const learnedThisReportRef = useRef<Record<string, Set<string>>>({});
   const recentThisReportRef = useRef<Set<string>>(new Set());
+  // Пара «черновик → итог» этого протокола уже записана / уже учтена в
+  // счётчике правок до сводки правил.
+  const editThisReportRef = useRef<Set<string>>(new Set());
+  const editCountedRef = useRef<Set<string>>(new Set());
 
   const flush = useCallback(async () => {
     if (!dirtyRef.current || !templateId) return;
     const userId = pb.authStore.record?.id;
     if (!userId) return;
     dirtyRef.current = false;
-    const { data, recent, stats, rejected } = stateRef.current;
-    const payload = { data, recent, stats, rejected };
+    const { data, recent, stats, rejected, conclusionEdits, conclusionRules } = stateRef.current;
+    const payload = { data, recent, stats, rejected, conclusion_edits: conclusionEdits, conclusion_rules: conclusionRules };
 
     try {
       if (recordIdRef.current) {
@@ -102,6 +117,8 @@ export function usePhraseMemory(templateId: string | undefined) {
           recent: (rec?.recent as RecentTexts) || {},
           stats: (rec?.stats as SuggestStats) || {},
           rejected: (rec?.rejected as RejectedTexts) || {},
+          conclusionEdits: (rec?.conclusion_edits as ConclusionEdits) || {},
+          conclusionRules: (rec?.conclusion_rules as ConclusionRulesMap) || {},
         };
         stateRef.current = loaded;
         setState(loaded);
@@ -131,11 +148,34 @@ export function usePhraseMemory(templateId: string | undefined) {
   }, [flush]);
 
   // Обучение на финальном протоколе (Копировать / Сохранить): фразы и
-  // целые тексты полей.
-  const learnFromReport = useCallback((fields: { id: string; text: string }[]) => {
+  // целые тексты полей, а для «Заключения», куда вставлялся черновик ИИ
+  // (drafts: id поля → вставленный черновик), — пара «черновик → итог».
+  // Возвращает id полей, правила которых пора свести заново (RULES_EVERY
+  // правок с изменениями после прошлой сводки).
+  const learnFromReport = useCallback((fields: { id: string; text: string }[], drafts: Record<string, string> = {}): string[] => {
     const now = Date.now();
-    let { data, recent, rejected } = stateRef.current;
+    let { data, recent, rejected, conclusionEdits, conclusionRules } = stateRef.current;
     let changed = false;
+    const rulesDue: string[] = [];
+    for (const { id, text } of fields) {
+      const draft = drafts[id];
+      if (!draft || !text?.trim()) continue;
+      const replaceFirst = editThisReportRef.current.has(id);
+      const list = rememberConclusionEdit(conclusionEdits[id], draft, text, replaceFirst, now);
+      if (list === conclusionEdits[id] || !list.length) continue;
+      conclusionEdits = { ...conclusionEdits, [id]: list };
+      editThisReportRef.current.add(id);
+      changed = true;
+      // Счётчик правок до сводки: пара этого протокола считается один раз,
+      // даже если её перезаписали повторным копированием.
+      const counted = editCountedRef.current.has(id);
+      const rules: ConclusionRules = { ...emptyRules(), ...conclusionRules[id] };
+      let pending = rules.pending;
+      if (isEdited(list[0]) && !counted) { pending++; editCountedRef.current.add(id); }
+      else if (!isEdited(list[0]) && counted) { pending = Math.max(0, pending - 1); editCountedRef.current.delete(id); }
+      if (pending !== rules.pending) conclusionRules = { ...conclusionRules, [id]: { ...rules, pending } };
+      if (pending >= RULES_EVERY) rulesDue.push(id);
+    }
     for (const { id, text } of fields) {
       if (!text?.trim()) continue;
 
@@ -164,13 +204,32 @@ export function usePhraseMemory(templateId: string | undefined) {
       }
     }
     // Сразу, без задержки: протокол часто копируют и тут же закрывают вкладку.
-    if (changed) commit({ ...stateRef.current, data, recent, rejected }, true);
+    if (changed) commit({ ...stateRef.current, data, recent, rejected, conclusionEdits, conclusionRules }, true);
+    return rulesDue;
   }, [commit]);
 
   const startNewReport = useCallback(() => {
     learnedThisReportRef.current = {};
     recentThisReportRef.current = new Set();
+    editThisReportRef.current = new Set();
+    editCountedRef.current = new Set();
   }, []);
+
+  // Правила заключения поля: правка врачом в окне «Выученные фразы» или
+  // новая сводка ИИ (тогда patch.pending = 0).
+  const updateConclusionRules = useCallback((fieldId: string, update: (rules: ConclusionRules) => ConclusionRules) => {
+    const current: ConclusionRules = { ...emptyRules(), ...stateRef.current.conclusionRules[fieldId] };
+    const next = update(current);
+    if (next === current) return;
+    commit({ ...stateRef.current, conclusionRules: { ...stateRef.current.conclusionRules, [fieldId]: next } });
+  }, [commit]);
+
+  // Текущие правки и правила поля — сразу после learnFromReport, когда
+  // state компонента ещё не обновился.
+  const conclusionSnapshot = useCallback((fieldId: string) => ({
+    edits: stateRef.current.conclusionEdits[fieldId] || [],
+    rules: { ...emptyRules(), ...stateRef.current.conclusionRules[fieldId] } as ConclusionRules,
+  }), []);
 
   const forget = useCallback((fieldId: string, key: string) => {
     const current: FieldMemory = stateRef.current.data[fieldId] || {};
@@ -208,7 +267,11 @@ export function usePhraseMemory(templateId: string | undefined) {
     recent: state.recent,
     stats: state.stats,
     rejected: state.rejected,
+    conclusionEdits: state.conclusionEdits,
+    conclusionRules: state.conclusionRules,
     learnFromReport,
+    updateConclusionRules,
+    conclusionSnapshot,
     startNewReport,
     forget,
     recordSuggestStat,

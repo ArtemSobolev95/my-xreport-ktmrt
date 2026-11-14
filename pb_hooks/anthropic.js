@@ -119,7 +119,7 @@ module.exports = {
         // Отказ (в том числе после запасной модели) — подсказки просто нет.
         if (res.json.stop_reason === "refusal") {
             console.log("[anthropic] отказ модели:", JSON.stringify(res.json.stop_details));
-            return { ok: true, text: "", usage: usage };
+            return { ok: true, text: "", usage: usage, refused: true };
         }
         const text = (res.json.content || [])
             .filter((b) => b && b.type === "text")

@@ -70,5 +70,5 @@ routerAdd("POST", "/api/conclusion-rules", (e) => {
     const norm = (x) => x.toLowerCase().replace(/[^\p{L}\d]+/gu, " ").trim();
     const skip = new Set(manual.concat(removed).map(norm));
     const rules = list(parsed.rules, 12, 300).filter((x) => !skip.has(norm(x)));
-    return e.json(200, { rules: rules, model: ai.modelFor("RULES") });
+    return e.json(200, { rules: rules, model: res.model });
 }, $apis.requireAuth("users"))

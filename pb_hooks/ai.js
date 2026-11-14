@@ -7,11 +7,18 @@
 // (обработчики выполняются изолированно, переменные верхнего уровня других
 // файлов им не видны).
 //
-// Провайдер — настройка развёртывания (Amvera → Переменные):
-//   AI_PROVIDER = yandex (по умолчанию) | anthropic
+// Провайдеры — настройка развёртывания (Amvera → Переменные):
+//   AI_PROVIDER = yandex (по умолчанию) | anthropic | routerai — основной;
+//   AI_FALLBACK = необязательно, резервные через запятую, по порядку,
+//                 например "routerai,yandex".
+// Запрос идёт к основному провайдеру; если тот не ответил (ошибка сети или
+// API, таймаут, отказ модели) — к следующему по цепочке. Провайдер без
+// ключей в цепочке пропускается. Упавший провайдер DOWN_MS пропускается
+// сразу, чтобы каждый запрос не ждал его таймаута.
 // Маршруты: SUGGEST (подсказки), CORRECT (проверка), CONCLUDE (автозаключение),
 // RULES (сводка правил автозаключения из правок врача).
-// Ключи и модели — в pb_hooks/yandexgpt.js и pb_hooks/anthropic.js.
+// Ключи и модели — в pb_hooks/anthropic.js, pb_hooks/routerai.js и
+// pb_hooks/yandexgpt.js.
 
 // Длина самого ответа модели (без «размышления») и температура для
 // провайдеров, которые её принимают.
@@ -43,22 +50,41 @@ const costUsd = (model, input, output) => {
     return (input * tier.input + output * tier.output) / 1e6;
 };
 
+const BACKENDS = { anthropic: "anthropic", routerai: "routerai", yandex: "yandexgpt" };
+const providerName = (v) => {
+    const name = String(v || "").trim().toLowerCase();
+    return BACKENDS[name] ? name : "";
+};
+// Сколько пропускать провайдера после ошибки.
+const DOWN_MS = 60000;
+
 module.exports = {
-    provider() {
-        return ($os.getenv("AI_PROVIDER") || "yandex").trim().toLowerCase() === "anthropic" ? "anthropic" : "yandex";
+    // Цепочка провайдеров с ключами: основной, затем резервные.
+    providers() {
+        const names = [providerName($os.getenv("AI_PROVIDER")) || "yandex"]
+            .concat(String($os.getenv("AI_FALLBACK") || "").split(",").map(providerName));
+        const result = [];
+        for (const name of names) {
+            if (!name || result.indexOf(name) !== -1) continue;
+            if (this.backend(name).isConfigured()) result.push(name);
+        }
+        return result;
     },
 
-    backend() {
-        return require(`${__hooks}/${this.provider() === "anthropic" ? "anthropic" : "yandexgpt"}.js`);
+    backend(name) {
+        return require(`${__hooks}/${BACKENDS[name]}.js`);
     },
 
     isConfigured() {
-        return this.backend().isConfigured();
+        return this.providers().length > 0;
     },
 
-    // route — "SUGGEST" | "CORRECT" | "CONCLUDE" | "RULES". Имя модели — и для статистики на клиенте.
+    // Модель первого провайдера цепочки. Какая модель ответила на самом
+    // деле — в результате complete() (res.model).
+    // route — "SUGGEST" | "CORRECT" | "CONCLUDE" | "RULES".
     modelFor(route) {
-        return this.backend().modelFor(route);
+        const name = this.providers()[0];
+        return name ? this.backend(name).modelFor(route) : "";
     },
 
     // true — лимит превышен. Окно — календарная минута, счётчик в памяти
@@ -101,25 +127,53 @@ module.exports = {
     },
 
     // options: { route, maxTokens (длина самого ответа), timeout?, userId? }.
-    // Возвращает { ok: true, text } или { ok: false }.
+    // Возвращает { ok: true, text, model, provider } или { ok: false }.
+    // Провайдеры — по цепочке providers(), пока один не ответит.
     complete(system, user, options) {
         const settings = ROUTE_SETTINGS[options.route] || {};
-        const model = this.modelFor(options.route);
-        const startedAt = Date.now();
-        const res = this.backend().complete(system, user, {
-            route: options.route,
-            model: model,
-            temperature: settings.temperature,
-            maxTokens: options.maxTokens,
-            timeout: options.timeout,
-        });
-        // Время ответа, токены и стоимость — в логах: «[ai] SUGGEST
-        // claude-haiku-5-5 640 мс, 1120 → 14 токенов, $0.000119».
-        const usage = res.usage || { input: 0, output: 0 };
-        const cost = costUsd(model, usage.input, usage.output);
-        console.log("[ai] " + options.route + " " + model + " " + (Date.now() - startedAt) + " мс" +
-            (res.ok ? ", " + usage.input + " → " + usage.output + " токенов, $" + cost.toFixed(6) : " (ошибка)"));
-        if (res.ok) this.recordUsage(options.userId, options.route, model, usage.input, usage.output, cost);
-        return res;
+        const chain = this.providers();
+        let last = { ok: false };
+        for (let i = 0; i < chain.length; i++) {
+            const name = chain[i];
+            const isLast = i === chain.length - 1;
+            const downKey = "ai_down:" + name;
+            // Недавно упавший провайдер пропускаем — кроме последнего в
+            // цепочке: лучше попробовать, чем не ответить совсем.
+            if (!isLast && Number($app.store().get(downKey) || 0) > Date.now()) continue;
+
+            const backend = this.backend(name);
+            const model = backend.modelFor(options.route);
+            const startedAt = Date.now();
+            const res = backend.complete(system, user, {
+                route: options.route,
+                model: model,
+                temperature: settings.temperature,
+                maxTokens: options.maxTokens,
+                timeout: options.timeout,
+            });
+            // Время ответа, токены и стоимость — в логах: «[ai] SUGGEST
+            // claude-haiku-5-5 640 мс, 1120 → 14 токенов, $0.000119».
+            const usage = res.usage || { input: 0, output: 0 };
+            const cost = typeof usage.costUsd === "number" ? usage.costUsd : costUsd(model, usage.input, usage.output);
+            console.log("[ai] " + options.route + " " + model + " " + (Date.now() - startedAt) + " мс" +
+                (res.ok ? ", " + usage.input + " → " + usage.output + " токенов, $" + cost.toFixed(6) : " (ошибка)") +
+                (res.refused ? " (отказ модели)" : "") + (i > 0 ? " [резерв: " + name + "]" : ""));
+            if (res.ok) this.recordUsage(options.userId, options.route, model, usage.input, usage.output, cost);
+
+            if (!res.ok) {
+                $app.store().set(downKey, Date.now() + DOWN_MS);
+                last = res;
+                continue;
+            }
+            $app.store().remove(downKey);
+            // Отказ модели — другой провайдер может ответить; если ответить
+            // некому, отдаём пустой ответ, как раньше.
+            if (res.refused && !isLast) {
+                last = { ok: true, text: "", model: model, provider: name };
+                continue;
+            }
+            return { ok: true, text: res.text, model: model, provider: name };
+        }
+        return last;
     },
 };

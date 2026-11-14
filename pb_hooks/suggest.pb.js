@@ -93,7 +93,6 @@ routerAdd("POST", "/api/suggest", (e) => {
         parts.push("The cursor is inside the unfinished word \"" + partial + "\". Start your answer with this whole word (e.g. \"" + partial + "...\"), with no space before it.");
     }
 
-    const model = ai.modelFor("SUGGEST");
     const res = ai.complete(system, parts.join("\n\n"), { route: "SUGGEST", maxTokens: 60, userId: e.auth.id });
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
@@ -117,5 +116,5 @@ routerAdd("POST", "/api/suggest", (e) => {
     const text = isMeta ? "" : res.text;
 
     // model — для статистики на клиенте: точность моделей видна раздельно.
-    return e.json(200, { text: text.slice(0, 300), model: model });
+    return e.json(200, { text: text.slice(0, 300), model: res.model });
 }, $apis.requireAuth("users"))

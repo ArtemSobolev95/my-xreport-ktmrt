@@ -95,7 +95,6 @@ routerAdd("POST", "/api/conclude", (e) => {
     if (stateAfter) parts.push("Start the conclusion with this line from the doctor's note, word for word: " + stateAfter);
     if (current.trim()) parts.push("The doctor has already written in the " + (fieldLabel || "Conclusion") + " field:\n" + current);
 
-    const model = ai.modelFor("CONCLUDE");
     const res = ai.complete(system, parts.join("\n\n"), { route: "CONCLUDE", maxTokens: 600, timeout: 40, userId: e.auth.id });
     if (!res.ok) {
         return e.json(502, { message: "ИИ-сервис недоступен" });
@@ -124,5 +123,5 @@ routerAdd("POST", "/api/conclude", (e) => {
     conclusion = conclusion.replace(/(?<!\.)\.$/, "");
     conclusion = style.fixSegmentCase(conclusion);
     conclusion = conclusion.charAt(0).toUpperCase() + conclusion.slice(1);
-    return e.json(200, { conclusion: conclusion.slice(0, 3000), model: model });
+    return e.json(200, { conclusion: conclusion.slice(0, 3000), model: res.model });
 }, $apis.requireAuth("users"))

@@ -74,7 +74,7 @@ module.exports = {
         const usage = { input: Number(u.inputTextTokens) || 0, output: Number(u.completionTokens) || 0 };
         const alt = result.alternatives && result.alternatives[0];
         if (!alt || alt.status === "ALTERNATIVE_STATUS_CONTENT_FILTER" || !alt.message) {
-            return { ok: true, text: "", usage: usage };
+            return { ok: true, text: "", usage: usage, refused: true };
         }
         return { ok: true, text: String(alt.message.text || ""), usage: usage };
     },

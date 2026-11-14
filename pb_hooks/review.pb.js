@@ -145,5 +145,5 @@ routerAdd("POST", "/api/review", (e) => {
         // буквы) отбрасываем, а не показываем.
         .filter((x) => language !== "Russian" || /[\u0400-\u04FF]/.test(x.text));
 
-    return e.json(200, { corrections: corrections, issues: issues, model: ai.modelFor("CORRECT") });
+    return e.json(200, { corrections: corrections, issues: issues, model: res.model });
 }, $apis.requireAuth("users"))
